@@ -9,22 +9,25 @@ import com.example.mymusic.model.Song;
 
 import java.util.ArrayList;
 import java.util.List;
+import com.example.mymusic.utils.AppLog;
 
 public class LocalMusicRepository {
+
     private final Context context;
     public LocalMusicRepository(Context context){
         this.context=context;
     }
     public List<Song> fetchLocalSongs(){
         ArrayList<Song> songs=new ArrayList<>();
-        String[] prjection={
+        String[] projection={
                 MediaStore.Audio.Media._ID,
                 MediaStore.Audio.Media.TITLE,
                 MediaStore.Audio.Media.ARTIST,
                 MediaStore.Audio.Media.DATA,
                 MediaStore.Audio.Media.DURATION
         };
-        Cursor cursor=context.getContentResolver().query(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,prjection, MediaStore.Audio.Media.IS_MUSIC + " !=0",null,MediaStore.Audio.Media.TITLE + " ASC");
+        AppLog.d(AppLog.REPO, "Starting scan for music...");
+        Cursor cursor=context.getContentResolver().query(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,projection, MediaStore.Audio.Media.IS_MUSIC + " !=0",null,MediaStore.Audio.Media.TITLE + " ASC");
 
         if (cursor!=null && cursor.moveToFirst()) {
             int idColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media._ID);
@@ -39,10 +42,12 @@ public class LocalMusicRepository {
                 //The Below Line creates a new Unique uri for the media file
                 Uri songuri = ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id);
                 Song song = new Song(id, title, artist, songuri, duration);
+                AppLog.i(AppLog.REPO, "Found Song: " + title + " by " + artist);
                 songs.add(song);
             }while (cursor.moveToNext());
 
         }
+        AppLog.d(AppLog.REPO, "Scan complete. Total songs found: " + songs.size());
         assert cursor != null;
         cursor.close();
         return songs;
