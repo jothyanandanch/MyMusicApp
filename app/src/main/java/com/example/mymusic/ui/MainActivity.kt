@@ -15,6 +15,7 @@ import com.example.mymusic.viewmodel.MusicViewModel
 import androidx.activity.ComponentActivity
 import androidx.compose.material3.MaterialTheme
 import com.example.mymusic.ui.screens.library.MusicLibraryScreen
+import com.example.mymusic.ui.theme.SpotifyUIAppTheme
 
 class MainActivity : ComponentActivity() {
     private lateinit var permissionLauncher: ActivityResultLauncher<String>
@@ -28,7 +29,7 @@ class MainActivity : ComponentActivity() {
 
         musicViewModel = ViewModelProvider(this)[MusicViewModel::class.java]
         setContent {
-            MaterialTheme{
+            SpotifyUIAppTheme(){
                 MusicLibraryScreen(viewModel = musicViewModel)
             }
         }

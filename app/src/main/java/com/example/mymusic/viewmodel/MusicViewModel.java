@@ -50,8 +50,7 @@ public class MusicViewModel extends AndroidViewModel {
                 contentObserver
         );
         
-        // Initial load of music when ViewModel is created
-        loadLocalMusic();
+        
     }
     
     // 🎵 LiveData getters
