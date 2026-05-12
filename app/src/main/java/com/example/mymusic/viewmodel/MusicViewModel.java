@@ -2,6 +2,7 @@ package com.example.mymusic.viewmodel;
 
 import android.app.Application;
 import android.database.ContentObserver;
+import android.media.MediaPlayer;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.MediaStore;
@@ -24,6 +25,11 @@ public class MusicViewModel extends AndroidViewModel {
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Runnable reloadRunnable = this::loadLocalMusic;
     
+    // 🎵 MediaPlayer + Playback State
+    private MediaPlayer mediaPlayer;
+    private final MutableLiveData<Song> currentSongLiveData = new MutableLiveData<>();
+    private final MutableLiveData<Boolean> isPlayingLiveData = new MutableLiveData<>(false);
+    
     public MusicViewModel(@NonNull Application application) {
         super(application);
         repository = new LocalMusicRepository(application);
@@ -32,8 +38,6 @@ public class MusicViewModel extends AndroidViewModel {
         contentObserver = new ContentObserver(handler) {
             @Override
             public void onChange(boolean selfChange) {
-                // Cancel any pending reload and schedule a new one in 500ms
-                // This prevents multiple reloads if many files change at once
                 handler.removeCallbacks(reloadRunnable);
                 handler.postDelayed(reloadRunnable, 500);
             }
@@ -50,26 +54,50 @@ public class MusicViewModel extends AndroidViewModel {
         loadLocalMusic();
     }
     
-    public LiveData<List<Song>> getSongs() {
-        return songsLiveData;
+    // 🎵 LiveData getters
+    public LiveData<List<Song>> getSongs() { return songsLiveData; }
+    public LiveData<Song> getCurrentSong() { return currentSongLiveData; }
+    public LiveData<Boolean> getIsPlaying() { return isPlayingLiveData; }
+    
+    // 🎵 Playback controls
+    public void playSong(Song song) {
+        if (mediaPlayer != null) {
+            mediaPlayer.release();
+        }
+        mediaPlayer = MediaPlayer.create(getApplication(), song.getUri());
+        mediaPlayer.start();
+        currentSongLiveData.postValue(song);
+        isPlayingLiveData.postValue(true);
+    }
+    
+    public void togglePlayPause() {
+        if (mediaPlayer == null) return;
+        if (mediaPlayer.isPlaying()) {
+            mediaPlayer.pause();
+            isPlayingLiveData.postValue(false);
+        } else {
+            mediaPlayer.start();
+            isPlayingLiveData.postValue(true);
+        }
     }
     
     public void loadLocalMusic() {
-        // This creates a background thread to fetch songs and updates LiveData
-        new Thread(new Runnable() {
-            @Override
-            public void run() {
-                List<Song> localSongs = repository.fetchLocalSongs();
-                songsLiveData.postValue(localSongs);
-            }
+        new Thread(() -> {
+            List<Song> localSongs = repository.fetchLocalSongs();
+            songsLiveData.postValue(localSongs);
         }).start();
     }
     
     @Override
     protected void onCleared() {
         super.onCleared();
-        // IMPORTANT: Unregister the observer to prevent memory leaks when the ViewModel is destroyed
         getApplication().getContentResolver().unregisterContentObserver(contentObserver);
         handler.removeCallbacks(reloadRunnable);
+        
+        // 🎵 Release MediaPlayer to prevent leaks
+        if (mediaPlayer != null) {
+            mediaPlayer.release();
+            mediaPlayer = null;
+        }
     }
 }
