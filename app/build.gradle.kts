@@ -41,21 +41,41 @@ android {
 }
 
 dependencies {
+    // Core Android
     implementation(libs.appcompat)
     implementation(libs.material)
     implementation(libs.activity.compose)
 
+    // ✅ Compose BOM (keeps versions aligned automatically)
+    implementation(platform("androidx.compose:compose-bom:2024.04.00"))
+
     // Compose UI Core
-    implementation("androidx.compose.material:material-icons-core:1.6.7")
-    implementation("androidx.compose.material:material-icons-extended:1.6.7")
-    implementation("androidx.compose.ui:ui:1.7.0")
-    implementation("androidx.compose.material3:material3:1.3.0")
-    implementation("androidx.compose.ui:ui-tooling-preview:1.7.0")
-    debugImplementation("androidx.compose.ui:ui-tooling:1.7.0")
+    implementation("androidx.compose.ui:ui")
+    implementation("androidx.compose.ui:ui-tooling-preview")
+    debugImplementation("androidx.compose.ui:ui-tooling")
 
-    // Bridge for your Java LiveData
-    implementation("androidx.compose.runtime:runtime-livedata:1.7.0")
+    // Material3
+    implementation("androidx.compose.material3:material3")
 
+    // Material Icons
+    implementation("androidx.compose.material:material-icons-core")
+    implementation("androidx.compose.material:material-icons-extended")
+
+    // LiveData bridge for Compose
+    implementation("androidx.compose.runtime:runtime-livedata")
+
+    // Navigation
+    implementation("androidx.navigation:navigation-compose:2.7.7")
+
+    // ✅ ExoPlayer (Media3) — preferred over MediaPlayer
+    implementation("androidx.media3:media3-exoplayer:1.3.1")
+    implementation("androidx.media3:media3-ui:1.3.1")
+    implementation("androidx.media3:media3-session:1.3.1")
+
+    // Coil for image loading
+    implementation("io.coil-kt:coil-compose:2.6.0")
+
+    // Tests
     testImplementation(libs.junit)
     androidTestImplementation(libs.ext.junit)
     androidTestImplementation(libs.espresso.core)
