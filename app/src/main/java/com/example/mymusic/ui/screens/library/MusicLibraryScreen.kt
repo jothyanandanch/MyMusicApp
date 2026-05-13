@@ -28,21 +28,11 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.example.mymusic.model.Song
+import com.example.mymusic.ui.theme.*
+import com.example.mymusic.utils.formatDuration
 import com.example.mymusic.viewmodel.MusicViewModel
-import java.util.Locale
-import java.util.concurrent.TimeUnit
 
-// ─── Spotify Color Tokens ────────────────────────────────────────────
-val SpotifyBlack     = Color(0xFF121212)
-val SpotifySurface   = Color(0xFF1E1E1E)
-val SpotifySurface2  = Color(0xFF282828)
-val SpotifyGreen     = Color(0xFF1DB954)
-val SpotifyWhite     = Color(0xFFFFFFFF)
-val SpotifyGray      = Color(0xFFB3B3B3)
-val SpotifyLightGray = Color(0xFF535353)
-val SpotifyElevated  = Color(0xFF3E3E3E)
-
-// ─── Album Art Composable ────────────────────────────────────────────
+// ─── Album Art Composable ─────────────────────────────────────────────
 @Composable
 fun AlbumArt(
     artUri: Uri?,
@@ -51,7 +41,6 @@ fun AlbumArt(
     cornerRadius: Dp = 4.dp
 ) {
     val context = LocalContext.current
-
     Box(
         modifier = Modifier
             .size(size)
@@ -61,7 +50,6 @@ fun AlbumArt(
     ) {
         if (artUri != null) {
             var loadFailed by remember { mutableStateOf(false) }
-
             if (!loadFailed) {
                 AsyncImage(
                     model = ImageRequest.Builder(context)
@@ -71,11 +59,9 @@ fun AlbumArt(
                     contentDescription = "Album Art",
                     modifier = Modifier.fillMaxSize(),
                     contentScale = ContentScale.Crop,
-                    onError = { loadFailed = true }   // ← callback, not composable
+                    onError = { loadFailed = true }
                 )
             }
-
-            // Show icon if load failed
             if (loadFailed) {
                 Icon(
                     Icons.Filled.MusicNote,
@@ -94,7 +80,8 @@ fun AlbumArt(
         }
     }
 }
-// ─── Main Screen ─────────────────────────────────────────────────────
+
+// ─── Main Screen ──────────────────────────────────────────────────────
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MusicLibraryScreen(viewModel: MusicViewModel) {
@@ -106,26 +93,28 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
     val repeatMode  by viewModel.repeatMode.observeAsState(0)
     val shuffleMode by viewModel.shuffleMode.observeAsState(false)
 
-    var showNowPlaying by remember { mutableStateOf(false) }
-    var selectedTab    by remember { mutableStateOf(0) }
-    var searchQuery    by remember { mutableStateOf("") }
+    var showNowPlaying  by remember { mutableStateOf(false) }
+    var selectedTab     by remember { mutableStateOf(0) }
+    var searchQuery     by remember { mutableStateOf("") }
+    // Filter chip state: 0 = All, 1 = Music (local), 2 = Podcasts (placeholder)
+    var selectedFilter  by remember { mutableStateOf(0) }
 
     // ── Full-Screen Now Playing ──────────────────────────────────────
     if (showNowPlaying && currentSong != null) {
         NowPlayingScreen(
-            song            = currentSong!!,
-            isPlaying       = isPlaying,
-            progress        = progress,
-            duration        = duration,
-            repeatMode      = repeatMode,
-            shuffleMode     = shuffleMode,
-            onBack          = { showNowPlaying = false },
+            song              = currentSong!!,
+            isPlaying         = isPlaying,
+            progress          = progress,
+            duration          = duration,
+            repeatMode        = repeatMode,
+            shuffleMode       = shuffleMode,
+            onBack            = { showNowPlaying = false },
             onTogglePlayPause = { viewModel.togglePlayPause() },
-            onNext          = { viewModel.playNext() },
-            onPrevious      = { viewModel.playPrevious() },
-            onSeek          = { viewModel.seekTo(it) },
-            onToggleRepeat  = { viewModel.toggleRepeat() },
-            onToggleShuffle = { viewModel.toggleShuffle() }
+            onNext            = { viewModel.playNext() },
+            onPrevious        = { viewModel.playPrevious() },
+            onSeek            = { viewModel.seekTo(it) },
+            onToggleRepeat    = { viewModel.toggleRepeat() },
+            onToggleShuffle   = { viewModel.toggleShuffle() }
         )
         return
     }
@@ -139,7 +128,7 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                     .background(SpotifyBlack)
                     .statusBarsPadding()
             ) {
-                // Header
+                // ── Header ──────────────────────────────────────────
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -173,20 +162,20 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                     }
                 }
 
-                // Filter chips (Home tab)
+                // ── Filter Chips — Home tab only ─────────────────────
                 if (selectedTab == 0) {
                     LazyRow(
                         contentPadding = PaddingValues(horizontal = 16.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        item { SpotifyChip("All", true) }
-                        item { SpotifyChip("Music", false) }
-                        item { SpotifyChip("Podcasts", false) }
+                        item { SpotifyChip("All",     selectedFilter == 0) { selectedFilter = 0 } }
+                        item { SpotifyChip("Music",   selectedFilter == 1) { selectedFilter = 1 } }
+                        item { SpotifyChip("Podcasts", selectedFilter == 2) { selectedFilter = 2 } }
                     }
                     Spacer(Modifier.height(8.dp))
                 }
 
-                // Search bar (Search tab)
+                // ── Search Bar — Search tab only ─────────────────────
                 if (selectedTab == 1) {
                     OutlinedTextField(
                         value = searchQuery,
@@ -213,9 +202,10 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
         },
         bottomBar = {
             Column(modifier = Modifier.background(SpotifyBlack)) {
-                currentSong?.let { song ->
+                // Only show mini player if a song is actively loaded AND playing or paused
+                if (currentSong != null) {
                     MiniPlayerBar(
-                        song              = song,
+                        song              = currentSong!!,
                         isPlaying         = isPlaying,
                         progress          = progress,
                         duration          = duration,
@@ -228,8 +218,16 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
             }
         }
     ) { paddingValues ->
-        val filteredSongs = if (searchQuery.isBlank()) songs
-        else songs.filter { it.title.contains(searchQuery, true) || it.artist.contains(searchQuery, true) }
+        // Apply search filter
+        val searchFiltered = if (searchQuery.isBlank()) songs
+            else songs.filter {
+                it.title.contains(searchQuery, true) || it.artist.contains(searchQuery, true)
+            }
+        // Apply chip filter (Music = all local songs, Podcasts = empty for now)
+        val filteredSongs = when (selectedFilter) {
+            2    -> emptyList()   // Podcasts — placeholder until implemented
+            else -> searchFiltered
+        }
 
         when (selectedTab) {
             0 -> HomeTab(filteredSongs, currentSong, Modifier.padding(paddingValues)) { song ->
@@ -245,70 +243,126 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
     }
 }
 
-// ─── Home Tab ────────────────────────────────────────────────────────
+// ─── Home Tab ─────────────────────────────────────────────────────────
 @Composable
 fun HomeTab(songs: List<Song>, currentSong: Song?, modifier: Modifier, onSongClick: (Song) -> Unit) {
     LazyColumn(modifier = modifier.fillMaxSize().background(SpotifyBlack)) {
-        if (songs.isNotEmpty()) {
+        if (songs.isEmpty()) {
+            item { EmptyState() }
+        } else {
             item {
-                Text("Recently Added", color = SpotifyWhite, fontWeight = FontWeight.Bold,
-                    fontSize = 18.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+                Text(
+                    "Recently Added", color = SpotifyWhite, fontWeight = FontWeight.Bold,
+                    fontSize = 18.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                )
             }
             items(songs.take(6).chunked(2)) { pair ->
                 Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     pair.forEach { song ->
-                        QuickAccessItem(song, song.id == currentSong?.id, { onSongClick(song) }, Modifier.weight(1f))
+                        QuickAccessItem(
+                            song     = song,
+                            isActive = song.id == currentSong?.id,
+                            onClick  = { onSongClick(song) },
+                            modifier = Modifier.weight(1f)
+                        )
                     }
                     if (pair.size == 1) Spacer(Modifier.weight(1f))
                 }
             }
             item {
-                Text("All Songs", color = SpotifyWhite, fontWeight = FontWeight.Bold,
-                    fontSize = 18.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+                Text(
+                    "All Songs", color = SpotifyWhite, fontWeight = FontWeight.Bold,
+                    fontSize = 18.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                )
             }
+            items(songs) { song ->
+                SongListItem(song, song.id == currentSong?.id) { onSongClick(song) }
+            }
+            item { Spacer(Modifier.height(8.dp)) }
         }
-        items(songs) { song ->
-            SongListItem(song, song.id == currentSong?.id) { onSongClick(song) }
-        }
-        item { Spacer(Modifier.height(8.dp)) }
     }
 }
 
-// ─── Search / Generic Song List Tab ──────────────────────────────────
+// ─── Search / Generic Song List Tab ───────────────────────────────────
 @Composable
 fun SongListTab(songs: List<Song>, currentSong: Song?, modifier: Modifier, onSongClick: (Song) -> Unit) {
     LazyColumn(modifier = modifier.fillMaxSize().background(SpotifyBlack)) {
-        items(songs) { song ->
-            SongListItem(song, song.id == currentSong?.id) { onSongClick(song) }
+        if (songs.isEmpty()) {
+            item { EmptyState(message = "No results found") }
+        } else {
+            items(songs) { song ->
+                SongListItem(song, song.id == currentSong?.id) { onSongClick(song) }
+            }
+            item { Spacer(Modifier.height(8.dp)) }
         }
-        item { Spacer(Modifier.height(8.dp)) }
     }
 }
 
-// ─── Library Tab ─────────────────────────────────────────────────────
+// ─── Library Tab ──────────────────────────────────────────────────────
 @Composable
 fun LibraryTab(songs: List<Song>, currentSong: Song?, modifier: Modifier, onSongClick: (Song) -> Unit) {
     LazyColumn(modifier = modifier.fillMaxSize().background(SpotifyBlack)) {
         item {
             Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
-                horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 Text("Your Library", color = SpotifyWhite, fontWeight = FontWeight.Bold, fontSize = 20.sp)
                 Icon(Icons.Filled.Add, null, tint = SpotifyWhite, modifier = Modifier.size(24.dp))
             }
         }
-        items(songs) { song ->
-            SongListItem(song, song.id == currentSong?.id) { onSongClick(song) }
+        if (songs.isEmpty()) {
+            item { EmptyState(message = "Your library is empty") }
+        } else {
+            items(songs) { song ->
+                SongListItem(song, song.id == currentSong?.id) { onSongClick(song) }
+            }
+            item { Spacer(Modifier.height(8.dp)) }
         }
-        item { Spacer(Modifier.height(8.dp)) }
     }
 }
 
-// ─── Quick Access Grid Item ───────────────────────────────────────────
+// ─── Empty State ──────────────────────────────────────────────────────
+@Composable
+fun EmptyState(message: String = "No songs found on this device") {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 80.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Icon(
+            Icons.Filled.MusicOff,
+            contentDescription = null,
+            tint = SpotifyGray,
+            modifier = Modifier.size(64.dp)
+        )
+        Spacer(Modifier.height(16.dp))
+        Text(
+            text = message,
+            color = SpotifyGray,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Medium
+        )
+        Spacer(Modifier.height(6.dp))
+        Text(
+            text = "Try adding music files to your device storage",
+            color = SpotifyLightGray,
+            fontSize = 12.sp
+        )
+    }
+}
+
+// ─── Quick Access Grid Item ────────────────────────────────────────────
 @Composable
 fun QuickAccessItem(song: Song, isActive: Boolean, onClick: () -> Unit, modifier: Modifier) {
     Row(
@@ -329,7 +383,7 @@ fun QuickAccessItem(song: Song, isActive: Boolean, onClick: () -> Unit, modifier
     }
 }
 
-// ─── Song List Item ───────────────────────────────────────────────────
+// ─── Song List Item ────────────────────────────────────────────────────
 @Composable
 fun SongListItem(song: Song, isCurrentSong: Boolean, onClick: () -> Unit) {
     Row(
@@ -341,7 +395,6 @@ fun SongListItem(song: Song, isCurrentSong: Boolean, onClick: () -> Unit) {
         verticalAlignment = Alignment.CenterVertically
     ) {
         AlbumArt(artUri = song.albumArtUri, isActive = isCurrentSong, size = 48.dp)
-
         Column(modifier = Modifier.padding(start = 12.dp).weight(1f)) {
             Text(
                 text = song.title,
@@ -354,7 +407,6 @@ fun SongListItem(song: Song, isCurrentSong: Boolean, onClick: () -> Unit) {
                 fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis
             )
         }
-
         Text(formatDuration(song.duration), color = SpotifyGray, fontSize = 12.sp)
         Spacer(Modifier.width(8.dp))
         Icon(Icons.Filled.MoreVert, null, tint = SpotifyGray, modifier = Modifier.size(20.dp))
@@ -380,7 +432,6 @@ fun MiniPlayerBar(
         Box(modifier = Modifier.fillMaxWidth().height(2.dp).background(SpotifyLightGray)) {
             Box(modifier = Modifier.fillMaxWidth(fraction).fillMaxHeight().background(SpotifyGreen))
         }
-
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -388,14 +439,14 @@ fun MiniPlayerBar(
             verticalAlignment = Alignment.CenterVertically
         ) {
             AlbumArt(artUri = song.albumArtUri, isActive = true, size = 42.dp)
-
             Column(modifier = Modifier.padding(start = 12.dp).weight(1f)) {
-                Text(song.title, color = SpotifyWhite, fontWeight = FontWeight.SemiBold,
-                    fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    song.title, color = SpotifyWhite, fontWeight = FontWeight.SemiBold,
+                    fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis
+                )
                 Text(song.artist, color = SpotifyGray, fontSize = 12.sp,
                     maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-
             IconButton(onClick = {}, modifier = Modifier.size(40.dp)) {
                 Icon(Icons.Filled.FavoriteBorder, null, tint = SpotifyWhite, modifier = Modifier.size(22.dp))
             }
@@ -413,7 +464,7 @@ fun MiniPlayerBar(
     }
 }
 
-// ─── Bottom Navigation ────────────────────────────────────────────────
+// ─── Bottom Navigation ─────────────────────────────────────────────────
 @Composable
 fun SpotifyBottomNav(selectedTab: Int, onTabSelected: (Int) -> Unit) {
     NavigationBar(containerColor = SpotifyBlack, tonalElevation = 0.dp) {
@@ -438,27 +489,21 @@ fun SpotifyBottomNav(selectedTab: Int, onTabSelected: (Int) -> Unit) {
     }
 }
 
-// ─── Filter Chip ──────────────────────────────────────────────────────
+// ─── Filter Chip ───────────────────────────────────────────────────────
 @Composable
-fun SpotifyChip(label: String, selected: Boolean) {
+fun SpotifyChip(label: String, selected: Boolean, onClick: () -> Unit) {
     Box(
         modifier = Modifier
             .clip(RoundedCornerShape(50.dp))
             .background(if (selected) SpotifyGreen else SpotifySurface2)
-            .clickable {}
+            .clickable { onClick() }
             .padding(horizontal = 14.dp, vertical = 6.dp)
     ) {
-        Text(label,
+        Text(
+            label,
             color = if (selected) SpotifyBlack else SpotifyWhite,
             fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
             fontSize = 13.sp
         )
     }
-}
-
-// ─── Duration Formatter ───────────────────────────────────────────────
-fun formatDuration(ms: Long): String {
-    val m = TimeUnit.MILLISECONDS.toMinutes(ms)
-    val s = TimeUnit.MILLISECONDS.toSeconds(ms) % 60
-    return String.format(Locale.getDefault(), "%d:%02d", m, s)
 }

@@ -24,6 +24,8 @@ import androidx.media3.common.Player
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.example.mymusic.model.Song
+import com.example.mymusic.ui.theme.*
+import com.example.mymusic.utils.formatDuration
 
 @Composable
 fun NowPlayingScreen(
@@ -49,8 +51,9 @@ fun NowPlayingScreen(
             .fillMaxSize()
             .background(
                 Brush.verticalGradient(
-                    listOf(Color(0xFF3D6B4F), Color(0xFF121212)),
-                    startY = 0f, endY = 1200f
+                    listOf(SpotifyGradientTop, SpotifyBlack),
+                    startY = 0f,
+                    endY   = 1200f
                 )
             )
     ) {
@@ -61,44 +64,48 @@ fun NowPlayingScreen(
                 .navigationBarsPadding()
                 .padding(horizontal = 24.dp)
         ) {
-            // ── Top Bar ──────────────────────────────────────────
+            // ── Top Bar ────────────────────────────────────────────
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(top = 16.dp, bottom = 8.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                verticalAlignment     = Alignment.CenterVertically
             ) {
                 IconButton(onClick = onBack) {
-                    Icon(Icons.Filled.KeyboardArrowDown, "Collapse",
-                        tint = SpotifyWhite, modifier = Modifier.size(32.dp))
+                    Icon(
+                        Icons.Filled.KeyboardArrowDown, "Collapse",
+                        tint = SpotifyWhite, modifier = Modifier.size(32.dp)
+                    )
                 }
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("PLAYING FROM YOUR LIBRARY", color = SpotifyGray,
-                        fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-                    Text("All Songs", color = SpotifyWhite,
-                        fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                    Text(
+                        "PLAYING FROM YOUR LIBRARY",
+                        color = SpotifyGray, fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold, letterSpacing = 1.sp
+                    )
+                    Text(
+                        "All Songs", color = SpotifyWhite,
+                        fontWeight = FontWeight.SemiBold, fontSize = 13.sp
+                    )
                 }
                 IconButton(onClick = {}) {
                     Icon(Icons.Filled.MoreVert, "More", tint = SpotifyWhite, modifier = Modifier.size(24.dp))
                 }
             }
 
-            Spacer(Modifier.height(24.dp))
-
-            // ── Album Art (full size with Coil) ──────────────────
-            // ── Album Art ──────────────────────────────────────────────────────
+            // ── Album Art ──────────────────────────────────────────
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .aspectRatio(1f)
+                    .weight(1f)               // takes remaining space — no overflow on small screens
+                    .padding(vertical = 16.dp)
                     .clip(RoundedCornerShape(8.dp))
                     .background(SpotifySurface2),
                 contentAlignment = Alignment.Center
             ) {
                 if (song.albumArtUri != null) {
                     var loadFailed by remember { mutableStateOf(false) }
-
                     if (!loadFailed) {
                         AsyncImage(
                             model = ImageRequest.Builder(context)
@@ -106,61 +113,59 @@ fun NowPlayingScreen(
                                 .crossfade(true)
                                 .build(),
                             contentDescription = "Album Art",
-                            modifier = Modifier.fillMaxSize(),
-                            contentScale = ContentScale.Crop,
-                            onError = { loadFailed = true }   // ← correct: callback not composable
+                            modifier      = Modifier.fillMaxSize(),
+                            contentScale  = ContentScale.Crop,
+                            onError       = { loadFailed = true }
                         )
                     }
-
                     if (loadFailed) {
                         Icon(
-                            Icons.Filled.MusicNote,
-                            contentDescription = null,
-                            tint = SpotifyGreen,
-                            modifier = Modifier.size(96.dp)
+                            Icons.Filled.MusicNote, null,
+                            tint = SpotifyGreen, modifier = Modifier.size(96.dp)
                         )
                     }
                 } else {
                     Icon(
-                        Icons.Filled.MusicNote,
-                        contentDescription = null,
-                        tint = SpotifyGreen,
-                        modifier = Modifier.size(96.dp)
+                        Icons.Filled.MusicNote, null,
+                        tint = SpotifyGreen, modifier = Modifier.size(96.dp)
                     )
                 }
             }
 
-            Spacer(Modifier.height(32.dp))
-
-            // ── Song Info + Like ──────────────────────────────────
+            // ── Song Info + Like ───────────────────────────────────
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                verticalAlignment     = Alignment.CenterVertically
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(song.title, color = SpotifyWhite, fontWeight = FontWeight.Bold,
-                        fontSize = 22.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(song.artist, color = SpotifyGray, fontSize = 15.sp,
-                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        song.title, color = SpotifyWhite,
+                        fontWeight = FontWeight.Bold, fontSize = 22.sp,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        song.artist, color = SpotifyGray,
+                        fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis
+                    )
                 }
                 IconButton(onClick = {}) {
-                    Icon(Icons.Filled.FavoriteBorder, "Like",
-                        tint = SpotifyWhite, modifier = Modifier.size(26.dp))
+                    Icon(Icons.Filled.FavoriteBorder, "Like", tint = SpotifyWhite, modifier = Modifier.size(26.dp))
                 }
             }
 
-            Spacer(Modifier.height(24.dp))
+            Spacer(Modifier.height(16.dp))
 
-            // ── Seek Bar ──────────────────────────────────────────
+            // ── Seek Bar ───────────────────────────────────────────
             Column(modifier = Modifier.fillMaxWidth()) {
                 Slider(
-                    value = progressFraction,
+                    // Clamp to a minimum of 0.001 so thumb is always visible
+                    value = progressFraction.coerceAtLeast(0.001f),
                     onValueChange = { onSeek((it * duration).toLong()) },
                     modifier = Modifier.fillMaxWidth(),
                     colors = SliderDefaults.colors(
-                        thumbColor        = SpotifyWhite,
-                        activeTrackColor  = SpotifyWhite,
+                        thumbColor         = SpotifyWhite,
+                        activeTrackColor   = SpotifyWhite,
                         inactiveTrackColor = SpotifyLightGray
                     )
                 )
@@ -175,20 +180,24 @@ fun NowPlayingScreen(
 
             Spacer(Modifier.height(16.dp))
 
-            // ── Controls Row ──────────────────────────────────────
+            // ── Playback Controls ──────────────────────────────────
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                verticalAlignment     = Alignment.CenterVertically
             ) {
                 IconButton(onClick = onToggleShuffle) {
-                    Icon(Icons.Filled.Shuffle, "Shuffle",
+                    Icon(
+                        Icons.Filled.Shuffle, "Shuffle",
                         tint = if (shuffleMode) SpotifyGreen else SpotifyGray,
-                        modifier = Modifier.size(22.dp))
+                        modifier = Modifier.size(22.dp)
+                    )
                 }
                 IconButton(onClick = onPrevious) {
-                    Icon(Icons.Filled.SkipPrevious, "Previous",
-                        tint = SpotifyWhite, modifier = Modifier.size(38.dp))
+                    Icon(
+                        Icons.Filled.SkipPrevious, "Previous",
+                        tint = SpotifyWhite, modifier = Modifier.size(38.dp)
+                    )
                 }
                 Box(
                     modifier = Modifier
@@ -206,8 +215,10 @@ fun NowPlayingScreen(
                     }
                 }
                 IconButton(onClick = onNext) {
-                    Icon(Icons.Filled.SkipNext, "Next",
-                        tint = SpotifyWhite, modifier = Modifier.size(38.dp))
+                    Icon(
+                        Icons.Filled.SkipNext, "Next",
+                        tint = SpotifyWhite, modifier = Modifier.size(38.dp)
+                    )
                 }
                 IconButton(onClick = onToggleRepeat) {
                     Icon(
@@ -219,22 +230,27 @@ fun NowPlayingScreen(
                 }
             }
 
-            Spacer(Modifier.height(24.dp))
+            Spacer(Modifier.height(16.dp))
 
-            // ── Devices + Queue Row ───────────────────────────────
+            // ── Devices + Queue Row ────────────────────────────────
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 8.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                verticalAlignment     = Alignment.CenterVertically
             ) {
                 IconButton(onClick = {}) {
-                    Icon(Icons.Filled.DevicesOther, "Devices",
-                        tint = SpotifyGray, modifier = Modifier.size(22.dp))
+                    Icon(
+                        Icons.Filled.DevicesOther, "Devices",
+                        tint = SpotifyGray, modifier = Modifier.size(22.dp)
+                    )
                 }
                 IconButton(onClick = {}) {
                     Icon(
                         Icons.AutoMirrored.Filled.QueueMusic, "Queue",
-                        tint = SpotifyGray, modifier = Modifier.size(22.dp))
+                        tint = SpotifyGray, modifier = Modifier.size(22.dp)
+                    )
                 }
             }
         }
