@@ -35,7 +35,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 
 import com.example.mymusic.model.Song
-import com.example.mymusic.ui.screens.library.AlbumArt
+
 
 @Composable
 fun MiniPlayer(
