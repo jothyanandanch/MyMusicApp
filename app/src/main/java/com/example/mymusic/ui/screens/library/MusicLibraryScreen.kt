@@ -96,7 +96,6 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
     var showNowPlaying  by remember { mutableStateOf(false) }
     var selectedTab     by remember { mutableStateOf(0) }
     var searchQuery     by remember { mutableStateOf("") }
-    // Filter chip state: 0 = All, 1 = Music (local), 2 = Podcasts (placeholder)
     var selectedFilter  by remember { mutableStateOf(0) }
 
     // ── Full-Screen Now Playing ──────────────────────────────────────
@@ -114,7 +113,8 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
             onPrevious        = { viewModel.playPrevious() },
             onSeek            = { viewModel.seekTo(it) },
             onToggleRepeat    = { viewModel.toggleRepeat() },
-            onToggleShuffle   = { viewModel.toggleShuffle() }
+            onToggleShuffle   = { viewModel.toggleShuffle() },
+            viewModel         = viewModel
         )
         return
     }
@@ -128,7 +128,6 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                     .background(SpotifyBlack)
                     .statusBarsPadding()
             ) {
-                // ── Header ──────────────────────────────────────────
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -162,20 +161,18 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                     }
                 }
 
-                // ── Filter Chips — Home tab only ─────────────────────
                 if (selectedTab == 0) {
                     LazyRow(
                         contentPadding = PaddingValues(horizontal = 16.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        item { SpotifyChip("All",     selectedFilter == 0) { selectedFilter = 0 } }
-                        item { SpotifyChip("Music",   selectedFilter == 1) { selectedFilter = 1 } }
+                        item { SpotifyChip("All",      selectedFilter == 0) { selectedFilter = 0 } }
+                        item { SpotifyChip("Music",    selectedFilter == 1) { selectedFilter = 1 } }
                         item { SpotifyChip("Podcasts", selectedFilter == 2) { selectedFilter = 2 } }
                     }
                     Spacer(Modifier.height(8.dp))
                 }
 
-                // ── Search Bar — Search tab only ─────────────────────
                 if (selectedTab == 1) {
                     OutlinedTextField(
                         value = searchQuery,
@@ -202,7 +199,6 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
         },
         bottomBar = {
             Column(modifier = Modifier.background(SpotifyBlack)) {
-                // Only show mini player if a song is actively loaded AND playing or paused
                 if (currentSong != null) {
                     MiniPlayerBar(
                         song              = currentSong!!,
@@ -210,6 +206,7 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                         progress          = progress,
                         duration          = duration,
                         onTogglePlayPause = { viewModel.togglePlayPause() },
+                        onPrevious        = { viewModel.playPrevious() },
                         onNext            = { viewModel.playNext() },
                         onClick           = { showNowPlaying = true }
                     )
@@ -218,14 +215,12 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
             }
         }
     ) { paddingValues ->
-        // Apply search filter
         val searchFiltered = if (searchQuery.isBlank()) songs
             else songs.filter {
                 it.title.contains(searchQuery, true) || it.artist.contains(searchQuery, true)
             }
-        // Apply chip filter (Music = all local songs, Podcasts = empty for now)
         val filteredSongs = when (selectedFilter) {
-            2    -> emptyList()   // Podcasts — placeholder until implemented
+            2    -> emptyList()
             else -> searchFiltered
         }
 
@@ -340,25 +335,11 @@ fun EmptyState(message: String = "No songs found on this device") {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Icon(
-            Icons.Filled.MusicOff,
-            contentDescription = null,
-            tint = SpotifyGray,
-            modifier = Modifier.size(64.dp)
-        )
+        Icon(Icons.Filled.MusicOff, null, tint = SpotifyGray, modifier = Modifier.size(64.dp))
         Spacer(Modifier.height(16.dp))
-        Text(
-            text = message,
-            color = SpotifyGray,
-            fontSize = 15.sp,
-            fontWeight = FontWeight.Medium
-        )
+        Text(message, color = SpotifyGray, fontSize = 15.sp, fontWeight = FontWeight.Medium)
         Spacer(Modifier.height(6.dp))
-        Text(
-            text = "Try adding music files to your device storage",
-            color = SpotifyLightGray,
-            fontSize = 12.sp
-        )
+        Text("Try adding music files to your device storage", color = SpotifyLightGray, fontSize = 12.sp)
     }
 }
 
@@ -402,10 +383,8 @@ fun SongListItem(song: Song, isCurrentSong: Boolean, onClick: () -> Unit) {
                 fontWeight = FontWeight.SemiBold, fontSize = 14.sp,
                 maxLines = 1, overflow = TextOverflow.Ellipsis
             )
-            Text(
-                text = song.artist, color = SpotifyGray,
-                fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis
-            )
+            Text(text = song.artist, color = SpotifyGray, fontSize = 12.sp,
+                maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         Text(formatDuration(song.duration), color = SpotifyGray, fontSize = 12.sp)
         Spacer(Modifier.width(8.dp))
@@ -414,11 +393,17 @@ fun SongListItem(song: Song, isCurrentSong: Boolean, onClick: () -> Unit) {
     HorizontalDivider(color = SpotifySurface, thickness = 0.5.dp)
 }
 
-// ─── Mini Player Bar ──────────────────────────────────────────────────
+// ─── Mini Player Bar (with Previous button) ────────────────────────────
 @Composable
 fun MiniPlayerBar(
-    song: Song, isPlaying: Boolean, progress: Long, duration: Long,
-    onTogglePlayPause: () -> Unit, onNext: () -> Unit, onClick: () -> Unit
+    song: Song,
+    isPlaying: Boolean,
+    progress: Long,
+    duration: Long,
+    onTogglePlayPause: () -> Unit,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
+    onClick: () -> Unit
 ) {
     val fraction = if (duration > 0) (progress.toFloat() / duration.toFloat()).coerceIn(0f, 1f) else 0f
 
@@ -438,7 +423,9 @@ fun MiniPlayerBar(
                 .padding(horizontal = 12.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            // Album art
             AlbumArt(artUri = song.albumArtUri, isActive = true, size = 42.dp)
+            // Song title + artist
             Column(modifier = Modifier.padding(start = 12.dp).weight(1f)) {
                 Text(
                     song.title, color = SpotifyWhite, fontWeight = FontWeight.SemiBold,
@@ -447,18 +434,28 @@ fun MiniPlayerBar(
                 Text(song.artist, color = SpotifyGray, fontSize = 12.sp,
                     maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
+            // Like button
             IconButton(onClick = {}, modifier = Modifier.size(40.dp)) {
-                Icon(Icons.Filled.FavoriteBorder, null, tint = SpotifyWhite, modifier = Modifier.size(22.dp))
+                Icon(Icons.Filled.FavoriteBorder, "Like", tint = SpotifyWhite, modifier = Modifier.size(22.dp))
             }
+            // ← Previous  (new)
+            IconButton(
+                onClick  = { onPrevious() },
+                modifier = Modifier.size(40.dp)
+            ) {
+                Icon(Icons.Filled.SkipPrevious, "Previous", tint = SpotifyWhite, modifier = Modifier.size(26.dp))
+            }
+            // Play / Pause
             IconButton(onClick = onTogglePlayPause, modifier = Modifier.size(40.dp)) {
                 Icon(
                     if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                    contentDescription = if (isPlaying) "Pause" else "Play",
+                    if (isPlaying) "Pause" else "Play",
                     tint = SpotifyWhite, modifier = Modifier.size(28.dp)
                 )
             }
+            // Next →
             IconButton(onClick = onNext, modifier = Modifier.size(40.dp)) {
-                Icon(Icons.Filled.SkipNext, null, tint = SpotifyWhite, modifier = Modifier.size(28.dp))
+                Icon(Icons.Filled.SkipNext, "Next", tint = SpotifyWhite, modifier = Modifier.size(26.dp))
             }
         }
     }
