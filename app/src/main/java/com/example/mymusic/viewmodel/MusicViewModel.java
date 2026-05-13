@@ -1,7 +1,10 @@
 package com.example.mymusic.viewmodel;
 
 import android.app.Application;
+import android.content.Context;
+import android.content.SharedPreferences;
 import android.database.ContentObserver;
+import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.MediaStore;
@@ -27,6 +30,10 @@ import java.util.Set;
 
 public class MusicViewModel extends AndroidViewModel {
 
+    // ── SharedPreferences key for persisted favorites ────────────────
+    private static final String PREFS_NAME  = "MyMusicPrefs";
+    private static final String KEY_FAV_IDS = "favorite_song_ids";
+
     private final LocalMusicRepository        repository;
     private final MutableLiveData<List<Song>> songsLiveData         = new MutableLiveData<>();
     private final MutableLiveData<Song>       currentSongLiveData   = new MutableLiveData<>();
@@ -38,11 +45,9 @@ public class MusicViewModel extends AndroidViewModel {
     private final MutableLiveData<Boolean>    endOfQueueLiveData    = new MutableLiveData<>(false);
     private final MutableLiveData<Boolean>    showEndDialogLiveData = new MutableLiveData<>(false);
 
-    // ── Phase 4: Favorites ────────────────────────────────────────────
-    // Map<songId, Song> — insertion-ordered so the Favorites tab keeps add order.
-    private final Map<Long, Song>           favoritesMap     = new LinkedHashMap<>();
-    private final MutableLiveData<Set<Long>> favoriteIdsLiveData =
-            new MutableLiveData<>(new LinkedHashSet<>());
+    // Favorites — insertion-ordered so Liked Songs tab keeps add-order
+    private final Map<Long, Song>            favoritesMap        = new LinkedHashMap<>();
+    private final MutableLiveData<Set<Long>> favoriteIdsLiveData = new MutableLiveData<>(new LinkedHashSet<>());
 
     private ExoPlayer  exoPlayer;
     private List<Song> currentPlaylist;
@@ -52,8 +57,7 @@ public class MusicViewModel extends AndroidViewModel {
 
     private final Handler  progressHandler  = new Handler(Looper.getMainLooper());
     private final Runnable progressRunnable = new Runnable() {
-        @Override
-        public void run() {
+        @Override public void run() {
             if (exoPlayer != null && exoPlayer.isPlaying()) {
                 progressLiveData.postValue(exoPlayer.getCurrentPosition());
                 long dur = exoPlayer.getDuration();
@@ -71,39 +75,37 @@ public class MusicViewModel extends AndroidViewModel {
         super(application);
         repository = new LocalMusicRepository(application);
 
+        // ── Restore favorites from SharedPreferences ─────────────────
+        loadFavoritesFromPrefs();
+
         exoPlayer = new ExoPlayer.Builder(application).build();
         exoPlayer.addListener(new Player.Listener() {
-            @Override
-            public void onIsPlayingChanged(boolean isPlaying) {
+            @Override public void onIsPlayingChanged(boolean isPlaying) {
                 isPlayingLiveData.postValue(isPlaying);
                 if (isPlaying) progressHandler.post(progressRunnable);
                 else           progressHandler.removeCallbacks(progressRunnable);
             }
 
-            @Override
-            public void onMediaItemTransition(MediaItem mediaItem, int reason) {
+            @Override public void onMediaItemTransition(MediaItem mediaItem, int reason) {
                 if (currentPlaylist == null) return;
                 int idx = exoPlayer.getCurrentMediaItemIndex();
                 if (idx < currentPlaylist.size()) {
                     currentIndex = idx;
                     Song song = currentPlaylist.get(currentIndex);
                     currentSongLiveData.postValue(song);
-                    if (Boolean.TRUE.equals(shuffleModeLiveData.getValue())) {
+                    if (Boolean.TRUE.equals(shuffleModeLiveData.getValue()))
                         playedInShuffleCycle.add(song.getId());
-                    }
                 }
             }
 
-            @Override
-            public void onPlaybackStateChanged(int state) {
+            @Override public void onPlaybackStateChanged(int state) {
                 if (state == Player.STATE_ENDED)
                     isPlayingLiveData.postValue(false);
             }
         });
 
         contentObserver = new ContentObserver(handler) {
-            @Override
-            public void onChange(boolean selfChange) {
+            @Override public void onChange(boolean selfChange) {
                 handler.removeCallbacks(reloadRunnable);
                 handler.postDelayed(reloadRunnable, 500);
             }
@@ -113,22 +115,79 @@ public class MusicViewModel extends AndroidViewModel {
     }
 
     // ── LiveData getters ──────────────────────────────────────────────
-    public LiveData<List<Song>> getSongs()             { return songsLiveData; }
-    public LiveData<Song>       getCurrentSong()       { return currentSongLiveData; }
-    public LiveData<Boolean>    getIsPlaying()         { return isPlayingLiveData; }
-    public LiveData<Long>       getProgress()          { return progressLiveData; }
-    public LiveData<Long>       getDuration()          { return durationLiveData; }
-    public LiveData<Integer>    getRepeatMode()        { return repeatModeLiveData; }
-    public LiveData<Boolean>    getShuffleMode()       { return shuffleModeLiveData; }
-    public LiveData<Boolean>    getEndOfQueue()        { return endOfQueueLiveData; }
-    public LiveData<Boolean>    getShowEndDialog()     { return showEndDialogLiveData; }
-    public LiveData<Set<Long>>  getFavoriteIds()       { return favoriteIdsLiveData; }
+    public LiveData<List<Song>> getSongs()         { return songsLiveData; }
+    public LiveData<Song>       getCurrentSong()   { return currentSongLiveData; }
+    public LiveData<Boolean>    getIsPlaying()     { return isPlayingLiveData; }
+    public LiveData<Long>       getProgress()      { return progressLiveData; }
+    public LiveData<Long>       getDuration()      { return durationLiveData; }
+    public LiveData<Integer>    getRepeatMode()    { return repeatModeLiveData; }
+    public LiveData<Boolean>    getShuffleMode()   { return shuffleModeLiveData; }
+    public LiveData<Boolean>    getEndOfQueue()    { return endOfQueueLiveData; }
+    public LiveData<Boolean>    getShowEndDialog() { return showEndDialogLiveData; }
+    public LiveData<Set<Long>>  getFavoriteIds()   { return favoriteIdsLiveData; }
 
-    // ── Phase 4: Favorites API ────────────────────────────────────────
+    // ── Favorites — persist on every toggle ──────────────────────────
 
     /**
-     * Toggles the favourite state of [song].
-     * Returns true if the song is now a favourite, false if removed.
+     * Loads saved favorite song IDs from SharedPreferences.
+     * Songs whose MediaStore URIs are still valid get restored into favoritesMap;
+     * stale IDs (e.g. deleted files) are silently dropped on next sync via
+     * syncFavoritesWithSongs() which is called after loadLocalMusic().
+     */
+    private void loadFavoritesFromPrefs() {
+        SharedPreferences prefs = getApplication().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        Set<String> saved = prefs.getStringSet(KEY_FAV_IDS, new LinkedHashSet<>());
+        Set<Long> restoredIds = new LinkedHashSet<>();
+        for (String idStr : saved) {
+            try { restoredIds.add(Long.parseLong(idStr)); }
+            catch (NumberFormatException ignored) {}
+        }
+        // Post the IDs immediately so the heart icon shows correctly even before
+        // loadLocalMusic() completes and populates the Song objects.
+        favoriteIdsLiveData.postValue(restoredIds);
+    }
+
+    /**
+     * Called after songs are loaded from MediaStore.
+     * Rebuilds favoritesMap from the persisted IDs so Song objects are available.
+     */
+    private void syncFavoritesWithSongs(List<Song> songs) {
+        Set<Long> persistedIds = favoriteIdsLiveData.getValue();
+        if (persistedIds == null || persistedIds.isEmpty()) return;
+
+        // Build a quick lookup map
+        Map<Long, Song> songById = new LinkedHashMap<>();
+        for (Song s : songs) songById.put(s.getId(), s);
+
+        favoritesMap.clear();
+        Set<Long> validIds = new LinkedHashSet<>();
+        for (Long id : persistedIds) {
+            Song s = songById.get(id);
+            if (s != null) {
+                favoritesMap.put(id, s);
+                validIds.add(id);
+            }
+        }
+        // Remove any IDs whose files were deleted
+        favoriteIdsLiveData.postValue(validIds);
+        // Persist cleaned-up set
+        saveFavoritesToPrefs(validIds);
+    }
+
+    /** Persists current favorite IDs to SharedPreferences. */
+    private void saveFavoritesToPrefs(Set<Long> ids) {
+        Set<String> stringSet = new LinkedHashSet<>();
+        for (Long id : ids) stringSet.add(String.valueOf(id));
+        getApplication()
+                .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putStringSet(KEY_FAV_IDS, stringSet)
+                .apply();
+    }
+
+    /**
+     * Toggles favorite. Returns true if song is now liked, false if unliked.
+     * Immediately persists the new state to SharedPreferences.
      */
     public boolean toggleFavorite(Song song) {
         Set<Long> current = favoriteIdsLiveData.getValue();
@@ -144,29 +203,27 @@ public class MusicViewModel extends AndroidViewModel {
             current.add(song.getId());
             nowFavorite = true;
         }
-        // Post a new Set copy so LiveData observers fire
-        favoriteIdsLiveData.postValue(new LinkedHashSet<>(current));
+        Set<Long> updated = new LinkedHashSet<>(current);
+        favoriteIdsLiveData.postValue(updated);
+        saveFavoritesToPrefs(updated);   // ← persist immediately
         return nowFavorite;
     }
 
-    /** Returns true if [songId] is currently a favourite. */
     public boolean isFavorite(long songId) {
         Set<Long> ids = favoriteIdsLiveData.getValue();
         return ids != null && ids.contains(songId);
     }
 
-    /** Snapshot list of favourite songs in add-order (for Favorites tab). */
     public List<Song> getFavoritesList() {
         return new ArrayList<>(favoritesMap.values());
     }
 
-    // ── Shuffle no-repeat helpers ─────────────────────────────────────
+    // ── Shuffle helpers ───────────────────────────────────────────────
     public boolean isShuffleCycleComplete() {
         if (currentPlaylist == null || currentPlaylist.isEmpty()) return false;
         if (!Boolean.TRUE.equals(shuffleModeLiveData.getValue())) return false;
-        for (Song s : currentPlaylist) {
+        for (Song s : currentPlaylist)
             if (!playedInShuffleCycle.contains(s.getId())) return false;
-        }
         return true;
     }
 
@@ -179,12 +236,10 @@ public class MusicViewModel extends AndroidViewModel {
         showEndDialogLiveData.postValue(false);
         endOfQueueLiveData.postValue(false);
         playedInShuffleCycle.clear();
-
         List<Song> shuffled = new ArrayList<>(library);
         Collections.shuffle(shuffled);
         currentPlaylist = shuffled;
-        currentIndex    = 0;
-
+        currentIndex = 0;
         exoPlayer.clearMediaItems();
         for (Song s : shuffled) exoPlayer.addMediaItem(MediaItem.fromUri(s.getUri()));
         exoPlayer.setShuffleModeEnabled(false);
@@ -201,7 +256,6 @@ public class MusicViewModel extends AndroidViewModel {
         showEndDialogLiveData.postValue(false);
         endOfQueueLiveData.postValue(false);
         playedInShuffleCycle.clear();
-
         exoPlayer.clearMediaItems();
         for (Song s : currentPlaylist) exoPlayer.addMediaItem(MediaItem.fromUri(s.getUri()));
         exoPlayer.setShuffleModeEnabled(false);
@@ -222,9 +276,8 @@ public class MusicViewModel extends AndroidViewModel {
         this.currentPlaylist = playlist;
         this.currentIndex    = index;
         playedInShuffleCycle.clear();
-        if (Boolean.TRUE.equals(shuffleModeLiveData.getValue())) {
+        if (Boolean.TRUE.equals(shuffleModeLiveData.getValue()))
             playedInShuffleCycle.add(song.getId());
-        }
         exoPlayer.clearMediaItems();
         for (Song s : playlist) exoPlayer.addMediaItem(MediaItem.fromUri(s.getUri()));
         exoPlayer.seekToDefaultPosition(index);
@@ -276,8 +329,8 @@ public class MusicViewModel extends AndroidViewModel {
     }
 
     public void toggleRepeat() {
-        int next = exoPlayer.getRepeatMode() == Player.REPEAT_MODE_OFF ? Player.REPEAT_MODE_ALL
-                : exoPlayer.getRepeatMode() == Player.REPEAT_MODE_ALL  ? Player.REPEAT_MODE_ONE
+        int next = exoPlayer.getRepeatMode() == Player.REPEAT_MODE_OFF  ? Player.REPEAT_MODE_ALL
+                : exoPlayer.getRepeatMode() == Player.REPEAT_MODE_ALL   ? Player.REPEAT_MODE_ONE
                 : Player.REPEAT_MODE_OFF;
         exoPlayer.setRepeatMode(next);
         repeatModeLiveData.postValue(next);
@@ -291,7 +344,7 @@ public class MusicViewModel extends AndroidViewModel {
                 Song nowPlaying  = currentPlaylist.get(currentIndex);
                 List<Song> after = new ArrayList<>(currentPlaylist.subList(currentIndex + 1, currentPlaylist.size()));
                 Collections.shuffle(after);
-                List<Song> before   = new ArrayList<>(currentPlaylist.subList(0, currentIndex));
+                List<Song> before    = new ArrayList<>(currentPlaylist.subList(0, currentIndex));
                 List<Song> reordered = new ArrayList<>(before);
                 reordered.add(nowPlaying);
                 reordered.addAll(after);
@@ -303,7 +356,8 @@ public class MusicViewModel extends AndroidViewModel {
             }
             playedInShuffleCycle.clear();
             if (currentPlaylist != null && currentIndex >= 0)
-                playedInShuffleCycle.add(currentPlaylist.get(Math.min(currentIndex, currentPlaylist.size()-1)).getId());
+                playedInShuffleCycle.add(
+                        currentPlaylist.get(Math.min(currentIndex, currentPlaylist.size() - 1)).getId());
         } else {
             playedInShuffleCycle.clear();
         }
@@ -315,6 +369,8 @@ public class MusicViewModel extends AndroidViewModel {
         new Thread(() -> {
             List<Song> local = repository.fetchLocalSongs();
             songsLiveData.postValue(local);
+            // Rebuild favoritesMap with real Song objects after media scan
+            syncFavoritesWithSongs(local);
         }).start();
     }
 

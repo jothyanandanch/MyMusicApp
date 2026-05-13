@@ -43,14 +43,14 @@ val SpotifyElevated  = Color(0xFF3E3E3E)
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MusicLibraryScreen(viewModel: MusicViewModel) {
-    val songs        by viewModel.getSongs().observeAsState(initial = emptyList())
-    val currentSong  by viewModel.getCurrentSong().observeAsState()
-    val isPlaying    by viewModel.getIsPlaying().observeAsState(false)
-    val progress     by viewModel.getProgress().observeAsState(0L)
-    val duration     by viewModel.getDuration().observeAsState(0L)
-    val repeatMode   by viewModel.getRepeatMode().observeAsState(0)
-    val shuffleMode  by viewModel.getShuffleMode().observeAsState(false)
-    val favoriteIds  by viewModel.getFavoriteIds().observeAsState(initial = emptySet())
+    val songs         by viewModel.getSongs().observeAsState(initial = emptyList())
+    val currentSong   by viewModel.getCurrentSong().observeAsState()
+    val isPlaying     by viewModel.getIsPlaying().observeAsState(false)
+    val progress      by viewModel.getProgress().observeAsState(0L)
+    val duration      by viewModel.getDuration().observeAsState(0L)
+    val repeatMode    by viewModel.getRepeatMode().observeAsState(0)
+    val shuffleMode   by viewModel.getShuffleMode().observeAsState(false)
+    val favoriteIds   by viewModel.getFavoriteIds().observeAsState(initial = emptySet())
     val showEndDialog by viewModel.getShowEndDialog().observeAsState(false)
 
     var showNowPlaying by remember { mutableStateOf(false) }
@@ -61,7 +61,7 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
     if (showEndDialog) {
         AlertDialog(
             onDismissRequest = { viewModel.dismissEndOfQueue() },
-            containerColor = SpotifySurface2,
+            containerColor   = SpotifySurface2,
             title = { Text("End of Queue", color = SpotifyWhite, fontWeight = FontWeight.Bold) },
             text  = { Text("What would you like to do?", color = SpotifyGray) },
             confirmButton = {
@@ -116,7 +116,7 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp, vertical = 8.dp),
-                    verticalAlignment   = Alignment.CenterVertically,
+                    verticalAlignment     = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -152,10 +152,9 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                     }
                 }
 
-                // Home tab filter chips — Music only (Podcasts removed)
                 if (selectedTab == 0) {
                     LazyRow(
-                        contentPadding = PaddingValues(horizontal = 16.dp),
+                        contentPadding        = PaddingValues(horizontal = 16.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         item { SpotifyChip("All",   true) }
@@ -166,9 +165,9 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
 
                 if (selectedTab == 1) {
                     OutlinedTextField(
-                        value = searchQuery,
+                        value         = searchQuery,
                         onValueChange = { searchQuery = it },
-                        modifier = Modifier
+                        modifier      = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 16.dp, vertical = 8.dp),
                         placeholder  = { Text("Artists or songs", color = SpotifyGray) },
@@ -198,6 +197,7 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                         duration          = duration,
                         isFavorite        = favoriteIds.contains(song.id),
                         onTogglePlayPause = { viewModel.togglePlayPause() },
+                        onPrevious        = { viewModel.playPrevious() },
                         onNext            = { viewModel.playNextFromMiniPlayer() },
                         onToggleFavorite  = { viewModel.toggleFavorite(song) },
                         onClick           = { showNowPlaying = true }
@@ -230,7 +230,6 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                 onToggleFavorite = { song -> viewModel.toggleFavorite(song) }
             )
             2 -> PlaylistScreen(
-                // "Local" playlist = all device songs — auto-populated, cannot be deleted
                 localSongs       = songs,
                 currentSong      = currentSong,
                 favoriteIds      = favoriteIds,
@@ -266,9 +265,10 @@ fun HomeTab(
                 Spacer(Modifier.height(8.dp))
                 Text(
                     "Recently Added",
-                    color = SpotifyWhite, fontWeight = FontWeight.Bold,
-                    fontSize = 18.sp,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                    color      = SpotifyWhite,
+                    fontWeight = FontWeight.Bold,
+                    fontSize   = 18.sp,
+                    modifier   = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
                 )
             }
             val gridSongs = songs.take(6)
@@ -294,9 +294,10 @@ fun HomeTab(
                 Spacer(Modifier.height(16.dp))
                 Text(
                     "All Songs",
-                    color = SpotifyWhite, fontWeight = FontWeight.Bold,
-                    fontSize = 18.sp,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                    color      = SpotifyWhite,
+                    fontWeight = FontWeight.Bold,
+                    fontSize   = 18.sp,
+                    modifier   = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
                 )
             }
         }
@@ -333,14 +334,13 @@ fun SearchTab(
     }
 }
 
-// ─── Song List Item — with long-press tooltip (title + artist) ────────
+// ─── Song List Item ───────────────────────────────────────────────────
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun SongListItem(
     song: Song, isCurrentSong: Boolean, isFavorite: Boolean,
     onClick: () -> Unit, onToggleFavorite: () -> Unit
 ) {
-    // Long-press shows a tooltip with full title + artist
     var showTooltip by remember { mutableStateOf(false) }
 
     if (showTooltip) {
@@ -348,19 +348,10 @@ fun SongListItem(
             onDismissRequest = { showTooltip = false },
             containerColor   = SpotifySurface2,
             title = {
-                Text(
-                    text       = song.title,
-                    color      = SpotifyWhite,
-                    fontWeight = FontWeight.Bold,
-                    fontSize   = 16.sp
-                )
+                Text(song.title, color = SpotifyWhite, fontWeight = FontWeight.Bold, fontSize = 16.sp)
             },
             text = {
-                Text(
-                    text     = song.artist,
-                    color    = SpotifyGray,
-                    fontSize = 14.sp
-                )
+                Text(song.artist, color = SpotifyGray, fontSize = 14.sp)
             },
             confirmButton = {
                 TextButton(onClick = { showTooltip = false }) {
@@ -374,8 +365,8 @@ fun SongListItem(
         modifier = Modifier
             .fillMaxWidth()
             .combinedClickable(
-                onClick      = { onClick() },
-                onLongClick  = { showTooltip = true }
+                onClick     = { onClick() },
+                onLongClick = { showTooltip = true }
             )
             .background(if (isCurrentSong) SpotifySurface else Color.Transparent)
             .padding(horizontal = 16.dp, vertical = 8.dp),
@@ -462,13 +453,19 @@ fun QuickAccessItem(song: Song, isActive: Boolean, onClick: () -> Unit, modifier
     }
 }
 
-// ─── Mini Player Bar ──────────────────────────────────────────────────
+// ─── Mini Player Bar — WITH Previous button ───────────────────────────
 @Composable
 fun MiniPlayerBar(
-    song: Song, isPlaying: Boolean, progress: Long, duration: Long,
-    isFavorite: Boolean,
-    onTogglePlayPause: () -> Unit, onNext: () -> Unit,
-    onToggleFavorite: () -> Unit, onClick: () -> Unit
+    song              : Song,
+    isPlaying         : Boolean,
+    progress          : Long,
+    duration          : Long,
+    isFavorite        : Boolean,
+    onTogglePlayPause : () -> Unit,
+    onPrevious        : () -> Unit,   // ← ADDED
+    onNext            : () -> Unit,
+    onToggleFavorite  : () -> Unit,
+    onClick           : () -> Unit
 ) {
     val progressFraction =
         if (duration > 0) (progress.toFloat() / duration.toFloat()).coerceIn(0f, 1f) else 0f
@@ -479,6 +476,7 @@ fun MiniPlayerBar(
             .background(SpotifySurface2)
             .clickable { onClick() }
     ) {
+        // Green progress strip
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -499,6 +497,7 @@ fun MiniPlayerBar(
                 .padding(horizontal = 12.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            // Album art placeholder
             Box(
                 modifier = Modifier
                     .size(42.dp)
@@ -509,15 +508,23 @@ fun MiniPlayerBar(
                 Icon(Icons.Filled.MusicNote, null, tint = SpotifyGreen, modifier = Modifier.size(22.dp))
             }
 
+            // Song title + artist
             Column(modifier = Modifier.padding(start = 12.dp).weight(1f)) {
                 Text(
                     song.title, color = SpotifyWhite, fontWeight = FontWeight.SemiBold,
                     fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis
                 )
-                Text(song.artist, color = SpotifyGray, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    song.artist, color = SpotifyGray,
+                    fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis
+                )
             }
 
-            IconButton(onClick = onToggleFavorite, modifier = Modifier.size(40.dp)) {
+            // Like / unlike
+            IconButton(
+                onClick  = onToggleFavorite,
+                modifier = Modifier.size(40.dp)
+            ) {
                 Icon(
                     imageVector        = if (isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
                     contentDescription = if (isFavorite) "Unlike" else "Like",
@@ -526,7 +533,23 @@ fun MiniPlayerBar(
                 )
             }
 
-            IconButton(onClick = onTogglePlayPause, modifier = Modifier.size(40.dp)) {
+            // Previous ← ADDED
+            IconButton(
+                onClick  = onPrevious,
+                modifier = Modifier.size(40.dp)
+            ) {
+                Icon(
+                    Icons.Filled.SkipPrevious, "Previous",
+                    tint     = SpotifyWhite,
+                    modifier = Modifier.size(28.dp)
+                )
+            }
+
+            // Play / Pause
+            IconButton(
+                onClick  = onTogglePlayPause,
+                modifier = Modifier.size(40.dp)
+            ) {
                 Icon(
                     imageVector        = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
                     contentDescription = if (isPlaying) "Pause" else "Play",
@@ -535,14 +558,22 @@ fun MiniPlayerBar(
                 )
             }
 
-            IconButton(onClick = onNext, modifier = Modifier.size(40.dp)) {
-                Icon(Icons.Filled.SkipNext, "Next", tint = SpotifyWhite, modifier = Modifier.size(28.dp))
+            // Next
+            IconButton(
+                onClick  = onNext,
+                modifier = Modifier.size(40.dp)
+            ) {
+                Icon(
+                    Icons.Filled.SkipNext, "Next",
+                    tint     = SpotifyWhite,
+                    modifier = Modifier.size(28.dp)
+                )
             }
         }
     }
 }
 
-// ─── Bottom Navigation — Home / Search / Playlists / Liked ───────────
+// ─── Bottom Navigation ────────────────────────────────────────────────
 @Composable
 fun SpotifyBottomNav(selectedTab: Int, onTabSelected: (Int) -> Unit) {
     NavigationBar(containerColor = SpotifyBlack, tonalElevation = 0.dp) {
@@ -567,7 +598,6 @@ fun SpotifyBottomNav(selectedTab: Int, onTabSelected: (Int) -> Unit) {
             label    = { Text("Search", fontSize = 11.sp) },
             colors   = navColors
         )
-        // Tab 2: Playlists (replaces Library)
         NavigationBarItem(
             selected = selectedTab == 2,
             onClick  = { onTabSelected(2) },
@@ -578,7 +608,7 @@ fun SpotifyBottomNav(selectedTab: Int, onTabSelected: (Int) -> Unit) {
         NavigationBarItem(
             selected = selectedTab == 3,
             onClick  = { onTabSelected(3) },
-            icon     = {
+            icon = {
                 Icon(
                     imageVector        = if (selectedTab == 3) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
                     contentDescription = "Liked Songs",
