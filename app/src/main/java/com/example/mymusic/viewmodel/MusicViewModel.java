@@ -19,8 +19,10 @@ import com.example.mymusic.repository.LocalMusicRepository;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 public class MusicViewModel extends AndroidViewModel {
@@ -33,20 +35,19 @@ public class MusicViewModel extends AndroidViewModel {
     private final MutableLiveData<Long>       durationLiveData      = new MutableLiveData<>(0L);
     private final MutableLiveData<Integer>    repeatModeLiveData    = new MutableLiveData<>(Player.REPEAT_MODE_OFF);
     private final MutableLiveData<Boolean>    shuffleModeLiveData   = new MutableLiveData<>(false);
-    // true  = mini-player clicked next at end → auto-restart signal
-    // For full-player: endOfQueueDialogLiveData controls the dialog
     private final MutableLiveData<Boolean>    endOfQueueLiveData    = new MutableLiveData<>(false);
-    // Used ONLY by the full Now Playing screen to show its dialog
     private final MutableLiveData<Boolean>    showEndDialogLiveData = new MutableLiveData<>(false);
+
+    // ── Phase 4: Favorites ────────────────────────────────────────────
+    // Map<songId, Song> — insertion-ordered so the Favorites tab keeps add order.
+    private final Map<Long, Song>           favoritesMap     = new LinkedHashMap<>();
+    private final MutableLiveData<Set<Long>> favoriteIdsLiveData =
+            new MutableLiveData<>(new LinkedHashSet<>());
 
     private ExoPlayer  exoPlayer;
     private List<Song> currentPlaylist;
     private int        currentIndex = -1;
 
-    // Shuffle no-repeat tracking:
-    // Keeps track of song IDs already played in the current shuffle cycle.
-    // Cleared when: shuffle is turned off, a fresh playAllShuffled() is called,
-    // or we deliberately start a new cycle (user added to queue).
     private final Set<Long> playedInShuffleCycle = new LinkedHashSet<>();
 
     private final Handler  progressHandler  = new Handler(Looper.getMainLooper());
@@ -87,7 +88,6 @@ public class MusicViewModel extends AndroidViewModel {
                     currentIndex = idx;
                     Song song = currentPlaylist.get(currentIndex);
                     currentSongLiveData.postValue(song);
-                    // Track played songs for shuffle no-repeat
                     if (Boolean.TRUE.equals(shuffleModeLiveData.getValue())) {
                         playedInShuffleCycle.add(song.getId());
                     }
@@ -113,21 +113,54 @@ public class MusicViewModel extends AndroidViewModel {
     }
 
     // ── LiveData getters ──────────────────────────────────────────────
-    public LiveData<List<Song>> getSongs()           { return songsLiveData; }
-    public LiveData<Song>       getCurrentSong()     { return currentSongLiveData; }
-    public LiveData<Boolean>    getIsPlaying()       { return isPlayingLiveData; }
-    public LiveData<Long>       getProgress()        { return progressLiveData; }
-    public LiveData<Long>       getDuration()        { return durationLiveData; }
-    public LiveData<Integer>    getRepeatMode()      { return repeatModeLiveData; }
-    public LiveData<Boolean>    getShuffleMode()     { return shuffleModeLiveData; }
-    public LiveData<Boolean>    getEndOfQueue()      { return endOfQueueLiveData; }
-    public LiveData<Boolean>    getShowEndDialog()   { return showEndDialogLiveData; }
+    public LiveData<List<Song>> getSongs()             { return songsLiveData; }
+    public LiveData<Song>       getCurrentSong()       { return currentSongLiveData; }
+    public LiveData<Boolean>    getIsPlaying()         { return isPlayingLiveData; }
+    public LiveData<Long>       getProgress()          { return progressLiveData; }
+    public LiveData<Long>       getDuration()          { return durationLiveData; }
+    public LiveData<Integer>    getRepeatMode()        { return repeatModeLiveData; }
+    public LiveData<Boolean>    getShuffleMode()       { return shuffleModeLiveData; }
+    public LiveData<Boolean>    getEndOfQueue()        { return endOfQueueLiveData; }
+    public LiveData<Boolean>    getShowEndDialog()     { return showEndDialogLiveData; }
+    public LiveData<Set<Long>>  getFavoriteIds()       { return favoriteIdsLiveData; }
+
+    // ── Phase 4: Favorites API ────────────────────────────────────────
+
+    /**
+     * Toggles the favourite state of [song].
+     * Returns true if the song is now a favourite, false if removed.
+     */
+    public boolean toggleFavorite(Song song) {
+        Set<Long> current = favoriteIdsLiveData.getValue();
+        if (current == null) current = new LinkedHashSet<>();
+
+        boolean nowFavorite;
+        if (current.contains(song.getId())) {
+            favoritesMap.remove(song.getId());
+            current.remove(song.getId());
+            nowFavorite = false;
+        } else {
+            favoritesMap.put(song.getId(), song);
+            current.add(song.getId());
+            nowFavorite = true;
+        }
+        // Post a new Set copy so LiveData observers fire
+        favoriteIdsLiveData.postValue(new LinkedHashSet<>(current));
+        return nowFavorite;
+    }
+
+    /** Returns true if [songId] is currently a favourite. */
+    public boolean isFavorite(long songId) {
+        Set<Long> ids = favoriteIdsLiveData.getValue();
+        return ids != null && ids.contains(songId);
+    }
+
+    /** Snapshot list of favourite songs in add-order (for Favorites tab). */
+    public List<Song> getFavoritesList() {
+        return new ArrayList<>(favoritesMap.values());
+    }
 
     // ── Shuffle no-repeat helpers ─────────────────────────────────────
-    /**
-     * Returns true when shuffle is ON and all songs in the current playlist
-     * have been played at least once in this cycle.
-     */
     public boolean isShuffleCycleComplete() {
         if (currentPlaylist == null || currentPlaylist.isEmpty()) return false;
         if (!Boolean.TRUE.equals(shuffleModeLiveData.getValue())) return false;
@@ -137,17 +170,9 @@ public class MusicViewModel extends AndroidViewModel {
         return true;
     }
 
-    /** Resets the shuffle cycle so all songs are eligible again. */
-    public void resetShuffleCycle() {
-        playedInShuffleCycle.clear();
-    }
+    public void resetShuffleCycle() { playedInShuffleCycle.clear(); }
 
     // ── End-of-queue actions ──────────────────────────────────────────
-    /**
-     * "Play Randomly" from the full Now Playing end-of-queue dialog.
-     * Uses entire music library (songsLiveData) with shuffle ON.
-     * No repeats until all songs are played.
-     */
     public void playAllShuffled() {
         List<Song> library = songsLiveData.getValue();
         if (library == null || library.isEmpty()) return;
@@ -158,12 +183,12 @@ public class MusicViewModel extends AndroidViewModel {
         List<Song> shuffled = new ArrayList<>(library);
         Collections.shuffle(shuffled);
         currentPlaylist = shuffled;
-        currentIndex = 0;
+        currentIndex    = 0;
 
         exoPlayer.clearMediaItems();
         for (Song s : shuffled) exoPlayer.addMediaItem(MediaItem.fromUri(s.getUri()));
-        exoPlayer.setShuffleModeEnabled(false); // order already shuffled manually for no-repeat
-        shuffleModeLiveData.postValue(true);     // UI still shows shuffle as ON
+        exoPlayer.setShuffleModeEnabled(false);
+        shuffleModeLiveData.postValue(true);
         exoPlayer.seekToDefaultPosition(0);
         exoPlayer.prepare();
         exoPlayer.play();
@@ -171,9 +196,6 @@ public class MusicViewModel extends AndroidViewModel {
         playedInShuffleCycle.add(shuffled.get(0).getId());
     }
 
-    /**
-     * "Play from Beginning" — restarts the current playlist in order, shuffle OFF.
-     */
     public void playFromBeginning() {
         if (currentPlaylist == null || currentPlaylist.isEmpty()) return;
         showEndDialogLiveData.postValue(false);
@@ -190,7 +212,6 @@ public class MusicViewModel extends AndroidViewModel {
         currentSongLiveData.postValue(currentPlaylist.get(0));
     }
 
-    /** Dismiss end-of-queue dialog (full player) without action. */
     public void dismissEndOfQueue() {
         showEndDialogLiveData.postValue(false);
         endOfQueueLiveData.postValue(false);
@@ -204,7 +225,6 @@ public class MusicViewModel extends AndroidViewModel {
         if (Boolean.TRUE.equals(shuffleModeLiveData.getValue())) {
             playedInShuffleCycle.add(song.getId());
         }
-
         exoPlayer.clearMediaItems();
         for (Song s : playlist) exoPlayer.addMediaItem(MediaItem.fromUri(s.getUri()));
         exoPlayer.seekToDefaultPosition(index);
@@ -220,16 +240,10 @@ public class MusicViewModel extends AndroidViewModel {
         else                       exoPlayer.play();
     }
 
-    /**
-     * Called from MINI PLAYER next button.
-     * At end of queue → auto-restart from beginning with current shuffle state.
-     * No dialog shown.
-     */
     public void playNextFromMiniPlayer() {
         if (exoPlayer.hasNextMediaItem()) {
             exoPlayer.seekToNextMediaItem();
         } else {
-            // Auto-restart: no dialog, just restart with current shuffle preference
             boolean shuffle = Boolean.TRUE.equals(shuffleModeLiveData.getValue());
             if (currentPlaylist == null || currentPlaylist.isEmpty()) return;
             playedInShuffleCycle.clear();
@@ -237,7 +251,7 @@ public class MusicViewModel extends AndroidViewModel {
             List<Song> toPlay = new ArrayList<>(currentPlaylist);
             if (shuffle) Collections.shuffle(toPlay);
             for (Song s : toPlay) exoPlayer.addMediaItem(MediaItem.fromUri(s.getUri()));
-            exoPlayer.setShuffleModeEnabled(false); // manual order for no-repeat guarantee
+            exoPlayer.setShuffleModeEnabled(false);
             exoPlayer.seekToDefaultPosition(0);
             exoPlayer.prepare();
             exoPlayer.play();
@@ -246,16 +260,9 @@ public class MusicViewModel extends AndroidViewModel {
         }
     }
 
-    /**
-     * Called from FULL NOW PLAYING screen next button.
-     * At end of queue → show dialog asking user what to do.
-     */
     public void playNextFromFullPlayer() {
-        if (exoPlayer.hasNextMediaItem()) {
-            exoPlayer.seekToNextMediaItem();
-        } else {
-            showEndDialogLiveData.postValue(true);
-        }
+        if (exoPlayer.hasNextMediaItem()) exoPlayer.seekToNextMediaItem();
+        else showEndDialogLiveData.postValue(true);
     }
 
     public void playPrevious() {
@@ -269,7 +276,7 @@ public class MusicViewModel extends AndroidViewModel {
     }
 
     public void toggleRepeat() {
-        int next = exoPlayer.getRepeatMode() == Player.REPEAT_MODE_OFF  ? Player.REPEAT_MODE_ALL
+        int next = exoPlayer.getRepeatMode() == Player.REPEAT_MODE_OFF ? Player.REPEAT_MODE_ALL
                 : exoPlayer.getRepeatMode() == Player.REPEAT_MODE_ALL  ? Player.REPEAT_MODE_ONE
                 : Player.REPEAT_MODE_OFF;
         exoPlayer.setRepeatMode(next);
@@ -277,36 +284,30 @@ public class MusicViewModel extends AndroidViewModel {
     }
 
     public void toggleShuffle() {
-        boolean cur = Boolean.TRUE.equals(shuffleModeLiveData.getValue());
+        boolean cur  = Boolean.TRUE.equals(shuffleModeLiveData.getValue());
         boolean next = !cur;
         if (next) {
-            // Turning shuffle ON: re-order remaining songs in current playlist for no-repeat
             if (currentPlaylist != null && currentIndex >= 0) {
-                Song nowPlaying = currentPlaylist.get(currentIndex);
-                List<Song> remaining = new ArrayList<>(currentPlaylist.subList(currentIndex + 1, currentPlaylist.size()));
-                Collections.shuffle(remaining);
-                List<Song> reordered = new ArrayList<>();
+                Song nowPlaying  = currentPlaylist.get(currentIndex);
+                List<Song> after = new ArrayList<>(currentPlaylist.subList(currentIndex + 1, currentPlaylist.size()));
+                Collections.shuffle(after);
+                List<Song> before   = new ArrayList<>(currentPlaylist.subList(0, currentIndex));
+                List<Song> reordered = new ArrayList<>(before);
                 reordered.add(nowPlaying);
-                reordered.addAll(remaining);
-                // Prepend already-played songs before current
-                List<Song> before = new ArrayList<>(currentPlaylist.subList(0, currentIndex));
-                List<Song> full = new ArrayList<>(before);
-                full.addAll(reordered);
-                currentPlaylist = full;
+                reordered.addAll(after);
+                currentPlaylist = reordered;
                 exoPlayer.clearMediaItems();
-                for (Song s : full) exoPlayer.addMediaItem(MediaItem.fromUri(s.getUri()));
-                exoPlayer.seekToDefaultPosition(before.size()); // seek to current song
+                for (Song s : reordered) exoPlayer.addMediaItem(MediaItem.fromUri(s.getUri()));
+                exoPlayer.seekToDefaultPosition(before.size());
                 exoPlayer.prepare();
-                // do NOT call play() — maintain current playing state
             }
             playedInShuffleCycle.clear();
-            if (currentPlaylist != null && currentIndex >= 0) {
+            if (currentPlaylist != null && currentIndex >= 0)
                 playedInShuffleCycle.add(currentPlaylist.get(Math.min(currentIndex, currentPlaylist.size()-1)).getId());
-            }
         } else {
             playedInShuffleCycle.clear();
         }
-        exoPlayer.setShuffleModeEnabled(false); // we handle order manually
+        exoPlayer.setShuffleModeEnabled(false);
         shuffleModeLiveData.postValue(next);
     }
 

@@ -27,26 +27,27 @@ import com.example.mymusic.viewmodel.MusicViewModel
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 
-// ─── Spotify Color Tokens ───────────────────────────────────────────
-val SpotifyBlack       = Color(0xFF121212)
-val SpotifySurface     = Color(0xFF1E1E1E)
-val SpotifySurface2    = Color(0xFF282828)
-val SpotifyGreen       = Color(0xFF1DB954)
-val SpotifyWhite       = Color(0xFFFFFFFF)
-val SpotifyGray        = Color(0xFFB3B3B3)
-val SpotifyLightGray   = Color(0xFF535353)
-val SpotifyElevated    = Color(0xFF3E3E3E)
+// ─── Spotify Color Tokens ────────────────────────────────────────────
+val SpotifyBlack     = Color(0xFF121212)
+val SpotifySurface   = Color(0xFF1E1E1E)
+val SpotifySurface2  = Color(0xFF282828)
+val SpotifyGreen     = Color(0xFF1DB954)
+val SpotifyWhite     = Color(0xFFFFFFFF)
+val SpotifyGray      = Color(0xFFB3B3B3)
+val SpotifyLightGray = Color(0xFF535353)
+val SpotifyElevated  = Color(0xFF3E3E3E)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MusicLibraryScreen(viewModel: MusicViewModel) {
-    val songs        by viewModel.songs.observeAsState(initial = emptyList())
-    val currentSong  by viewModel.currentSong.observeAsState()
-    val isPlaying    by viewModel.isPlaying.observeAsState(false)
-    val progress     by viewModel.progress.observeAsState(0L)
-    val duration     by viewModel.duration.observeAsState(0L)
-    val repeatMode   by viewModel.repeatMode.observeAsState(0)
-    val shuffleMode  by viewModel.shuffleMode.observeAsState(false)
+    val songs       by viewModel.songs.observeAsState(initial = emptyList())
+    val currentSong by viewModel.currentSong.observeAsState()
+    val isPlaying   by viewModel.isPlaying.observeAsState(false)
+    val progress    by viewModel.progress.observeAsState(0L)
+    val duration    by viewModel.duration.observeAsState(0L)
+    val repeatMode  by viewModel.repeatMode.observeAsState(0)
+    val shuffleMode by viewModel.shuffleMode.observeAsState(false)
+    val favoriteIds by viewModel.favoriteIds.observeAsState(initial = emptySet())
 
     var showNowPlaying by remember { mutableStateOf(false) }
     var selectedTab    by remember { mutableStateOf(0) }
@@ -103,7 +104,8 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                             text = when (selectedTab) {
                                 0    -> "Good evening"
                                 1    -> "Search"
-                                else -> "Your Library"
+                                2    -> "Your Library"
+                                else -> "Liked Songs"
                             },
                             color = SpotifyWhite,
                             fontWeight = FontWeight.Bold,
@@ -112,11 +114,11 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                     }
                     Row {
                         IconButton(onClick = {}) {
-                            Icon(Icons.Filled.Notifications, contentDescription = "Notifications",
+                            Icon(Icons.Filled.Notifications, "Notifications",
                                 tint = SpotifyWhite, modifier = Modifier.size(24.dp))
                         }
                         IconButton(onClick = {}) {
-                            Icon(Icons.Filled.Settings, contentDescription = "Settings",
+                            Icon(Icons.Filled.Settings, "Settings",
                                 tint = SpotifyWhite, modifier = Modifier.size(24.dp))
                         }
                     }
@@ -142,9 +144,7 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                             .fillMaxWidth()
                             .padding(horizontal = 16.dp, vertical = 8.dp),
                         placeholder = { Text("Artists, songs, or podcasts", color = SpotifyGray) },
-                        leadingIcon = {
-                            Icon(Icons.Filled.Search, contentDescription = null, tint = SpotifyBlack)
-                        },
+                        leadingIcon = { Icon(Icons.Filled.Search, null, tint = SpotifyBlack) },
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedContainerColor   = SpotifyWhite,
                             unfocusedContainerColor = SpotifyWhite,
@@ -168,9 +168,11 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                         isPlaying         = isPlaying,
                         progress          = progress,
                         duration          = duration,
+                        isFavorite        = favoriteIds.contains(song.id),
                         onTogglePlayPause = { viewModel.togglePlayPause() },
                         onNext            = { viewModel.playNextFromMiniPlayer() },
                         onPrevious        = { viewModel.playPrevious() },
+                        onToggleFavorite  = { viewModel.toggleFavorite(song) },
                         onClick           = { showNowPlaying = true }
                     )
                 }
@@ -187,97 +189,103 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
             0 -> HomeTab(
                 songs       = filteredSongs,
                 currentSong = currentSong,
+                favoriteIds = favoriteIds,
                 modifier    = Modifier.padding(paddingValues),
-                onSongClick = { song -> viewModel.playSong(song, filteredSongs, filteredSongs.indexOf(song)) }
+                onSongClick = { song -> viewModel.playSong(song, filteredSongs, filteredSongs.indexOf(song)) },
+                onToggleFavorite = { song -> viewModel.toggleFavorite(song) }
             )
             1 -> SearchTab(
                 songs       = filteredSongs,
                 currentSong = currentSong,
+                favoriteIds = favoriteIds,
                 modifier    = Modifier.padding(paddingValues),
-                onSongClick = { song -> viewModel.playSong(song, filteredSongs, filteredSongs.indexOf(song)) }
+                onSongClick = { song -> viewModel.playSong(song, filteredSongs, filteredSongs.indexOf(song)) },
+                onToggleFavorite = { song -> viewModel.toggleFavorite(song) }
             )
             2 -> LibraryTab(
                 songs       = filteredSongs,
                 currentSong = currentSong,
+                favoriteIds = favoriteIds,
                 modifier    = Modifier.padding(paddingValues),
-                onSongClick = { song -> viewModel.playSong(song, filteredSongs, filteredSongs.indexOf(song)) }
+                onSongClick = { song -> viewModel.playSong(song, filteredSongs, filteredSongs.indexOf(song)) },
+                onToggleFavorite = { song -> viewModel.toggleFavorite(song) }
+            )
+            3 -> FavoritesTab(
+                songs       = viewModel.getFavoritesList(),
+                currentSong = currentSong,
+                favoriteIds = favoriteIds,
+                modifier    = Modifier.padding(paddingValues),
+                onSongClick = { song ->
+                    val favList = viewModel.getFavoritesList()
+                    viewModel.playSong(song, favList, favList.indexOf(song))
+                },
+                onToggleFavorite = { song -> viewModel.toggleFavorite(song) }
             )
         }
     }
 }
 
-// ─── Home Tab ──────────────────────────────────────────────────────
+// ─── Home Tab ────────────────────────────────────────────────────────
 @Composable
-fun HomeTab(songs: List<Song>, currentSong: Song?, modifier: Modifier, onSongClick: (Song) -> Unit) {
+fun HomeTab(
+    songs: List<Song>, currentSong: Song?, favoriteIds: Set<Long>,
+    modifier: Modifier, onSongClick: (Song) -> Unit, onToggleFavorite: (Song) -> Unit
+) {
     LazyColumn(modifier = modifier.fillMaxSize().background(SpotifyBlack)) {
         if (songs.isNotEmpty()) {
             item {
                 Spacer(Modifier.height(8.dp))
-                Text(
-                    "Recently Added",
-                    color = SpotifyWhite, fontWeight = FontWeight.Bold,
-                    fontSize = 18.sp,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-                )
+                Text("Recently Added", color = SpotifyWhite, fontWeight = FontWeight.Bold,
+                    fontSize = 18.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
             }
             val gridSongs = songs.take(6)
             items(gridSongs.chunked(2)) { pair ->
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     pair.forEach { song ->
-                        QuickAccessItem(
-                            song     = song,
-                            isActive = song.id == currentSong?.id,
-                            onClick  = { onSongClick(song) },
-                            modifier = Modifier.weight(1f)
-                        )
+                        QuickAccessItem(song, song.id == currentSong?.id,
+                            { onSongClick(song) }, Modifier.weight(1f))
                     }
                     if (pair.size == 1) Spacer(Modifier.weight(1f))
                 }
             }
             item {
                 Spacer(Modifier.height(16.dp))
-                Text(
-                    "All Songs",
-                    color = SpotifyWhite, fontWeight = FontWeight.Bold,
-                    fontSize = 18.sp,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-                )
+                Text("All Songs", color = SpotifyWhite, fontWeight = FontWeight.Bold,
+                    fontSize = 18.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
             }
         }
         items(songs) { song ->
-            SongListItem(
-                song          = song,
-                isCurrentSong = song.id == currentSong?.id,
-                onClick       = { onSongClick(song) }
-            )
+            SongListItem(song, song.id == currentSong?.id,
+                favoriteIds.contains(song.id), { onSongClick(song) }, { onToggleFavorite(song) })
         }
         item { Spacer(Modifier.height(8.dp)) }
     }
 }
 
-// ─── Search Tab ────────────────────────────────────────────────────
+// ─── Search Tab ──────────────────────────────────────────────────────
 @Composable
-fun SearchTab(songs: List<Song>, currentSong: Song?, modifier: Modifier, onSongClick: (Song) -> Unit) {
+fun SearchTab(
+    songs: List<Song>, currentSong: Song?, favoriteIds: Set<Long>,
+    modifier: Modifier, onSongClick: (Song) -> Unit, onToggleFavorite: (Song) -> Unit
+) {
     LazyColumn(modifier = modifier.fillMaxSize().background(SpotifyBlack)) {
         items(songs) { song ->
-            SongListItem(
-                song          = song,
-                isCurrentSong = song.id == currentSong?.id,
-                onClick       = { onSongClick(song) }
-            )
+            SongListItem(song, song.id == currentSong?.id,
+                favoriteIds.contains(song.id), { onSongClick(song) }, { onToggleFavorite(song) })
         }
         item { Spacer(Modifier.height(8.dp)) }
     }
 }
 
-// ─── Library Tab ───────────────────────────────────────────────────
+// ─── Library Tab ─────────────────────────────────────────────────────
 @Composable
-fun LibraryTab(songs: List<Song>, currentSong: Song?, modifier: Modifier, onSongClick: (Song) -> Unit) {
+fun LibraryTab(
+    songs: List<Song>, currentSong: Song?, favoriteIds: Set<Long>,
+    modifier: Modifier, onSongClick: (Song) -> Unit, onToggleFavorite: (Song) -> Unit
+) {
     LazyColumn(modifier = modifier.fillMaxSize().background(SpotifyBlack)) {
         item {
             Row(
@@ -286,22 +294,74 @@ fun LibraryTab(songs: List<Song>, currentSong: Song?, modifier: Modifier, onSong
                 verticalAlignment     = Alignment.CenterVertically
             ) {
                 Text("Your Library", color = SpotifyWhite, fontWeight = FontWeight.Bold, fontSize = 20.sp)
-                Icon(Icons.Filled.Add, contentDescription = "Add", tint = SpotifyWhite,
-                    modifier = Modifier.size(24.dp))
+                Icon(Icons.Filled.Add, "Add", tint = SpotifyWhite, modifier = Modifier.size(24.dp))
             }
         }
         items(songs) { song ->
-            SongListItem(
-                song          = song,
-                isCurrentSong = song.id == currentSong?.id,
-                onClick       = { onSongClick(song) }
-            )
+            SongListItem(song, song.id == currentSong?.id,
+                favoriteIds.contains(song.id), { onSongClick(song) }, { onToggleFavorite(song) })
         }
         item { Spacer(Modifier.height(8.dp)) }
     }
 }
 
-// ─── Quick Access Grid Item ────────────────────────────────────────
+// ─── Favorites Tab ───────────────────────────────────────────────────
+@Composable
+fun FavoritesTab(
+    songs: List<Song>, currentSong: Song?, favoriteIds: Set<Long>,
+    modifier: Modifier, onSongClick: (Song) -> Unit, onToggleFavorite: (Song) -> Unit
+) {
+    LazyColumn(modifier = modifier.fillMaxSize().background(SpotifyBlack)) {
+        item {
+            // Header mimicking Spotify's Liked Songs header
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(180.dp)
+                    .background(
+                        androidx.compose.ui.graphics.Brush.verticalGradient(
+                            listOf(Color(0xFF4B2D8C), SpotifyBlack)
+                        )
+                    ),
+                contentAlignment = Alignment.BottomStart
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Icon(Icons.Filled.Favorite, null,
+                        tint = SpotifyWhite, modifier = Modifier.size(48.dp))
+                    Spacer(Modifier.height(8.dp))
+                    Text("Liked Songs", color = SpotifyWhite,
+                        fontWeight = FontWeight.Bold, fontSize = 24.sp)
+                    Text("${songs.size} songs", color = SpotifyGray, fontSize = 13.sp)
+                }
+            }
+        }
+        if (songs.isEmpty()) {
+            item {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(32.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Icon(Icons.Filled.FavoriteBorder, null,
+                        tint = SpotifyGray, modifier = Modifier.size(64.dp))
+                    Spacer(Modifier.height(16.dp))
+                    Text("Songs you like will appear here",
+                        color = SpotifyWhite, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+                    Spacer(Modifier.height(8.dp))
+                    Text("Tap the heart icon on any song to add it to your Liked Songs.",
+                        color = SpotifyGray, fontSize = 13.sp)
+                }
+            }
+        } else {
+            items(songs) { song ->
+                SongListItem(song, song.id == currentSong?.id,
+                    true, { onSongClick(song) }, { onToggleFavorite(song) })
+            }
+        }
+        item { Spacer(Modifier.height(8.dp)) }
+    }
+}
+
+// ─── Quick Access Grid Item ──────────────────────────────────────────
 @Composable
 fun QuickAccessItem(song: Song, isActive: Boolean, onClick: () -> Unit, modifier: Modifier) {
     Row(
@@ -312,28 +372,19 @@ fun QuickAccessItem(song: Song, isActive: Boolean, onClick: () -> Unit, modifier
             .clickable { onClick() },
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // Real album art — 56 dp square, flush with the left edge of the row
-        AlbumArt(
-            artUri       = song.albumArtUri,
-            isActive     = isActive,
-            size         = 56.dp,
-            cornerRadius = 4.dp
-        )
-        Text(
-            text       = song.title,
-            color      = SpotifyWhite,
-            fontWeight = FontWeight.SemiBold,
-            fontSize   = 12.sp,
-            maxLines   = 2,
-            overflow   = TextOverflow.Ellipsis,
-            modifier   = Modifier.padding(horizontal = 8.dp)
-        )
+        AlbumArt(artUri = song.albumArtUri, isActive = isActive, size = 56.dp, cornerRadius = 4.dp)
+        Text(song.title, color = SpotifyWhite, fontWeight = FontWeight.SemiBold,
+            fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(horizontal = 8.dp))
     }
 }
 
-// ─── Song List Item ────────────────────────────────────────────────
+// ─── Song List Item ──────────────────────────────────────────────────
 @Composable
-fun SongListItem(song: Song, isCurrentSong: Boolean, onClick: () -> Unit) {
+fun SongListItem(
+    song: Song, isCurrentSong: Boolean, isFavorite: Boolean,
+    onClick: () -> Unit, onToggleFavorite: () -> Unit
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -342,189 +393,138 @@ fun SongListItem(song: Song, isCurrentSong: Boolean, onClick: () -> Unit) {
             .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // Real album art
-        AlbumArt(
-            artUri       = song.albumArtUri,
-            isActive     = isCurrentSong,
-            size         = 48.dp,
-            cornerRadius = 4.dp
-        )
+        AlbumArt(artUri = song.albumArtUri, isActive = isCurrentSong, size = 48.dp, cornerRadius = 4.dp)
         Column(modifier = Modifier.padding(start = 12.dp).weight(1f)) {
-            Text(
-                text       = song.title,
-                color      = if (isCurrentSong) SpotifyGreen else SpotifyWhite,
-                fontWeight = FontWeight.SemiBold,
-                fontSize   = 14.sp,
-                maxLines   = 1,
-                overflow   = TextOverflow.Ellipsis
-            )
-            Text(
-                text     = song.artist,
-                color    = SpotifyGray,
-                fontSize = 12.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+            Text(song.title,
+                color = if (isCurrentSong) SpotifyGreen else SpotifyWhite,
+                fontWeight = FontWeight.SemiBold, fontSize = 14.sp,
+                maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(song.artist, color = SpotifyGray, fontSize = 12.sp,
+                maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        Text(formatDuration(song.duration), color = SpotifyGray, fontSize = 12.sp)
+        Spacer(Modifier.width(4.dp))
+        // ── Heart button inline in the list row ──
+        IconButton(onClick = onToggleFavorite, modifier = Modifier.size(36.dp)) {
+            Icon(
+                imageVector = if (isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
+                contentDescription = if (isFavorite) "Remove from Liked Songs" else "Add to Liked Songs",
+                tint = if (isFavorite) SpotifyGreen else SpotifyGray,
+                modifier = Modifier.size(18.dp)
             )
         }
-        Text(
-            text     = formatDuration(song.duration),
-            color    = SpotifyGray,
-            fontSize = 12.sp
-        )
-        Spacer(Modifier.width(8.dp))
-        Icon(Icons.Filled.MoreVert, contentDescription = "More",
-            tint = SpotifyGray, modifier = Modifier.size(20.dp))
+        Icon(Icons.Filled.MoreVert, "More", tint = SpotifyGray, modifier = Modifier.size(20.dp))
     }
     HorizontalDivider(color = SpotifySurface, thickness = 0.5.dp)
 }
 
-// ─── Mini Player Bar ───────────────────────────────────────────────
+// ─── Mini Player Bar ─────────────────────────────────────────────────
 @Composable
 fun MiniPlayerBar(
-    song: Song,
-    isPlaying: Boolean,
-    progress: Long,
-    duration: Long,
-    onTogglePlayPause: () -> Unit,
-    onNext: () -> Unit,
-    onPrevious: () -> Unit,
+    song: Song, isPlaying: Boolean, progress: Long, duration: Long,
+    isFavorite: Boolean,
+    onTogglePlayPause: () -> Unit, onNext: () -> Unit,
+    onPrevious: () -> Unit, onToggleFavorite: () -> Unit,
     onClick: () -> Unit
 ) {
-    val progressFraction = if (duration > 0)
-        (progress.toFloat() / duration.toFloat()).coerceIn(0f, 1f) else 0f
-
+    val pf = if (duration > 0) (progress.toFloat() / duration.toFloat()).coerceIn(0f, 1f) else 0f
     Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(SpotifySurface2)
-            .clickable { onClick() }
+        modifier = Modifier.fillMaxWidth().background(SpotifySurface2).clickable { onClick() }
     ) {
-        // Thin green progress strip at the top
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(2.dp)
-                .background(SpotifyLightGray)
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth(progressFraction)
-                    .fillMaxHeight()
-                    .background(SpotifyGreen)
-            )
+        // Progress strip
+        Box(modifier = Modifier.fillMaxWidth().height(2.dp).background(SpotifyLightGray)) {
+            Box(modifier = Modifier.fillMaxWidth(pf).fillMaxHeight().background(SpotifyGreen))
         }
-
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 8.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Real album art (42 dp)
-            AlbumArt(
-                artUri       = song.albumArtUri,
-                isActive     = isPlaying,
-                size         = 42.dp,
-                cornerRadius = 4.dp
-            )
-
-            // Title + Artist
+            AlbumArt(artUri = song.albumArtUri, isActive = isPlaying, size = 42.dp, cornerRadius = 4.dp)
             Column(modifier = Modifier.padding(start = 12.dp).weight(1f)) {
-                Text(
-                    song.title,
-                    color = SpotifyWhite,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 14.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    song.artist,
-                    color = SpotifyGray,
-                    fontSize = 12.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                Text(song.title, color = SpotifyWhite, fontWeight = FontWeight.SemiBold,
+                    fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(song.artist, color = SpotifyGray, fontSize = 12.sp,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            // Heart
+            IconButton(onClick = onToggleFavorite, modifier = Modifier.size(40.dp)) {
+                Icon(
+                    imageVector = if (isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
+                    contentDescription = if (isFavorite) "Remove from Liked Songs" else "Add to Liked Songs",
+                    tint = if (isFavorite) SpotifyGreen else SpotifyWhite,
+                    modifier = Modifier.size(22.dp)
                 )
             }
-
-            // Like
-            IconButton(onClick = {}, modifier = Modifier.size(40.dp)) {
-                Icon(Icons.Filled.FavoriteBorder, contentDescription = "Like",
-                    tint = SpotifyWhite, modifier = Modifier.size(22.dp))
-            }
-            // Previous
             IconButton(onClick = onPrevious, modifier = Modifier.size(40.dp)) {
-                Icon(Icons.Filled.SkipPrevious, contentDescription = "Previous",
+                Icon(Icons.Filled.SkipPrevious, "Previous",
                     tint = SpotifyWhite, modifier = Modifier.size(26.dp))
             }
-            // Play / Pause
             IconButton(onClick = onTogglePlayPause, modifier = Modifier.size(40.dp)) {
                 Icon(
                     imageVector = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
                     contentDescription = if (isPlaying) "Pause" else "Play",
-                    tint = SpotifyWhite,
-                    modifier = Modifier.size(28.dp)
+                    tint = SpotifyWhite, modifier = Modifier.size(28.dp)
                 )
             }
-            // Next
             IconButton(onClick = onNext, modifier = Modifier.size(40.dp)) {
-                Icon(Icons.Filled.SkipNext, contentDescription = "Next",
+                Icon(Icons.Filled.SkipNext, "Next",
                     tint = SpotifyWhite, modifier = Modifier.size(28.dp))
             }
         }
     }
 }
 
-// ─── Bottom Navigation ─────────────────────────────────────────────
+// ─── Bottom Navigation ────────────────────────────────────────────────
 @Composable
 fun SpotifyBottomNav(selectedTab: Int, onTabSelected: (Int) -> Unit) {
-    NavigationBar(
-        containerColor = SpotifyBlack,
-        tonalElevation = 0.dp
-    ) {
+    NavigationBar(containerColor = SpotifyBlack, tonalElevation = 0.dp) {
         NavigationBarItem(
-            selected = selectedTab == 0,
-            onClick  = { onTabSelected(0) },
-            icon     = { Icon(Icons.Filled.Home, contentDescription = "Home", modifier = Modifier.size(24.dp)) },
-            label    = { Text("Home", fontSize = 11.sp) },
-            colors   = NavigationBarItemDefaults.colors(
-                selectedIconColor   = SpotifyWhite,
-                selectedTextColor   = SpotifyWhite,
-                unselectedIconColor = SpotifyGray,
-                unselectedTextColor = SpotifyGray,
-                indicatorColor      = Color.Transparent
-            )
+            selected = selectedTab == 0, onClick = { onTabSelected(0) },
+            icon = { Icon(Icons.Filled.Home, "Home", modifier = Modifier.size(24.dp)) },
+            label = { Text("Home", fontSize = 11.sp) },
+            colors = NavigationBarItemDefaults.colors(
+                selectedIconColor = SpotifyWhite, selectedTextColor = SpotifyWhite,
+                unselectedIconColor = SpotifyGray, unselectedTextColor = SpotifyGray,
+                indicatorColor = Color.Transparent)
         )
         NavigationBarItem(
-            selected = selectedTab == 1,
-            onClick  = { onTabSelected(1) },
-            icon     = { Icon(Icons.Filled.Search, contentDescription = "Search", modifier = Modifier.size(24.dp)) },
-            label    = { Text("Search", fontSize = 11.sp) },
-            colors   = NavigationBarItemDefaults.colors(
-                selectedIconColor   = SpotifyWhite,
-                selectedTextColor   = SpotifyWhite,
-                unselectedIconColor = SpotifyGray,
-                unselectedTextColor = SpotifyGray,
-                indicatorColor      = Color.Transparent
-            )
+            selected = selectedTab == 1, onClick = { onTabSelected(1) },
+            icon = { Icon(Icons.Filled.Search, "Search", modifier = Modifier.size(24.dp)) },
+            label = { Text("Search", fontSize = 11.sp) },
+            colors = NavigationBarItemDefaults.colors(
+                selectedIconColor = SpotifyWhite, selectedTextColor = SpotifyWhite,
+                unselectedIconColor = SpotifyGray, unselectedTextColor = SpotifyGray,
+                indicatorColor = Color.Transparent)
         )
         NavigationBarItem(
-            selected = selectedTab == 2,
-            onClick  = { onTabSelected(2) },
-            icon     = { Icon(Icons.Filled.LibraryMusic, contentDescription = "Library", modifier = Modifier.size(24.dp)) },
-            label    = { Text("Library", fontSize = 11.sp) },
-            colors   = NavigationBarItemDefaults.colors(
-                selectedIconColor   = SpotifyWhite,
-                selectedTextColor   = SpotifyWhite,
-                unselectedIconColor = SpotifyGray,
-                unselectedTextColor = SpotifyGray,
-                indicatorColor      = Color.Transparent
-            )
+            selected = selectedTab == 2, onClick = { onTabSelected(2) },
+            icon = { Icon(Icons.Filled.LibraryMusic, "Library", modifier = Modifier.size(24.dp)) },
+            label = { Text("Library", fontSize = 11.sp) },
+            colors = NavigationBarItemDefaults.colors(
+                selectedIconColor = SpotifyWhite, selectedTextColor = SpotifyWhite,
+                unselectedIconColor = SpotifyGray, unselectedTextColor = SpotifyGray,
+                indicatorColor = Color.Transparent)
+        )
+        NavigationBarItem(
+            selected = selectedTab == 3, onClick = { onTabSelected(3) },
+            icon = {
+                Icon(
+                    imageVector = if (selectedTab == 3) Icons.Filled.Favorite
+                                  else Icons.Filled.FavoriteBorder,
+                    contentDescription = "Liked Songs",
+                    modifier = Modifier.size(24.dp)
+                )
+            },
+            label = { Text("Liked", fontSize = 11.sp) },
+            colors = NavigationBarItemDefaults.colors(
+                selectedIconColor = SpotifyGreen, selectedTextColor = SpotifyGreen,
+                unselectedIconColor = SpotifyGray, unselectedTextColor = SpotifyGray,
+                indicatorColor = Color.Transparent)
         )
     }
 }
 
-// ─── Filter Chip ───────────────────────────────────────────────────
+// ─── Filter Chip ──────────────────────────────────────────────────────
 @Composable
 fun SpotifyChip(label: String, selected: Boolean) {
     Box(
@@ -534,12 +534,10 @@ fun SpotifyChip(label: String, selected: Boolean) {
             .clickable {}
             .padding(horizontal = 14.dp, vertical = 6.dp)
     ) {
-        Text(
-            label,
-            color      = if (selected) SpotifyBlack else SpotifyWhite,
+        Text(label,
+            color = if (selected) SpotifyBlack else SpotifyWhite,
             fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
-            fontSize   = 13.sp
-        )
+            fontSize = 13.sp)
     }
 }
 
