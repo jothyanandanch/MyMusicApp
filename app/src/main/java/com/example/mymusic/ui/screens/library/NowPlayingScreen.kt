@@ -14,13 +14,18 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.media3.common.Player
+import coil.compose.AsyncImage
 import com.example.mymusic.model.Song
 
+/**
+ * ✅ FIXED: Full player with album art display
+ */
 @Composable
 fun NowPlayingScreen(
     song             : Song,
@@ -59,7 +64,7 @@ fun NowPlayingScreen(
                 .statusBarsPadding()
                 .navigationBarsPadding()
                 .padding(horizontal = 24.dp),
-            verticalArrangement = Arrangement.SpaceBetween   // ← key fix: spreads sections evenly
+            verticalArrangement = Arrangement.SpaceBetween
         ) {
 
             // ── TOP BAR ──────────────────────────────────────────────
@@ -102,7 +107,7 @@ fun NowPlayingScreen(
             }
 
             // ── ALBUM ART ─────────────────────────────────────────────
-            // weight(1f) inside SpaceBetween lets the art expand to fill available space
+            // ✅ FIXED: Display actual album art or fallback to music note
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -111,11 +116,21 @@ fun NowPlayingScreen(
                     .background(SpotifySurface2),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(
-                    Icons.Filled.MusicNote, null,
-                    tint     = SpotifyGreen,
-                    modifier = Modifier.size(96.dp)
-                )
+                if (song.albumArtUri != null) {
+                    AsyncImage(
+                        model = song.albumArtUri,
+                        contentDescription = "Album art",
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop
+                    )
+                } else {
+                    Icon(
+                        Icons.Filled.MusicNote,
+                        null,
+                        tint     = SpotifyGreen,
+                        modifier = Modifier.size(96.dp)
+                    )
+                }
             }
 
             // ── SONG INFO + HEART ──────────────────────────────────────
@@ -145,7 +160,7 @@ fun NowPlayingScreen(
                 IconButton(onClick = onToggleFavorite) {
                     Icon(
                         imageVector        = if (isFavorite) Icons.Filled.Favorite
-                                             else Icons.Filled.FavoriteBorder,
+                        else Icons.Filled.FavoriteBorder,
                         contentDescription = if (isFavorite) "Unlike" else "Like",
                         tint               = if (isFavorite) SpotifyGreen else SpotifyWhite,
                         modifier           = Modifier.size(26.dp)
@@ -207,7 +222,7 @@ fun NowPlayingScreen(
                     IconButton(onClick = onTogglePlayPause) {
                         Icon(
                             imageVector        = if (isPlaying) Icons.Filled.Pause
-                                                 else Icons.Filled.PlayArrow,
+                            else Icons.Filled.PlayArrow,
                             contentDescription = if (isPlaying) "Pause" else "Play",
                             tint               = SpotifyBlack,
                             modifier           = Modifier.size(38.dp)
@@ -226,11 +241,11 @@ fun NowPlayingScreen(
                 IconButton(onClick = onToggleRepeat) {
                     Icon(
                         imageVector = if (repeatMode == Player.REPEAT_MODE_ONE)
-                                          Icons.Filled.RepeatOne
-                                      else Icons.Filled.Repeat,
+                            Icons.Filled.RepeatOne
+                        else Icons.Filled.Repeat,
                         contentDescription = "Repeat",
                         tint     = if (repeatMode != Player.REPEAT_MODE_OFF) SpotifyGreen
-                                   else SpotifyGray,
+                        else SpotifyGray,
                         modifier = Modifier.size(22.dp)
                     )
                 }
