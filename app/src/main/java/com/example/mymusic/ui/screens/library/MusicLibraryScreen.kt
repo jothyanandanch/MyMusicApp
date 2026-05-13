@@ -22,6 +22,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.mymusic.model.Song
+import com.example.mymusic.ui.components.AlbumArt
 import com.example.mymusic.viewmodel.MusicViewModel
 import java.util.Locale
 import java.util.concurrent.TimeUnit
@@ -53,20 +54,20 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
 
     if (showNowPlaying && currentSong != null) {
         NowPlayingScreen(
-            viewModel        = viewModel,
-            song             = currentSong!!,
-            isPlaying        = isPlaying,
-            progress         = progress,
-            duration         = duration,
-            repeatMode       = repeatMode,
-            shuffleMode      = shuffleMode,
-            onBack           = { showNowPlaying = false },
+            viewModel         = viewModel,
+            song              = currentSong!!,
+            isPlaying         = isPlaying,
+            progress          = progress,
+            duration          = duration,
+            repeatMode        = repeatMode,
+            shuffleMode       = shuffleMode,
+            onBack            = { showNowPlaying = false },
             onTogglePlayPause = { viewModel.togglePlayPause() },
-            onNext           = { viewModel.playNextFromFullPlayer() },
-            onPrevious       = { viewModel.playPrevious() },
-            onSeek           = { viewModel.seekTo(it) },
-            onToggleRepeat   = { viewModel.toggleRepeat() },
-            onToggleShuffle  = { viewModel.toggleShuffle() }
+            onNext            = { viewModel.playNextFromFullPlayer() },
+            onPrevious        = { viewModel.playPrevious() },
+            onSeek            = { viewModel.seekTo(it) },
+            onToggleRepeat    = { viewModel.toggleRepeat() },
+            onToggleShuffle   = { viewModel.toggleShuffle() }
         )
         return
     }
@@ -163,14 +164,14 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
             Column(modifier = Modifier.background(SpotifyBlack)) {
                 currentSong?.let { song ->
                     MiniPlayerBar(
-                        song             = song,
-                        isPlaying        = isPlaying,
-                        progress         = progress,
-                        duration         = duration,
+                        song              = song,
+                        isPlaying         = isPlaying,
+                        progress          = progress,
+                        duration          = duration,
                         onTogglePlayPause = { viewModel.togglePlayPause() },
-                        onNext           = { viewModel.playNextFromMiniPlayer() },
-                        onPrevious       = { viewModel.playPrevious() },
-                        onClick          = { showNowPlaying = true }
+                        onNext            = { viewModel.playNextFromMiniPlayer() },
+                        onPrevious        = { viewModel.playPrevious() },
+                        onClick           = { showNowPlaying = true }
                     )
                 }
                 SpotifyBottomNav(selectedTab = selectedTab, onTabSelected = { selectedTab = it })
@@ -184,22 +185,22 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
 
         when (selectedTab) {
             0 -> HomeTab(
-                songs        = filteredSongs,
-                currentSong  = currentSong,
-                modifier     = Modifier.padding(paddingValues),
-                onSongClick  = { song -> viewModel.playSong(song, filteredSongs, filteredSongs.indexOf(song)) }
+                songs       = filteredSongs,
+                currentSong = currentSong,
+                modifier    = Modifier.padding(paddingValues),
+                onSongClick = { song -> viewModel.playSong(song, filteredSongs, filteredSongs.indexOf(song)) }
             )
             1 -> SearchTab(
-                songs        = filteredSongs,
-                currentSong  = currentSong,
-                modifier     = Modifier.padding(paddingValues),
-                onSongClick  = { song -> viewModel.playSong(song, filteredSongs, filteredSongs.indexOf(song)) }
+                songs       = filteredSongs,
+                currentSong = currentSong,
+                modifier    = Modifier.padding(paddingValues),
+                onSongClick = { song -> viewModel.playSong(song, filteredSongs, filteredSongs.indexOf(song)) }
             )
             2 -> LibraryTab(
-                songs        = filteredSongs,
-                currentSong  = currentSong,
-                modifier     = Modifier.padding(paddingValues),
-                onSongClick  = { song -> viewModel.playSong(song, filteredSongs, filteredSongs.indexOf(song)) }
+                songs       = filteredSongs,
+                currentSong = currentSong,
+                modifier    = Modifier.padding(paddingValues),
+                onSongClick = { song -> viewModel.playSong(song, filteredSongs, filteredSongs.indexOf(song)) }
             )
         }
     }
@@ -311,24 +312,21 @@ fun QuickAccessItem(song: Song, isActive: Boolean, onClick: () -> Unit, modifier
             .clickable { onClick() },
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Box(
-            modifier = Modifier
-                .size(56.dp)
-                .background(if (isActive) SpotifyGreen.copy(alpha = 0.3f) else SpotifyElevated),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(Icons.Filled.MusicNote, contentDescription = null,
-                tint = if (isActive) SpotifyGreen else SpotifyGray,
-                modifier = Modifier.size(24.dp))
-        }
+        // Real album art — 56 dp square, flush with the left edge of the row
+        AlbumArt(
+            artUri       = song.albumArtUri,
+            isActive     = isActive,
+            size         = 56.dp,
+            cornerRadius = 4.dp
+        )
         Text(
-            text     = song.title,
-            color    = SpotifyWhite,
+            text       = song.title,
+            color      = SpotifyWhite,
             fontWeight = FontWeight.SemiBold,
-            fontSize = 12.sp,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(horizontal = 8.dp)
+            fontSize   = 12.sp,
+            maxLines   = 2,
+            overflow   = TextOverflow.Ellipsis,
+            modifier   = Modifier.padding(horizontal = 8.dp)
         )
     }
 }
@@ -344,20 +342,13 @@ fun SongListItem(song: Song, isCurrentSong: Boolean, onClick: () -> Unit) {
             .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Box(
-            modifier = Modifier
-                .size(48.dp)
-                .clip(RoundedCornerShape(4.dp))
-                .background(SpotifySurface2),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                imageVector = Icons.Filled.MusicNote,
-                contentDescription = null,
-                tint     = if (isCurrentSong) SpotifyGreen else SpotifyGray,
-                modifier = Modifier.size(24.dp)
-            )
-        }
+        // Real album art
+        AlbumArt(
+            artUri       = song.albumArtUri,
+            isActive     = isCurrentSong,
+            size         = 48.dp,
+            cornerRadius = 4.dp
+        )
         Column(modifier = Modifier.padding(start = 12.dp).weight(1f)) {
             Text(
                 text       = song.title,
@@ -390,7 +381,10 @@ fun SongListItem(song: Song, isCurrentSong: Boolean, onClick: () -> Unit) {
 // ─── Mini Player Bar ───────────────────────────────────────────────
 @Composable
 fun MiniPlayerBar(
-    song: Song, isPlaying: Boolean, progress: Long, duration: Long,
+    song: Song,
+    isPlaying: Boolean,
+    progress: Long,
+    duration: Long,
     onTogglePlayPause: () -> Unit,
     onNext: () -> Unit,
     onPrevious: () -> Unit,
@@ -405,7 +399,7 @@ fun MiniPlayerBar(
             .background(SpotifySurface2)
             .clickable { onClick() }
     ) {
-        // Progress line
+        // Thin green progress strip at the top
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -426,24 +420,31 @@ fun MiniPlayerBar(
                 .padding(horizontal = 12.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Album art
-            Box(
-                modifier = Modifier
-                    .size(42.dp)
-                    .clip(RoundedCornerShape(4.dp))
-                    .background(SpotifyElevated),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(Icons.Filled.MusicNote, contentDescription = null,
-                    tint = SpotifyGreen, modifier = Modifier.size(22.dp))
-            }
+            // Real album art (42 dp)
+            AlbumArt(
+                artUri       = song.albumArtUri,
+                isActive     = isPlaying,
+                size         = 42.dp,
+                cornerRadius = 4.dp
+            )
 
             // Title + Artist
             Column(modifier = Modifier.padding(start = 12.dp).weight(1f)) {
-                Text(song.title, color = SpotifyWhite, fontWeight = FontWeight.SemiBold,
-                    fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(song.artist, color = SpotifyGray, fontSize = 12.sp,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    song.title,
+                    color = SpotifyWhite,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 14.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    song.artist,
+                    color = SpotifyGray,
+                    fontSize = 12.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
 
             // Like
@@ -461,7 +462,8 @@ fun MiniPlayerBar(
                 Icon(
                     imageVector = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
                     contentDescription = if (isPlaying) "Pause" else "Play",
-                    tint = SpotifyWhite, modifier = Modifier.size(28.dp)
+                    tint = SpotifyWhite,
+                    modifier = Modifier.size(28.dp)
                 )
             }
             // Next
