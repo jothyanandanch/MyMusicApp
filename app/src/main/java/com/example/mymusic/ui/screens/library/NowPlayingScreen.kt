@@ -179,7 +179,7 @@ fun NowPlayingScreen(
                 IconButton(onClick = onToggleFavorite) {
                     Icon(
                         imageVector        = if (isFavorite) Icons.Filled.Favorite
-                                             else Icons.Filled.FavoriteBorder,
+                        else Icons.Filled.FavoriteBorder,
                         contentDescription = if (isFavorite) "Unlike" else "Like",
                         tint               = if (isFavorite) SpotifyGreen else SpotifyWhite,
                         modifier           = Modifier.size(26.dp)
@@ -244,7 +244,7 @@ fun NowPlayingScreen(
                         },
                     contentAlignment = Alignment.CenterStart
                 ) {
-                    val trackWidthDp = maxWidth
+                    val trackWidthDp = this.maxWidth
 
                     // Gray background track
                     Box(
@@ -334,7 +334,7 @@ fun NowPlayingScreen(
                     IconButton(onClick = onTogglePlayPause) {
                         Icon(
                             imageVector        = if (isPlaying) Icons.Filled.Pause
-                                                 else Icons.Filled.PlayArrow,
+                            else Icons.Filled.PlayArrow,
                             contentDescription = if (isPlaying) "Pause" else "Play",
                             tint               = SpotifyBlack,
                             modifier           = Modifier.size(38.dp)
@@ -353,11 +353,11 @@ fun NowPlayingScreen(
                 IconButton(onClick = onToggleRepeat) {
                     Icon(
                         imageVector        = if (repeatMode == Player.REPEAT_MODE_ONE)
-                                                Icons.Filled.RepeatOne
-                                             else Icons.Filled.Repeat,
+                            Icons.Filled.RepeatOne
+                        else Icons.Filled.Repeat,
                         contentDescription = "Repeat",
                         tint               = if (repeatMode != Player.REPEAT_MODE_OFF) SpotifyGreen
-                                             else SpotifyGray,
+                        else SpotifyGray,
                         modifier           = Modifier.size(22.dp)
                     )
                 }

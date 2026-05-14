@@ -57,19 +57,16 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
     val favoriteIds   by viewModel.getFavoriteIds().observeAsState(initial = emptySet())
     val nowPlayingSignal by viewModel.isNowPlayingOpen().observeAsState(false)
 
-    // Derive the favorites list reactively from favoriteIds + songs
     val favorites = songs.filter { song -> favoriteIds.contains(song.id) }
 
     var showNowPlaying by remember { mutableStateOf(false) }
     var selectedTab    by remember { mutableIntStateOf(0) }
     var searchQuery    by remember { mutableStateOf("") }
 
-    // Sync: if ViewModel signals close (e.g. back button in MainActivity), dismiss NowPlaying
     LaunchedEffect(nowPlayingSignal) {
         if (!nowPlayingSignal) showNowPlaying = false
     }
 
-    // ── End-of-queue dialog ───────────────────────────────────────────
     if (showEndDialog) {
         AlertDialog(
             onDismissRequest = { viewModel.dismissEndOfQueue() },
@@ -164,7 +161,6 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                     }
                 }
 
-                // Search bar shown only on Search tab
                 if (selectedTab == 1) {
                     OutlinedTextField(
                         value         = searchQuery,
@@ -208,46 +204,52 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                 SpotifyBottomNav(selectedTab = selectedTab, onTabSelected = { selectedTab = it })
             }
         }
-    ) { paddingValues ->
+    ) { paddingValues ->                           // ← paddingValues now USED ✅
         val filteredSongs = if (searchQuery.isBlank()) songs
         else songs.filter {
             it.title.contains(searchQuery, true) || it.artist.contains(searchQuery, true)
         }
 
-        when (selectedTab) {
-            0 -> HomeTab(
-                songs            = filteredSongs,
-                currentSong      = currentSong,
-                favoriteIds      = favoriteIds,
-                onSongClick      = { song -> viewModel.playSong(song, filteredSongs) },
-                onToggleFavorite = { song -> viewModel.toggleFavorite(song) },
-                onShufflePlay    = { viewModel.playAllShuffled(filteredSongs) },
-                viewModel        = viewModel
-            )
-            1 -> HomeTab(
-                songs            = filteredSongs,
-                currentSong      = currentSong,
-                favoriteIds      = favoriteIds,
-                onSongClick      = { song -> viewModel.playSong(song, filteredSongs) },
-                onToggleFavorite = { song -> viewModel.toggleFavorite(song) },
-                onShufflePlay    = { viewModel.playAllShuffled(filteredSongs) },
-                viewModel        = viewModel
-            )
-            2 -> PlaylistScreen(
-                songs            = songs,
-                currentSong      = currentSong,
-                favoriteIds      = favoriteIds,
-                onSongClick      = { song -> viewModel.playSong(song, songs) },
-                onToggleFavorite = { song -> viewModel.toggleFavorite(song) },
-                viewModel        = viewModel
-            )
-            3 -> FavoritesScreen(
-                favorites        = favorites,
-                currentSong      = currentSong,
-                favoriteIds      = favoriteIds,
-                onSongClick      = { song -> viewModel.playSong(song, favorites) },
-                onToggleFavorite = { song -> viewModel.toggleFavorite(song) }
-            )
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(paddingValues)            // ← THIS is the only line added
+        ) {
+            when (selectedTab) {
+                0 -> HomeTab(
+                    songs            = filteredSongs,
+                    currentSong      = currentSong,
+                    favoriteIds      = favoriteIds,
+                    onSongClick      = { song -> viewModel.playSong(song, filteredSongs) },
+                    onToggleFavorite = { song -> viewModel.toggleFavorite(song) },
+                    onShufflePlay    = { viewModel.playAllShuffled(filteredSongs) },
+                    viewModel        = viewModel
+                )
+                1 -> HomeTab(
+                    songs            = filteredSongs,
+                    currentSong      = currentSong,
+                    favoriteIds      = favoriteIds,
+                    onSongClick      = { song -> viewModel.playSong(song, filteredSongs) },
+                    onToggleFavorite = { song -> viewModel.toggleFavorite(song) },
+                    onShufflePlay    = { viewModel.playAllShuffled(filteredSongs) },
+                    viewModel        = viewModel
+                )
+                2 -> PlaylistScreen(
+                    songs            = songs,
+                    currentSong      = currentSong,
+                    favoriteIds      = favoriteIds,
+                    onSongClick      = { song -> viewModel.playSong(song, songs) },
+                    onToggleFavorite = { song -> viewModel.toggleFavorite(song) },
+                    viewModel        = viewModel
+                )
+                3 -> FavoritesScreen(
+                    favorites        = favorites,
+                    currentSong      = currentSong,
+                    favoriteIds      = favoriteIds,
+                    onSongClick      = { song -> viewModel.playSong(song, favorites) },
+                    onToggleFavorite = { song -> viewModel.toggleFavorite(song) }
+                )
+            }
         }
     }
 }

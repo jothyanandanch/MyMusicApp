@@ -178,7 +178,7 @@ fun LocalPlaylistDetail(
                             listOf(Color(0xFF1DB954), Color(0xFF0D5C2E), SpotifyBlack)
                         )
                     )
-                    .statusBarsPadding()
+                    //.statusBarsPadding()
             ) {
                 IconButton(
                     onClick  = onBack,
