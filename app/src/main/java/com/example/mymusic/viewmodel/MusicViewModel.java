@@ -25,7 +25,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
+
 import java.util.Set;
 
 public class MusicViewModel extends AndroidViewModel {
@@ -197,9 +197,7 @@ public class MusicViewModel extends AndroidViewModel {
         return ids != null && ids.contains(songId);
     }
     
-    public List<Song> getFavoritesList() {
-        return new ArrayList<>(favoritesMap.values());
-    }
+
     
     // ── Shuffle helpers ───────────────────────────────────────────────
     
@@ -375,11 +373,10 @@ public class MusicViewModel extends AndroidViewModel {
     
     /**
      * Toggle shuffle ON/OFF.
-     *
      * ON  — Builds the no-repeat unplayed queue from all songs in
      *        currentPlaylist EXCEPT the currently playing one.
      *        The current song keeps playing without interruption.
-     *
+     
      * OFF — Clears the shuffle queues. ExoPlayer's natural ordered
      *        playback resumes from the current song's position.
      */
@@ -406,7 +403,7 @@ public class MusicViewModel extends AndroidViewModel {
     
     /**
      * Shuffle the whole playlist and start playing from the first song.
-     * Used by "Shuffle Play" buttons outside of NowPlaying.
+     * Used by "Shuffle Play" buttons outside NowPlaying.
      */
     public void playAllShuffled(List<Song> library) {
         if (library == null || library.isEmpty()) return;
@@ -456,13 +453,12 @@ public class MusicViewModel extends AndroidViewModel {
             Song nowPlaying = shuffled.remove(nowIdx);
             Collections.shuffle(shuffled);
             shuffled.add(0, nowPlaying);
-            currentIndex = 0;
-        } else {
+		} else {
             Collections.shuffle(shuffled);
-            currentIndex = 0;
-        }
-        
-        currentPlaylist = shuffled;
+		}
+		currentIndex = 0;
+		
+		currentPlaylist = shuffled;
         
         exoPlayer.clearMediaItems();
         for (Song s : shuffled) exoPlayer.addMediaItem(MediaItem.fromUri(s.getUri()));
@@ -483,6 +479,31 @@ public class MusicViewModel extends AndroidViewModel {
         showEndDialogLiveData.postValue(false);
     }
     
+    // ─── Dialog actions ────────────────────────────────────────────────────
+    
+    /** Called when the user taps Dismiss in the end-of-queue AlertDialog. */
+    public void dismissEndOfQueue() {
+        showEndDialogLiveData.postValue(false);
+        endOfQueueLiveData.postValue(false);
+    }
+    
+    /**
+     * Called when user taps "Play Again" in the end-of-queue AlertDialog.
+     * Restarts the currentPlaylist from the first song in original order.
+     */
+    public void playFromBeginning() {
+        showEndDialogLiveData.postValue(false);
+        endOfQueueLiveData.postValue(false);
+        if (exoPlayer == null || currentPlaylist == null || currentPlaylist.isEmpty()) return;
+        shuffleModeLiveData.postValue(false);
+        shuffleUnplayed.clear();
+        shufflePlayed.clear();
+        exoPlayer.setShuffleModeEnabled(false);
+        exoPlayer.seekToDefaultPosition(0);
+        exoPlayer.play();
+        currentSongLiveData.postValue(currentPlaylist.get(0));
+        progressLiveData.postValue(0L);
+    }
     // ── Local music loader ────────────────────────────────────────────
     
     public void loadLocalMusic() {
