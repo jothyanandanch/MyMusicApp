@@ -26,7 +26,6 @@ class MainActivity : ComponentActivity() {
     private var backPressedTime: Long = 0
     private val backPressDelay = 2000L  // 2 seconds
 
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -52,20 +51,28 @@ class MainActivity : ComponentActivity() {
         }
 
         checkStoragePermission()
+
         onBackPressedDispatcher.addCallback(this) {
+            // If NowPlayingScreen is open, close it first — don't exit the app
+            val nowPlayingOpen = musicViewModel.isNowPlayingOpen().value ?: false
+            if (nowPlayingOpen) {
+                musicViewModel.setNowPlayingOpen(false)
+                return@addCallback
+            }
+
+            // Home screen — double-back to exit
             if (backPressedTime + backPressDelay > System.currentTimeMillis()) {
                 finishAffinity()  // Exit app completely
             } else {
                 backPressedTime = System.currentTimeMillis()
                 Toast.makeText(
-                    this@MainActivity,   // ✅ Use Activity context, not 'this'
+                    this@MainActivity,
                     "Press back again to exit",
                     Toast.LENGTH_SHORT
                 ).show()
             }
         }
     }
-
 
     private fun checkStoragePermission() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -90,6 +97,4 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
-
-
 }

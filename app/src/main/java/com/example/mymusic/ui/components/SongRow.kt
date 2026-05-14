@@ -18,6 +18,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.example.mymusic.model.Song
+import com.example.mymusic.ui.components.AlbumArt
 import com.example.mymusic.ui.screens.library.*
 
 /**
@@ -43,30 +44,13 @@ fun SongRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        // ✅ Album art with fallback to music note
-        Box(
-            modifier = Modifier
-                .size(48.dp)
-                .clip(RoundedCornerShape(4.dp))
-                .background(SpotifySurface2),
-            contentAlignment = Alignment.Center
-        ) {
-            if (song.albumArtUri != null) {
-                AsyncImage(
-                    model = song.albumArtUri,
-                    contentDescription = "Album art for ${song.title}",
-                    modifier = Modifier.fillMaxSize(),
-                    contentScale = ContentScale.Crop
-                )
-            } else {
-                Icon(
-                    Icons.Filled.MusicNote,
-                    contentDescription = null,
-                    tint = if (song.id == currentSong?.id) SpotifyGreen else SpotifyGray,
-                    modifier = Modifier.size(24.dp)
-                )
-            }
-        }
+        // AlbumArt handles null URI + Coil load errors + fallback MusicNote icon
+        AlbumArt(
+            artUri       = song.albumArtUri,
+            isActive     = song.id == currentSong?.id,
+            size         = 48.dp,
+            cornerRadius = 4.dp
+        )
 
         // Song title and artist
         Column(modifier = Modifier.weight(1f)) {
