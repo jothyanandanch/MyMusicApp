@@ -6,11 +6,11 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.PlaylistPlay
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -53,17 +53,16 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
     val repeatMode    by viewModel.getRepeatMode().observeAsState(0)
     val shuffleMode   by viewModel.getShuffleMode().observeAsState(false)
     val showEndDialog by viewModel.getShowEndDialog().observeAsState(false)
-    val favoriteIds by viewModel.getFavoriteIds().observeAsState(initial = emptySet())
+    val favoriteIds   by viewModel.getFavoriteIds().observeAsState(initial = emptySet())
 
-// Then derive the favorites list from it:
-    val favorites = viewModel.getSongs().observeAsState(initial = emptyList()).value
-        .filter { song -> favoriteIds.contains(song.id) }
+    // Derive the favorites list reactively from favoriteIds + songs
+    val favorites = songs.filter { song -> favoriteIds.contains(song.id) }
 
     var showNowPlaying by remember { mutableStateOf(false) }
     var selectedTab    by remember { mutableIntStateOf(0) }
     var searchQuery    by remember { mutableStateOf("") }
 
-    // End-of-queue dialog
+    // ── End-of-queue dialog ───────────────────────────────────────────
     if (showEndDialog) {
         AlertDialog(
             onDismissRequest = { viewModel.dismissEndOfQueue() },
@@ -77,7 +76,7 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
             },
             dismissButton = {
                 Row {
-                    TextButton(onClick = { viewModel.playAllShuffled() }) {
+                    TextButton(onClick = { viewModel.playAllShuffled(songs) }) {
                         Text("Shuffle All", color = SpotifyGray)
                     }
                     TextButton(onClick = { viewModel.dismissEndOfQueue() }) {
@@ -158,10 +157,7 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                     }
                 }
 
-                if (selectedTab == 0) {
-
-                }
-
+                // Search bar shown only on Search tab
                 if (selectedTab == 1) {
                     OutlinedTextField(
                         value         = searchQuery,
@@ -235,21 +231,17 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                 modifier         = Modifier.padding(paddingValues),
                 onSongClick      = { song -> viewModel.playSong(song, songs, songs.indexOf(song)) },
                 onToggleFavorite = { song -> viewModel.toggleFavorite(song) },
-                onShufflePlay = { viewModel.playShuffled(songs) }
+                onShufflePlay    = { viewModel.playShuffled(songs) }
             )
             3 -> FavoritesScreen(
-                favorites = favorites,  // ✅ Will update when favoriteIds changes
-                currentSong = currentSong,
-                favoriteIds = favoriteIds,
-                modifier = Modifier.padding(paddingValues)
+                favorites        = favorites,
+                currentSong      = currentSong,
+                favoriteIds      = favoriteIds,
+                modifier         = Modifier
+                    .padding(paddingValues)
                     .fillMaxSize(),
-                onSongClick = { song ->
-                    viewModel.playSong(song, favorites, favorites.indexOf(song))
-                },
-                onToggleFavorite = { song ->
-                    val favList = viewModel.getFavoritesList()
-                    viewModel.toggleFavorite(song)
-                }
+                onSongClick      = { song -> viewModel.playSong(song, favorites, favorites.indexOf(song)) },
+                onToggleFavorite = { song -> viewModel.toggleFavorite(song) }
             )
         }
     }
@@ -382,25 +374,22 @@ fun SongListItem(
                 .background(SpotifyElevated),
             contentAlignment = Alignment.Center
         ) {
-            // ✅ Show album art if available, music note if not
             if (song.albumArtUri != null) {
                 AsyncImage(
-                    model = song.albumArtUri,
+                    model              = song.albumArtUri,
                     contentDescription = "Album art for ${song.title}",
-                    modifier = Modifier.fillMaxSize(),
-                    contentScale = ContentScale.Crop
+                    modifier           = Modifier.fillMaxSize(),
+                    contentScale       = ContentScale.Crop
                 )
             } else {
-                // Fallback: music note icon
                 Icon(
                     Icons.Filled.MusicNote,
                     contentDescription = null,
-                    tint = SpotifyGreen,
+                    tint     = SpotifyGreen,
                     modifier = Modifier.size(22.dp)
                 )
             }
         }
-
 
         Column(modifier = Modifier.padding(start = 12.dp).weight(1f)) {
             Text(
@@ -448,18 +437,28 @@ fun QuickAccessItem(song: Song, isActive: Boolean, onClick: () -> Unit, modifier
         Box(
             modifier = Modifier
                 .size(56.dp)
-                .background(if (isActive) SpotifyGreen.copy(alpha = 0.3f) else SpotifyElevated),
+                .clip(RoundedCornerShape(topStart = 4.dp, bottomStart = 4.dp))
+                .background(SpotifyElevated),
             contentAlignment = Alignment.Center
         ) {
-            Icon(
-                Icons.Filled.MusicNote, null,
-                tint     = if (isActive) SpotifyGreen else SpotifyGray,
-                modifier = Modifier.size(24.dp)
-            )
+            if (song.albumArtUri != null) {
+                AsyncImage(
+                    model              = song.albumArtUri,
+                    contentDescription = null,
+                    modifier           = Modifier.fillMaxSize(),
+                    contentScale       = ContentScale.Crop
+                )
+            } else {
+                Icon(
+                    Icons.Filled.MusicNote, null,
+                    tint     = SpotifyGreen,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
         }
         Text(
             text       = song.title,
-            color      = SpotifyWhite,
+            color      = if (isActive) SpotifyGreen else SpotifyWhite,
             fontWeight = FontWeight.SemiBold,
             fontSize   = 12.sp,
             maxLines   = 2,
@@ -469,7 +468,7 @@ fun QuickAccessItem(song: Song, isActive: Boolean, onClick: () -> Unit, modifier
     }
 }
 
-// ─── Mini Player Bar — WITH Previous button ───────────────────────────
+// ─── Mini Player Bar ──────────────────────────────────────────────────
 @Composable
 fun MiniPlayerBar(
     song              : Song,
@@ -478,13 +477,12 @@ fun MiniPlayerBar(
     duration          : Long,
     isFavorite        : Boolean,
     onTogglePlayPause : () -> Unit,
-    onPrevious        : () -> Unit,   // ← ADDED
+    onPrevious        : () -> Unit,
     onNext            : () -> Unit,
     onToggleFavorite  : () -> Unit,
     onClick           : () -> Unit
 ) {
-    val progressFraction =
-        if (duration > 0) (progress.toFloat() / duration.toFloat()).coerceIn(0f, 1f) else 0f
+    val fraction = if (duration > 0) (progress.toFloat() / duration.toFloat()).coerceIn(0f, 1f) else 0f
 
     Column(
         modifier = Modifier
@@ -492,7 +490,7 @@ fun MiniPlayerBar(
             .background(SpotifySurface2)
             .clickable { onClick() }
     ) {
-        // Green progress strip
+        // Thin progress line (Spotify mini-player style)
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -501,8 +499,8 @@ fun MiniPlayerBar(
         ) {
             Box(
                 modifier = Modifier
-                    .fillMaxWidth(progressFraction)
-                    .fillMaxHeight()
+                    .fillMaxWidth(fraction)
+                    .height(2.dp)
                     .background(SpotifyGreen)
             )
         }
@@ -511,79 +509,70 @@ fun MiniPlayerBar(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
+            verticalAlignment     = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            // Album art placeholder
+            // Album art
             Box(
                 modifier = Modifier
-                    .size(42.dp)
+                    .size(40.dp)
                     .clip(RoundedCornerShape(4.dp))
                     .background(SpotifyElevated),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(Icons.Filled.MusicNote, null, tint = SpotifyGreen, modifier = Modifier.size(22.dp))
+                if (song.albumArtUri != null) {
+                    AsyncImage(
+                        model              = song.albumArtUri,
+                        contentDescription = null,
+                        modifier           = Modifier.fillMaxSize(),
+                        contentScale       = ContentScale.Crop
+                    )
+                } else {
+                    Icon(Icons.Filled.MusicNote, null, tint = SpotifyGreen, modifier = Modifier.size(20.dp))
+                }
             }
 
-            // Song title + artist
-            Column(modifier = Modifier.padding(start = 12.dp).weight(1f)) {
+            // Song info
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(horizontal = 10.dp)
+            ) {
                 Text(
-                    song.title, color = SpotifyWhite, fontWeight = FontWeight.SemiBold,
-                    fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis
+                    text       = song.title,
+                    color      = SpotifyWhite,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize   = 13.sp,
+                    maxLines   = 1,
+                    overflow   = TextOverflow.Ellipsis
                 )
-                Text(
-                    song.artist, color = SpotifyGray,
-                    fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis
-                )
+                Text(song.artist, color = SpotifyGray, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
 
-            // Like / unlike
-            IconButton(
-                onClick  = onToggleFavorite,
-                modifier = Modifier.size(40.dp)
-            ) {
-                Icon(
-                    imageVector        = if (isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
-                    contentDescription = if (isFavorite) "Unlike" else "Like",
-                    tint               = if (isFavorite) SpotifyGreen else SpotifyWhite,
-                    modifier           = Modifier.size(22.dp)
-                )
-            }
-
-            // Previous ← ADDED
-            IconButton(
-                onClick  = onPrevious,
-                modifier = Modifier.size(40.dp)
-            ) {
-                Icon(
-                    Icons.Filled.SkipPrevious, "Previous",
-                    tint     = SpotifyWhite,
-                    modifier = Modifier.size(28.dp)
-                )
-            }
-
-            // Play / Pause
-            IconButton(
-                onClick  = onTogglePlayPause,
-                modifier = Modifier.size(40.dp)
-            ) {
-                Icon(
-                    imageVector        = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                    contentDescription = if (isPlaying) "Pause" else "Play",
-                    tint               = SpotifyWhite,
-                    modifier           = Modifier.size(28.dp)
-                )
-            }
-
-            // Next
-            IconButton(
-                onClick  = onNext,
-                modifier = Modifier.size(40.dp)
-            ) {
-                Icon(
-                    Icons.Filled.SkipNext, "Next",
-                    tint     = SpotifyWhite,
-                    modifier = Modifier.size(28.dp)
-                )
+            // Controls
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = onToggleFavorite, modifier = Modifier.size(36.dp)) {
+                    Icon(
+                        imageVector = if (isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
+                        contentDescription = null,
+                        tint     = if (isFavorite) SpotifyGreen else SpotifyWhite,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+                IconButton(onClick = onPrevious, modifier = Modifier.size(36.dp)) {
+                    Icon(Icons.Filled.SkipPrevious, null, tint = SpotifyWhite, modifier = Modifier.size(24.dp))
+                }
+                IconButton(onClick = onTogglePlayPause, modifier = Modifier.size(40.dp)) {
+                    Icon(
+                        imageVector = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                        contentDescription = null,
+                        tint     = SpotifyWhite,
+                        modifier = Modifier.size(28.dp)
+                    )
+                }
+                IconButton(onClick = onNext, modifier = Modifier.size(36.dp)) {
+                    Icon(Icons.Filled.SkipNext, null, tint = SpotifyWhite, modifier = Modifier.size(24.dp))
+                }
             }
         }
     }
@@ -592,70 +581,32 @@ fun MiniPlayerBar(
 // ─── Bottom Navigation ────────────────────────────────────────────────
 @Composable
 fun SpotifyBottomNav(selectedTab: Int, onTabSelected: (Int) -> Unit) {
-    NavigationBar(containerColor = SpotifyBlack, tonalElevation = 0.dp) {
-        val navColors = NavigationBarItemDefaults.colors(
-            selectedIconColor   = SpotifyWhite,
-            selectedTextColor   = SpotifyWhite,
-            unselectedIconColor = SpotifyGray,
-            unselectedTextColor = SpotifyGray,
-            indicatorColor      = Color.Transparent
+    NavigationBar(containerColor = SpotifySurface2, tonalElevation = 0.dp) {
+        val items = listOf(
+            Triple(Icons.Filled.Home,              "Home",         0),
+            Triple(Icons.Filled.Search,            "Search",       1),
+            Triple(Icons.AutoMirrored.Filled.PlaylistPlay, "Your Library", 2),
+            Triple(Icons.Filled.Favorite,          "Liked Songs",  3)
         )
-        NavigationBarItem(
-            selected = selectedTab == 0,
-            onClick  = { onTabSelected(0) },
-            icon     = { Icon(Icons.Filled.Home, "Home", modifier = Modifier.size(24.dp)) },
-            label    = { Text("Home", fontSize = 11.sp) },
-            colors   = navColors
-        )
-        NavigationBarItem(
-            selected = selectedTab == 1,
-            onClick  = { onTabSelected(1) },
-            icon     = { Icon(Icons.Filled.Search, "Search", modifier = Modifier.size(24.dp)) },
-            label    = { Text("Search", fontSize = 11.sp) },
-            colors   = navColors
-        )
-        NavigationBarItem(
-            selected = selectedTab == 2,
-            onClick  = { onTabSelected(2) },
-            icon     = { Icon(Icons.Filled.PlaylistPlay, "Playlists", modifier = Modifier.size(24.dp)) },
-            label    = { Text("Playlists", fontSize = 11.sp) },
-            colors   = navColors
-        )
-        NavigationBarItem(
-            selected = selectedTab == 3,
-            onClick  = { onTabSelected(3) },
-            icon = {
-                Icon(
-                    imageVector        = if (selectedTab == 3) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
-                    contentDescription = "Liked Songs",
-                    modifier           = Modifier.size(24.dp)
+        items.forEach { (icon, label, index) ->
+            NavigationBarItem(
+                icon     = { Icon(icon, label, modifier = Modifier.size(24.dp)) },
+                label    = { Text(label, fontSize = 10.sp) },
+                selected = selectedTab == index,
+                onClick  = { onTabSelected(index) },
+                colors   = NavigationBarItemDefaults.colors(
+                    selectedIconColor   = SpotifyWhite,
+                    selectedTextColor   = SpotifyWhite,
+                    unselectedIconColor = SpotifyGray,
+                    unselectedTextColor = SpotifyGray,
+                    indicatorColor      = Color.Transparent
                 )
-            },
-            label    = { Text("Liked", fontSize = 11.sp) },
-            colors   = navColors
-        )
+            )
+        }
     }
 }
 
-// ─── Chip ─────────────────────────────────────────────────────────────
-@Composable
-fun SpotifyChip(label: String, selected: Boolean) {
-    Box(
-        modifier = Modifier
-            .clip(RoundedCornerShape(50.dp))
-            .background(if (selected) SpotifyGreen else SpotifySurface2)
-            .clickable {}
-            .padding(horizontal = 14.dp, vertical = 6.dp)
-    ) {
-        Text(
-            label,
-            color      = if (selected) SpotifyBlack else SpotifyWhite,
-            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
-            fontSize   = 13.sp
-        )
-    }
-}
-
+// ─── Utility ──────────────────────────────────────────────────────────
 fun formatDuration(durationMs: Long): String {
     val minutes = TimeUnit.MILLISECONDS.toMinutes(durationMs)
     val seconds = TimeUnit.MILLISECONDS.toSeconds(durationMs) % 60
