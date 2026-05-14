@@ -1,6 +1,10 @@
 package com.example.mymusic.ui.screens.library
 
+import android.view.inputmethod.DeleteGesture
+import com.example.mymusic.ui.screens.search.SearchScreen
 import androidx.compose.foundation.ExperimentalFoundationApi
+import android.widget.Toast
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -19,12 +23,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
+
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil.compose.AsyncImage
+
 import com.example.mymusic.model.Song
 import com.example.mymusic.viewmodel.MusicViewModel
 import java.util.Locale
@@ -62,10 +66,77 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
     var showNowPlaying by remember { mutableStateOf(false) }
     var selectedTab    by remember { mutableIntStateOf(0) }
     var searchQuery    by remember { mutableStateOf("") }
+    val playlists by viewModel.customPlaylists.observeAsState(initial = emptyMap())
+    var songForPlaylistDialog by remember { mutableStateOf<Song?>(null) }
+    var showCreatePlaylistDialog by remember { mutableStateOf(false) }
+    var newPlaylistName by remember { mutableStateOf("") }
 
     LaunchedEffect(nowPlayingSignal) {
         if (!nowPlayingSignal) showNowPlaying = false
     }
+
+
+    // ── The "Select Playlist" Dialog ──
+    if (songForPlaylistDialog != null) {
+        AlertDialog(
+            onDismissRequest = { songForPlaylistDialog = null },
+            containerColor = SpotifySurface2,
+            title = { Text("Add to Playlist", color = SpotifyWhite, fontWeight = FontWeight.Bold) },
+            text = {
+                Column {
+                    TextButton(onClick = { showCreatePlaylistDialog = true }) {
+                        Text("+ Create New Playlist", color = SpotifyGreen)
+                    }
+                    playlists.keys.forEach { playlistName ->
+                        TextButton(
+                            onClick = {
+                                viewModel.addSongToPlaylist(playlistName, songForPlaylistDialog!!)
+                                songForPlaylistDialog = null
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(playlistName, color = SpotifyWhite, modifier = Modifier.fillMaxWidth())
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { songForPlaylistDialog = null }) { Text("Cancel", color = SpotifyGray) }
+            }
+        )
+    }
+
+    // ── The "Create Playlist" Dialog ──
+    if (showCreatePlaylistDialog) {
+        AlertDialog(
+            onDismissRequest = { showCreatePlaylistDialog = false },
+            containerColor = SpotifySurface2,
+            title = { Text("Name your playlist", color = SpotifyWhite) },
+            text = {
+                OutlinedTextField(
+                    value = newPlaylistName,
+                    onValueChange = { newPlaylistName = it },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(focusedTextColor = SpotifyWhite)
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    if (newPlaylistName.isNotBlank()) {
+                        viewModel.createPlaylist(newPlaylistName)
+                        viewModel.addSongToPlaylist(newPlaylistName, songForPlaylistDialog!!)
+                    }
+                    showCreatePlaylistDialog = false
+                    songForPlaylistDialog = null
+                    newPlaylistName = ""
+                }) { Text("Create", color = SpotifyGreen) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCreatePlaylistDialog = false }) { Text("Cancel", color = SpotifyGray) }
+            }
+        )
+    }
+
 
     if (showEndDialog) {
         AlertDialog(
@@ -217,22 +288,27 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
         ) {
             when (selectedTab) {
                 0 -> HomeTab(
-                    songs            = filteredSongs,
+                    songs            = songs,
+                    favorites        = favorites,
                     currentSong      = currentSong,
                     favoriteIds      = favoriteIds,
-                    onSongClick      = { song -> viewModel.playSong(song, filteredSongs) },
+                    showShuffle      = true,
+                    showQuickAccess  = true,
+                    onSongClick      = { song -> viewModel.playSong(song, songs) },
                     onToggleFavorite = { song -> viewModel.toggleFavorite(song) },
-                    onShufflePlay    = { viewModel.playAllShuffled(filteredSongs) },
+                    onShufflePlay    = { viewModel.playAllShuffled(songs) },
+                    onAddToPlaylist  = { song -> songForPlaylistDialog = song }, // ✅ ADD THIS LINE
                     viewModel        = viewModel
                 )
-                1 -> HomeTab(
-                    songs            = filteredSongs,
+                1 -> SearchScreen(
+                    filteredSongs    = filteredSongs,
                     currentSong      = currentSong,
                     favoriteIds      = favoriteIds,
                     onSongClick      = { song -> viewModel.playSong(song, filteredSongs) },
                     onToggleFavorite = { song -> viewModel.toggleFavorite(song) },
-                    onShufflePlay    = { viewModel.playAllShuffled(filteredSongs) },
-                    viewModel        = viewModel
+                    onPlayNext       = { song -> viewModel.setPlayNext(song) }, // ✅ Handle Action
+                    onAddToQueue     = { song -> viewModel.addToQueue(song) },   // ✅ Handle Action
+                    onAddToPlaylist  = { song -> songForPlaylistDialog=song }
                 )
                 2 -> PlaylistScreen(
                     songs            = songs,
@@ -259,26 +335,32 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
 @Composable
 fun HomeTab(
     songs            : List<Song>,
+    favorites        : List<Song>,
     currentSong      : Song?,
     favoriteIds      : Set<Long>,
+    showShuffle      : Boolean = true,      // ← ADDED
+    showQuickAccess  : Boolean = true,      // ← ADDED
     onSongClick      : (Song) -> Unit,
     onToggleFavorite : (Song) -> Unit,
     onShufflePlay    : () -> Unit,
+    onAddToPlaylist  : (Song) -> Unit, // ✅ ADD THIS LINE
     viewModel        : MusicViewModel
 ) {
     LazyColumn(contentPadding = PaddingValues(bottom = 8.dp)) {
         // Quick-access grid (top 6 most-played / recent)
-        if (songs.isNotEmpty()) {
+        if (showQuickAccess && songs.isNotEmpty()) {    // ← ADDED check
             item {
                 QuickAccessGrid(
                     songs       = songs.take(6),
+                    favorites   = favorites,
                     currentSong = currentSong,
                     onSongClick = onSongClick
                 )
             }
         }
 
-        // Shuffle button
+        // Shuffle button and Header
+        if (showShuffle) {
         item {
             Row(
                 modifier = Modifier
@@ -307,6 +389,7 @@ fun HomeTab(
                 }
             }
         }
+        }
 
         // Song list
         items(songs, key = { it.id }) { song ->
@@ -315,7 +398,11 @@ fun HomeTab(
                 currentSong      = currentSong,
                 isFavorite       = favoriteIds.contains(song.id),
                 onSongClick      = { onSongClick(song) },
-                onToggleFavorite = { onToggleFavorite(song) }
+                onToggleFavorite = { onToggleFavorite(song) },
+                onPlayNext       = { viewModel.setPlayNext(song) },   // ✅ Pass Play Next
+                onAddToQueue     = { viewModel.addToQueue(song) },    // ✅ Pass Add to Queue
+                onAddToPlaylist  = { onAddToPlaylist(song) },       // ✅ ADD THIS LINE
+                onDelete         = {viewModel.deleteSong(song)}
             )
         }
     }
@@ -324,22 +411,26 @@ fun HomeTab(
 // ─── Quick Access Grid ────────────────────────────────────────────────
 @Composable
 fun QuickAccessGrid(
-    songs       : List<Song>,
+    songs       : List<Song>,       // keep for fallback
+    favorites   : List<Song>,       // NEW — favorite songs
     currentSong : Song?,
     onSongClick : (Song) -> Unit
 ) {
+    // Show favorites if available, else fall back to recent songs
+    val displaySongs = if (favorites.isNotEmpty()) favorites.take(6) else songs.take(6)
+
     Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
         Text(
-            "Jump back in",
+            if (favorites.isNotEmpty()) "Liked Songs" else "Jump back in",
             color      = SpotifyWhite,
             fontWeight = FontWeight.Bold,
             fontSize   = 18.sp,
             modifier   = Modifier.padding(bottom = 8.dp)
         )
-        val rows = songs.chunked(2)
+        val rows = displaySongs.chunked(2)
         rows.forEach { rowSongs ->
             Row(
-                modifier            = Modifier.fillMaxWidth(),
+                modifier              = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 rowSongs.forEach { song ->
@@ -365,8 +456,15 @@ fun SongItem(
     currentSong      : Song?,
     isFavorite       : Boolean,
     onSongClick      : () -> Unit,
-    onToggleFavorite : () -> Unit
+    onToggleFavorite : () -> Unit,
+    onPlayNext       : () -> Unit = {},  // ✅ NEW callback
+    onAddToQueue     : () -> Unit = {},
+    onAddToPlaylist  : () -> Unit = {},  // ✅ NEW callback
+    onDelete         : () -> Unit = {}
 ) {
+    // State to manage the visibility of the dropdown menu
+    var showMenu by remember { mutableStateOf(false) }
+    val context = LocalContext.current // ✅ To show feedback toasts
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -411,7 +509,60 @@ fun SongItem(
         }
         Text(formatDuration(song.duration), color = SpotifyGray, fontSize = 12.sp)
         Spacer(Modifier.width(4.dp))
-        Icon(Icons.Filled.MoreVert, null, tint = SpotifyGray, modifier = Modifier.size(20.dp))
+        // ─── Options Menu Area ───
+        Box {
+            // 1. Make the 3 dots clickable
+            IconButton(
+                onClick = { showMenu = true },
+                modifier = Modifier.size(32.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.MoreVert,
+                    contentDescription = "More options",
+                    tint = SpotifyGray,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+
+            // 2. The Dropdown Menu
+            DropdownMenu(
+                expanded = showMenu,
+                onDismissRequest = { showMenu = false },
+                modifier = Modifier.background(SpotifySurface2) // Matches your Spotify theme
+            ) {
+                DropdownMenuItem(
+                    text = { Text("Play Next", color = SpotifyWhite) },
+                    onClick = {
+                        showMenu = false
+                        onPlayNext()
+                        Toast.makeText(context, "Will play next", Toast.LENGTH_SHORT).show()
+                    }
+                )
+                DropdownMenuItem(
+                    text = { Text("Add to Queue", color = SpotifyWhite) },
+                    onClick = {
+                        showMenu = false
+                        onAddToQueue()
+                        Toast.makeText(context, "Added to queue", Toast.LENGTH_SHORT).show()
+                    }
+                )
+                DropdownMenuItem(
+                    text = { Text("Add to Playlist", color = SpotifyWhite) },
+                    onClick = { showMenu = false
+                        onAddToPlaylist()  // ✅ Trigger callback
+                    }
+                )
+
+                DropdownMenuItem(
+                    text = {Text("Delete", color = SpotifyWhite)},
+                    onClick = {
+                        showMenu = false
+                        onDelete()
+                        Toast.makeText(context,"Successfully Deleted",Toast.LENGTH_SHORT).show()
+                    }
+                )
+            }
+        }
     }
     HorizontalDivider(color = SpotifySurface, thickness = 0.5.dp)
 }
