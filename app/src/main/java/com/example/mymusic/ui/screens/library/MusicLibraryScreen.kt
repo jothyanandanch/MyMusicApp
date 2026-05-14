@@ -56,7 +56,8 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
     val favoriteIds by viewModel.getFavoriteIds().observeAsState(initial = emptySet())
 
 // Then derive the favorites list from it:
-    val favorites = viewModel.getFavoritesList()  // This will be called when favoriteIds change
+    val favorites = viewModel.getSongs().observeAsState(initial = emptyList()).value
+        .filter { song -> favoriteIds.contains(song.id) }
 
     var showNowPlaying by remember { mutableStateOf(false) }
     var selectedTab    by remember { mutableIntStateOf(0) }
@@ -158,14 +159,7 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                 }
 
                 if (selectedTab == 0) {
-                    LazyRow(
-                        contentPadding        = PaddingValues(horizontal = 16.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        item { SpotifyChip("All",   true) }
-                        item { SpotifyChip("Music", false) }
-                    }
-                    Spacer(Modifier.height(8.dp))
+
                 }
 
                 if (selectedTab == 1) {
