@@ -29,32 +29,36 @@ import com.example.mymusic.ui.screens.library.SpotifySurface
 import com.example.mymusic.ui.screens.library.SpotifySurface2
 import com.example.mymusic.ui.screens.library.SpotifyWhite
 import com.example.mymusic.ui.screens.library.formatDuration
+import com.example.mymusic.viewmodel.MusicViewModel
 
 /**
  * Playlists tab — shows a single "Local" playlist card.
  * Tapping it opens the full playlist detail screen showing all device songs.
+ *
+ * Signature matches the call-site in MusicLibraryScreen:
+ *   PlaylistScreen(songs, currentSong, favoriteIds, onSongClick, onToggleFavorite, viewModel)
  */
 @Composable
 fun PlaylistScreen(
-    localSongs       : List<Song>,
+    songs            : List<Song>,
     currentSong      : Song?,
     favoriteIds      : Set<Long>,
     modifier         : Modifier = Modifier,
     onSongClick      : (Song) -> Unit,
     onToggleFavorite : (Song) -> Unit,
-    onShufflePlay    : () -> Unit
+    viewModel        : MusicViewModel
 ) {
     var showDetail by remember { mutableStateOf(false) }
 
     if (showDetail) {
         LocalPlaylistDetail(
-            songs            = localSongs,
+            songs            = songs,
             currentSong      = currentSong,
             favoriteIds      = favoriteIds,
             onBack           = { showDetail = false },
             onSongClick      = onSongClick,
             onToggleFavorite = onToggleFavorite,
-            onShufflePlay    = onShufflePlay
+            onShufflePlay    = { viewModel.playAllShuffled(songs) }
         )
         return
     }
@@ -77,10 +81,10 @@ fun PlaylistScreen(
         // ── "Local" playlist card — cannot be deleted ──
         item {
             PlaylistCard(
-                name       = "Local",
-                songCount  = localSongs.size,
-                isProtected = true,   // device playlist — no delete icon
-                onClick    = { showDetail = true }
+                name        = "Local",
+                songCount   = songs.size,
+                isProtected = true,
+                onClick     = { showDetail = true }
             )
         }
 
@@ -91,10 +95,10 @@ fun PlaylistScreen(
 // ─── Playlist Card ────────────────────────────────────────────────────
 @Composable
 fun PlaylistCard(
-    name       : String,
-    songCount  : Int,
-    isProtected: Boolean,
-    onClick    : () -> Unit
+    name        : String,
+    songCount   : Int,
+    isProtected : Boolean,
+    onClick     : () -> Unit
 ) {
     Row(
         modifier = Modifier
@@ -103,15 +107,12 @@ fun PlaylistCard(
             .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // Playlist artwork — green gradient square with music icon
         Box(
             modifier = Modifier
                 .size(64.dp)
                 .clip(RoundedCornerShape(6.dp))
                 .background(
-                    Brush.linearGradient(
-                        listOf(Color(0xFF1DB954), Color(0xFF158A3E))
-                    )
+                    Brush.linearGradient(listOf(Color(0xFF1DB954), Color(0xFF158A3E)))
                 ),
             contentAlignment = Alignment.Center
         ) {
@@ -139,7 +140,6 @@ fun PlaylistCard(
                 fontSize = 12.sp
             )
         }
-        // Protected playlists show a lock icon instead of delete
         if (isProtected) {
             Icon(
                 Icons.Filled.Lock,
@@ -168,7 +168,6 @@ fun LocalPlaylistDetail(
             .fillMaxSize()
             .background(SpotifyBlack)
     ) {
-        // ── Header with gradient ──
         item {
             Box(
                 modifier = Modifier
@@ -181,7 +180,6 @@ fun LocalPlaylistDetail(
                     )
                     .statusBarsPadding()
             ) {
-                // Back button
                 IconButton(
                     onClick  = onBack,
                     modifier = Modifier
@@ -199,7 +197,6 @@ fun LocalPlaylistDetail(
                         .align(Alignment.BottomStart)
                         .padding(horizontal = 24.dp, vertical = 24.dp)
                 ) {
-                    // Artwork square
                     Box(
                         modifier = Modifier
                             .size(96.dp)
@@ -233,7 +230,6 @@ fun LocalPlaylistDetail(
             }
         }
 
-        // ── Action row ──
         item {
             Row(
                 modifier = Modifier
@@ -242,7 +238,6 @@ fun LocalPlaylistDetail(
                 verticalAlignment     = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                // Info icon (no delete — protected playlist)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
                         Icons.Filled.Lock, null,
@@ -252,7 +247,6 @@ fun LocalPlaylistDetail(
                     Spacer(Modifier.width(4.dp))
                     Text("Device playlist · cannot be deleted", color = SpotifyGray, fontSize = 11.sp)
                 }
-                // Shuffle play button
                 Box(
                     modifier = Modifier
                         .size(56.dp)
@@ -261,13 +255,15 @@ fun LocalPlaylistDetail(
                         .clickable { onShufflePlay() },
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(Icons.Filled.Shuffle, "Shuffle Play",
-                        tint = Color.Black, modifier = Modifier.size(28.dp))
+                    Icon(
+                        Icons.Filled.Shuffle, "Shuffle Play",
+                        tint     = Color.Black,
+                        modifier = Modifier.size(28.dp)
+                    )
                 }
             }
         }
 
-        // ── Song list with long-press tooltip ──
         itemsIndexed(songs) { index, song ->
             LocalPlaylistSongItem(
                 index            = index,
