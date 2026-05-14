@@ -224,9 +224,26 @@ public class MusicViewModel extends AndroidViewModel {
         Set<Long> ids = favoriteIdsLiveData.getValue();
         return ids != null && ids.contains(songId);
     }
+// ✅ FIXED: getFavoritesList() method for MusicViewModel.java
+// Replace lines 228-229 with this:
     
     public List<Song> getFavoritesList() {
-        return new ArrayList<>(favoritesMap.values());
+        // Rebuild from current songs and favorite IDs to ensure accuracy
+        Set<Long> favoriteIds = favoriteIdsLiveData.getValue();
+        if (favoriteIds == null || favoriteIds.isEmpty()) {
+            return new ArrayList<>();
+        }
+        
+        List<Song> allSongs = songsLiveData.getValue();
+        if (allSongs == null) return new ArrayList<>();
+        
+        List<Song> result = new ArrayList<>();
+        for (Song song : allSongs) {
+            if (favoriteIds.contains(song.getId())) {
+                result.add(song);
+            }
+        }
+        return result;
     }
     
     // ── Shuffle helpers ───────────────────────────────────────────────
@@ -342,13 +359,23 @@ public class MusicViewModel extends AndroidViewModel {
     }
     
     public void playNextFromFullPlayer() {
-        if (exoPlayer.hasNextMediaItem()) exoPlayer.seekToNextMediaItem();
+        if (exoPlayer.hasNextMediaItem()) {
+            exoPlayer.seekToNextMediaItem();
+            // ✅ ADD THIS: Reset progress when switching songs
+            progressLiveData.postValue(0L);  // Show at start immediately
+        }
         else showEndDialogLiveData.postValue(true);
     }
     
     public void playPrevious() {
-        if (exoPlayer.getCurrentPosition() > 3000) exoPlayer.seekTo(0);
-        else if (exoPlayer.hasPreviousMediaItem())  exoPlayer.seekToPreviousMediaItem();
+        if (exoPlayer.getCurrentPosition() > 3000) {
+            exoPlayer.seekTo(0);
+            progressLiveData.postValue(0L);  // ✅ Reset to start
+        }
+        else if (exoPlayer.hasPreviousMediaItem()) {
+            exoPlayer.seekToPreviousMediaItem();
+            progressLiveData.postValue(0L);  // ✅ Reset when going previous
+        }
     }
     
     public void seekTo(long positionMs) {

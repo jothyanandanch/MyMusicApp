@@ -19,10 +19,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
 import com.example.mymusic.model.Song
 import com.example.mymusic.viewmodel.MusicViewModel
 import java.util.Locale
@@ -50,8 +52,11 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
     val duration      by viewModel.getDuration().observeAsState(0L)
     val repeatMode    by viewModel.getRepeatMode().observeAsState(0)
     val shuffleMode   by viewModel.getShuffleMode().observeAsState(false)
-    val favoriteIds   by viewModel.getFavoriteIds().observeAsState(initial = emptySet())
     val showEndDialog by viewModel.getShowEndDialog().observeAsState(false)
+    val favoriteIds by viewModel.getFavoriteIds().observeAsState(initial = emptySet())
+
+// Then derive the favorites list from it:
+    val favorites = viewModel.getFavoritesList()  // This will be called when favoriteIds change
 
     var showNowPlaying by remember { mutableStateOf(false) }
     var selectedTab    by remember { mutableIntStateOf(0) }
@@ -236,22 +241,26 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                 modifier         = Modifier.padding(paddingValues),
                 onSongClick      = { song -> viewModel.playSong(song, songs, songs.indexOf(song)) },
                 onToggleFavorite = { song -> viewModel.toggleFavorite(song) },
-                onShufflePlay    = { viewModel.playAllShuffled() }
+                onShufflePlay = { viewModel.playShuffled(songs) }
             )
             3 -> FavoritesScreen(
-                favorites        = viewModel.getFavoritesList(),
-                currentSong      = currentSong,
-                favoriteIds      = favoriteIds,
-                modifier         = Modifier.padding(paddingValues),
-                onSongClick      = { song ->
-                    val favList = viewModel.getFavoritesList()
-                    viewModel.playSong(song, favList, favList.indexOf(song))
+                favorites = favorites,  // ✅ Will update when favoriteIds changes
+                currentSong = currentSong,
+                favoriteIds = favoriteIds,
+                modifier = Modifier.padding(paddingValues)
+                    .fillMaxSize(),
+                onSongClick = { song ->
+                    viewModel.playSong(song, favorites, favorites.indexOf(song))
                 },
-                onToggleFavorite = { song -> viewModel.toggleFavorite(song) }
+                onToggleFavorite = { song ->
+                    val favList = viewModel.getFavoritesList()
+                    viewModel.toggleFavorite(song)
+                }
             )
         }
     }
 }
+
 
 // ─── Home Tab ─────────────────────────────────────────────────────────
 @Composable
@@ -379,13 +388,25 @@ fun SongListItem(
                 .background(SpotifySurface2),
             contentAlignment = Alignment.Center
         ) {
-            Icon(
-                imageVector        = Icons.Filled.MusicNote,
-                contentDescription = null,
-                tint               = if (isCurrentSong) SpotifyGreen else SpotifyGray,
-                modifier           = Modifier.size(24.dp)
-            )
+            if (song.albumArtUri != null) {
+                // ✅ Display album art if available
+                AsyncImage(
+                    model = song.albumArtUri,
+                    contentDescription = "Album art",
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop
+                )
+            } else {
+                // ✅ Show music note if no art available
+                Icon(
+                    imageVector = Icons.Filled.MusicNote,
+                    contentDescription = null,
+                    tint = if (isCurrentSong) SpotifyGreen else SpotifyGray,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
         }
+
         Column(modifier = Modifier.padding(start = 12.dp).weight(1f)) {
             Text(
                 text       = song.title,
