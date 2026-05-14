@@ -444,17 +444,12 @@ public class MusicViewModel extends AndroidViewModel {
         if (playlist == null || playlist.isEmpty()) return;
         
         List<Song> shuffled = new ArrayList<>(playlist);
-        
-        // ✅ Get the currently playing song from LiveData
         Song currentSong = currentSongLiveData.getValue();
-        
-        // ✅ Find currently playing song in the NEW playlist
         Song nowPlaying = null;
         int nowPlayingIndex = -1;
         
-        // Check if we're currently playing a song from this playlist
+        // Find currently playing song in the NEW playlist
         if (currentSong != null) {
-            // Only keep current song at front if it exists in THIS new playlist
             for (int i = 0; i < shuffled.size(); i++) {
                 if (shuffled.get(i).getId() == currentSong.getId()) {
                     nowPlaying = shuffled.get(i);
@@ -464,17 +459,13 @@ public class MusicViewModel extends AndroidViewModel {
             }
         }
         
-        // ✅ If current song is in this playlist, keep it and shuffle rest
+        // If current song is in this playlist, keep it and shuffle rest
         if (nowPlayingIndex >= 0) {
-            // Remove current song from list
             shuffled.remove(nowPlayingIndex);
-            // Shuffle the remaining songs
             Collections.shuffle(shuffled);
-            // Put current song at the front
             shuffled.add(0, nowPlaying);
             currentIndex = 0;
         } else {
-            // Current song not in this playlist, just shuffle all
             Collections.shuffle(shuffled);
             currentIndex = 0;
         }
@@ -486,11 +477,23 @@ public class MusicViewModel extends AndroidViewModel {
         for (Song s : shuffled) exoPlayer.addMediaItem(MediaItem.fromUri(s.getUri()));
         exoPlayer.setShuffleModeEnabled(false);
         shuffleModeLiveData.postValue(true);
+        
+        currentPlaylist = shuffled;
+        currentSongLiveData.postValue(shuffled.get(0));
+        
+        // ✅ KEY FIX: If currently playing the same song, DON'T restart it!
+        if (nowPlayingIndex >= 0 && exoPlayer.isPlaying()) {
+            // Current song is in the new playlist and is already playing
+            // The exoPlayer already has it queued, just update the queue
+            // Don't seek or restart - let it continue!
+            return;
+        }
+        
+        // Otherwise, start from the beginning
         exoPlayer.seekToDefaultPosition(0);
         exoPlayer.prepare();
         exoPlayer.play();
-        currentSongLiveData.postValue(shuffled.get(0));
-        currentPlaylist = shuffled;
+        
         endOfQueueLiveData.postValue(false);
         showEndDialogLiveData.postValue(false);
     }

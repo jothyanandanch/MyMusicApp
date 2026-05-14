@@ -1,6 +1,8 @@
 package com.example.mymusic.ui.screens.library
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -9,11 +11,18 @@ import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -168,24 +177,78 @@ fun NowPlayingScreen(
                 }
             }
 
-            // ── SEEK BAR ──────────────────────────────────────────────
             Column(modifier = Modifier.fillMaxWidth()) {
-                Slider(
-                    value         = progressFraction,
-                    onValueChange = { onSeek((it * duration).toLong()) },
-                    modifier      = Modifier.fillMaxWidth(),
-                    colors        = SliderDefaults.colors(
-                        thumbColor         = SpotifyWhite,
-                        activeTrackColor   = SpotifyWhite,
-                        inactiveTrackColor = SpotifyLightGray
+                // Spotify-style progress bar with draggable thumb
+                var isDragging by remember { mutableStateOf(false) }
+                var draggedFraction by remember { mutableStateOf(progressFraction) }
+
+                val displayFraction = if (isDragging) draggedFraction else progressFraction
+
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(24.dp)  // Taller hit area for easier dragging
+                        .pointerInput(Unit) {
+                            detectHorizontalDragGestures(
+                                onHorizontalDrag = { _, dragAmount ->
+                                    val newFraction = (displayFraction + (dragAmount / size.width)).coerceIn(0f, 1f)
+                                    draggedFraction = newFraction
+                                    isDragging = true
+                                },
+                                onDragEnd = {
+                                    isDragging = false
+                                    onSeek((draggedFraction * duration).toLong())
+                                }
+                            )
+                        }
+                        .pointerInput(Unit) {
+                            detectTapGestures { offset ->
+                                val tapFraction = (offset.x / size.width).coerceIn(0f, 1f)
+                                onSeek((tapFraction * duration).toLong())
+                            }
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    // Background track (gray)
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(4.dp)
+                            .clip(RoundedCornerShape(2.dp))
+                            .background(SpotifyLightGray)
                     )
-                )
+
+                    // Active progress (green)
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth(displayFraction)
+                            .height(4.dp)
+                            .clip(RoundedCornerShape(2.dp))
+                            .background(SpotifyGreen)
+                    )
+
+                    // Draggable thumb (white circle)
+                    Box(
+                        modifier = Modifier
+                            .size(12.dp)
+                            .offset(x = ((displayFraction * 100).dp) - 6.dp)
+                            .clip(CircleShape)
+                            .background(SpotifyWhite)
+                            .shadow(elevation = 2.dp, shape = CircleShape)
+                            .scale(if (isDragging) 1.3f else 1f)
+                    )
+                }
+
+                // Time display
                 Row(
-                    modifier              = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp),
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Text(formatDuration(progress), color = SpotifyGray, fontSize = 11.sp)
-                    Text(formatDuration(duration),  color = SpotifyGray, fontSize = 11.sp)
+                    Text(formatDuration(if (isDragging) (draggedFraction * duration).toLong() else progress),
+                        color = SpotifyGray, fontSize = 11.sp)
+                    Text(formatDuration(duration), color = SpotifyGray, fontSize = 11.sp)
                 }
             }
 

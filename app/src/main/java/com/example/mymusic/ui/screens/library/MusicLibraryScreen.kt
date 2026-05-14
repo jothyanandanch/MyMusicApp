@@ -377,29 +377,30 @@ fun SongListItem(
     ) {
         Box(
             modifier = Modifier
-                .size(48.dp)
+                .size(42.dp)
                 .clip(RoundedCornerShape(4.dp))
-                .background(SpotifySurface2),
+                .background(SpotifyElevated),
             contentAlignment = Alignment.Center
         ) {
+            // ✅ Show album art if available, music note if not
             if (song.albumArtUri != null) {
-                // ✅ Display album art if available
                 AsyncImage(
                     model = song.albumArtUri,
-                    contentDescription = "Album art",
+                    contentDescription = "Album art for ${song.title}",
                     modifier = Modifier.fillMaxSize(),
                     contentScale = ContentScale.Crop
                 )
             } else {
-                // ✅ Show music note if no art available
+                // Fallback: music note icon
                 Icon(
-                    imageVector = Icons.Filled.MusicNote,
+                    Icons.Filled.MusicNote,
                     contentDescription = null,
-                    tint = if (isCurrentSong) SpotifyGreen else SpotifyGray,
-                    modifier = Modifier.size(24.dp)
+                    tint = SpotifyGreen,
+                    modifier = Modifier.size(22.dp)
                 )
             }
         }
+
 
         Column(modifier = Modifier.padding(start = 12.dp).weight(1f)) {
             Text(
