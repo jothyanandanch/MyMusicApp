@@ -63,7 +63,7 @@ public class MusicViewModel extends AndroidViewModel {
                 long dur = exoPlayer.getDuration();
                 durationLiveData.postValue(dur > 0 ? dur : 0L);
             }
-            progressHandler.postDelayed(this, 500);
+            progressHandler.postDelayed(this, 200);
         }
     };
     
@@ -378,8 +378,10 @@ public class MusicViewModel extends AndroidViewModel {
     }
     
     public void seekTo(long positionMs) {
-        exoPlayer.seekTo(positionMs);
-        progressLiveData.postValue(positionMs);
+        if (exoPlayer != null) {
+            exoPlayer.seekTo(positionMs);
+            progressLiveData.postValue(positionMs);
+        }
     }
     
     public void toggleRepeat() {
@@ -395,46 +397,31 @@ public class MusicViewModel extends AndroidViewModel {
      * Keep currently playing song in place and shuffle only the rest.
      */
     public void toggleShuffle() {
-        boolean cur  = Boolean.TRUE.equals(shuffleModeLiveData.getValue());
-        boolean next = !cur;
+        boolean current = Boolean.TRUE.equals(shuffleModeLiveData.getValue());
+        boolean newVal = !current;
+        shuffleModeLiveData.postValue(newVal);
         
-        if (next) {
-            if (currentPlaylist != null && currentIndex >= 0) {
-                Song nowPlaying  = currentPlaylist.get(currentIndex);
-                
-                // Preserve songs before current position
-                List<Song> before = currentIndex > 0
-                        ? new ArrayList<>(currentPlaylist.subList(0, currentIndex))
-                        : new ArrayList<>();
-                
-                // Shuffle only songs after current position
-                List<Song> after = new ArrayList<>(
-                        currentPlaylist.subList(currentIndex + 1, currentPlaylist.size())
-                );
-                Collections.shuffle(after);
-                
-                // Rebuild: before + current + shuffled after
-                List<Song> reordered = new ArrayList<>(before);
-                reordered.add(nowPlaying);
-                reordered.addAll(after);
-                currentPlaylist = reordered;
-                
-                exoPlayer.clearMediaItems();
-                for (Song s : reordered) exoPlayer.addMediaItem(MediaItem.fromUri(s.getUri()));
-                exoPlayer.seekToDefaultPosition(before.size());  // Position at current song
-                exoPlayer.prepare();
+        if (exoPlayer != null) {
+            // CRITICAL: Save current position before toggling
+            long currentPos = exoPlayer.getCurrentPosition();
+            int currentMediaIndex = exoPlayer.getCurrentMediaItemIndex();
+            
+            exoPlayer.setShuffleModeEnabled(newVal);
+            
+            // DO NOT seekTo(0) or prepare() here — just toggle the flag
+            // ExoPlayer handles shuffle internally without restarting
+            
+            if (newVal) {
+                playedInShuffleCycle.clear();
+                // Mark current song as already played in this shuffle cycle
+                Song currentSong = currentSongLiveData.getValue();
+                if (currentSong != null) {
+                    playedInShuffleCycle.add(currentSong.getId());
+                }
             }
-            playedInShuffleCycle.clear();
-            if (currentPlaylist != null && currentIndex >= 0) {
-                playedInShuffleCycle.add(
-                        currentPlaylist.get(Math.min(currentIndex, currentPlaylist.size() - 1)).getId()
-                );
-            }
-        } else {
-            playedInShuffleCycle.clear();
+            // Restore position to prevent any accidental seek-to-start
+            exoPlayer.seekTo(currentMediaIndex, currentPos);
         }
-        exoPlayer.setShuffleModeEnabled(false);
-        shuffleModeLiveData.postValue(next);
     }
     
     /**
