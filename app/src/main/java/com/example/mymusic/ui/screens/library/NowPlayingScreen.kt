@@ -1,5 +1,7 @@
 package com.example.mymusic.ui.screens.library
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -33,7 +35,16 @@ import coil.compose.AsyncImage
 import com.example.mymusic.model.Song
 
 /**
- * ✅ FIXED: Full player with album art display
+ * Fixed NowPlayingScreen:
+ * 1. Progress bar thumb position uses BoxWithConstraints so it tracks
+ *    correctly across all screen widths — no more fixed 100.dp offset math.
+ * 2. Drag logic snaps to tap position on first touch via onDragStart,
+ *    then accumulates delta — bar never jumps.
+ * 3. Thumb is hidden at rest and appears only while dragging (Spotify style),
+ *    smoothly animated with animateFloatAsState.
+ * 4. animateFloatAsState interpolates between 200 ms polling ticks for a
+ *    buttery-smooth bar movement.
+ * 5. Shuffle toggle: current song is not restarted (fixed in ViewModel).
  */
 @Composable
 fun NowPlayingScreen(
@@ -53,7 +64,7 @@ fun NowPlayingScreen(
     onToggleShuffle  : () -> Unit,
     onToggleFavorite : () -> Unit
 ) {
-    val progressFraction =
+    val rawFraction =
         if (duration > 0) (progress.toFloat() / duration.toFloat()).coerceIn(0f, 1f) else 0f
 
     Box(
@@ -76,7 +87,7 @@ fun NowPlayingScreen(
             verticalArrangement = Arrangement.SpaceBetween
         ) {
 
-            // ── TOP BAR ──────────────────────────────────────────────
+            // ── TOP BAR ────────────────────────────────────────────────
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -94,9 +105,9 @@ fun NowPlayingScreen(
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(
                         "PLAYING FROM YOUR LIBRARY",
-                        color      = SpotifyGray,
-                        fontSize   = 10.sp,
-                        fontWeight = FontWeight.Bold,
+                        color         = SpotifyGray,
+                        fontSize      = 10.sp,
+                        fontWeight    = FontWeight.Bold,
                         letterSpacing = 1.sp
                     )
                     Text(
@@ -116,7 +127,6 @@ fun NowPlayingScreen(
             }
 
             // ── ALBUM ART ─────────────────────────────────────────────
-            // ✅ FIXED: Display actual album art or fallback to music note
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -127,10 +137,10 @@ fun NowPlayingScreen(
             ) {
                 if (song.albumArtUri != null) {
                     AsyncImage(
-                        model = song.albumArtUri,
+                        model              = song.albumArtUri,
                         contentDescription = "Album art",
-                        modifier = Modifier.fillMaxSize(),
-                        contentScale = ContentScale.Crop
+                        modifier           = Modifier.fillMaxSize(),
+                        contentScale       = ContentScale.Crop
                     )
                 } else {
                     Icon(
@@ -142,9 +152,9 @@ fun NowPlayingScreen(
                 }
             }
 
-            // ── SONG INFO + HEART ──────────────────────────────────────
+            // ── SONG INFO + HEART ───────────────────────────────────────
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier              = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment     = Alignment.CenterVertically
             ) {
@@ -169,7 +179,7 @@ fun NowPlayingScreen(
                 IconButton(onClick = onToggleFavorite) {
                     Icon(
                         imageVector        = if (isFavorite) Icons.Filled.Favorite
-                        else Icons.Filled.FavoriteBorder,
+                                             else Icons.Filled.FavoriteBorder,
                         contentDescription = if (isFavorite) "Unlike" else "Like",
                         tint               = if (isFavorite) SpotifyGreen else SpotifyWhite,
                         modifier           = Modifier.size(26.dp)
@@ -177,82 +187,121 @@ fun NowPlayingScreen(
                 }
             }
 
+            // ── PROGRESS BAR (FIXED) ────────────────────────────────────
             Column(modifier = Modifier.fillMaxWidth()) {
-                // Spotify-style progress bar with draggable thumb
-                var isDragging by remember { mutableStateOf(false) }
-                var draggedFraction by remember { mutableStateOf(progressFraction) }
 
-                val displayFraction = if (isDragging) draggedFraction else progressFraction
+                var isDragging   by remember { mutableStateOf(false) }
+                var dragFraction by remember { mutableStateOf(0f) }
 
-                Box(
+                // Animate bar movement between 200 ms polling ticks (smooth).
+                // While dragging: instant response (tween 0 ms).
+                val animatedFraction by animateFloatAsState(
+                    targetValue   = if (isDragging) dragFraction else rawFraction,
+                    animationSpec = tween(durationMillis = if (isDragging) 0 else 100),
+                    label         = "progressAnim"
+                )
+
+                // Thumb scale: hidden (0f) at rest, full size (1f) while dragging.
+                val thumbScale by animateFloatAsState(
+                    targetValue   = if (isDragging) 1f else 0f,
+                    animationSpec = tween(durationMillis = 150),
+                    label         = "thumbScale"
+                )
+
+                // BoxWithConstraints gives us the real pixel width of the track
+                // so the thumb offset is always perfectly accurate.
+                BoxWithConstraints(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(24.dp)  // Taller hit area for easier dragging
-                        .pointerInput(Unit) {
+                        .height(28.dp)   // Tall touch-target (Spotify style)
+                        .pointerInput(duration) {
                             detectHorizontalDragGestures(
+                                onDragStart = { offset ->
+                                    // Snap to tap position on first touch
+                                    // so the bar never jumps on drag-start.
+                                    dragFraction = (offset.x / size.width).coerceIn(0f, 1f)
+                                    isDragging   = true
+                                },
                                 onHorizontalDrag = { _, dragAmount ->
-                                    val newFraction = (displayFraction + (dragAmount / size.width)).coerceIn(0f, 1f)
-                                    draggedFraction = newFraction
-                                    isDragging = true
+                                    dragFraction = (dragFraction + dragAmount / size.width)
+                                        .coerceIn(0f, 1f)
                                 },
                                 onDragEnd = {
+                                    onSeek((dragFraction * duration).toLong())
                                     isDragging = false
-                                    onSeek((draggedFraction * duration).toLong())
+                                },
+                                onDragCancel = {
+                                    isDragging = false
                                 }
                             )
                         }
-                        .pointerInput(Unit) {
+                        .pointerInput(duration) {
                             detectTapGestures { offset ->
-                                val tapFraction = (offset.x / size.width).coerceIn(0f, 1f)
-                                onSeek((tapFraction * duration).toLong())
+                                val tapped = (offset.x / size.width).coerceIn(0f, 1f)
+                                dragFraction = tapped
+                                onSeek((tapped * duration).toLong())
                             }
                         },
-                    contentAlignment = Alignment.Center
+                    contentAlignment = Alignment.CenterStart
                 ) {
-                    // Background track (gray)
+                    val trackWidthDp = maxWidth
+
+                    // Gray background track
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(4.dp)
-                            .clip(RoundedCornerShape(2.dp))
+                            .height(if (isDragging) 5.dp else 4.dp)
+                            .align(Alignment.Center)
+                            .clip(RoundedCornerShape(50))
                             .background(SpotifyLightGray)
                     )
 
-                    // Active progress (green)
+                    // Green filled portion
                     Box(
                         modifier = Modifier
-                            .fillMaxWidth(displayFraction)
-                            .height(4.dp)
-                            .clip(RoundedCornerShape(2.dp))
+                            .fillMaxWidth(animatedFraction)
+                            .height(if (isDragging) 5.dp else 4.dp)
+                            .align(Alignment.CenterStart)
+                            .clip(RoundedCornerShape(50))
                             .background(SpotifyGreen)
                     )
 
-                    // Draggable thumb (white circle)
+                    // Thumb: hidden at rest, visible only on drag (Spotify style)
                     Box(
                         modifier = Modifier
-                            .size(12.dp)
-                            .offset(x = ((displayFraction * 100).dp) - 6.dp)
+                            .size(14.dp)
+                            .align(Alignment.CenterStart)
+                            .offset(x = (trackWidthDp * animatedFraction) - 7.dp)
+                            .scale(thumbScale)
                             .clip(CircleShape)
                             .background(SpotifyWhite)
-                            .shadow(elevation = 2.dp, shape = CircleShape)
-                            .scale(if (isDragging) 1.3f else 1f)
+                            .shadow(elevation = 3.dp, shape = CircleShape)
                     )
                 }
 
-                // Time display
+                // Time labels
                 Row(
-                    modifier = Modifier
+                    modifier              = Modifier
                         .fillMaxWidth()
-                        .padding(top = 8.dp),
+                        .padding(top = 6.dp),
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Text(formatDuration(if (isDragging) (draggedFraction * duration).toLong() else progress),
-                        color = SpotifyGray, fontSize = 11.sp)
-                    Text(formatDuration(duration), color = SpotifyGray, fontSize = 11.sp)
+                    Text(
+                        formatDuration(
+                            if (isDragging) (dragFraction * duration).toLong() else progress
+                        ),
+                        color    = SpotifyGray,
+                        fontSize = 11.sp
+                    )
+                    Text(
+                        formatDuration(duration),
+                        color    = SpotifyGray,
+                        fontSize = 11.sp
+                    )
                 }
             }
 
-            // ── PLAYBACK CONTROLS — Shuffle | Prev | Play | Next | Repeat ──
+            // ── PLAYBACK CONTROLS ─────────────────────────────────────────
             Row(
                 modifier              = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -285,7 +334,7 @@ fun NowPlayingScreen(
                     IconButton(onClick = onTogglePlayPause) {
                         Icon(
                             imageVector        = if (isPlaying) Icons.Filled.Pause
-                            else Icons.Filled.PlayArrow,
+                                                 else Icons.Filled.PlayArrow,
                             contentDescription = if (isPlaying) "Pause" else "Play",
                             tint               = SpotifyBlack,
                             modifier           = Modifier.size(38.dp)
@@ -303,20 +352,20 @@ fun NowPlayingScreen(
                 // Repeat
                 IconButton(onClick = onToggleRepeat) {
                     Icon(
-                        imageVector = if (repeatMode == Player.REPEAT_MODE_ONE)
-                            Icons.Filled.RepeatOne
-                        else Icons.Filled.Repeat,
+                        imageVector        = if (repeatMode == Player.REPEAT_MODE_ONE)
+                                                Icons.Filled.RepeatOne
+                                             else Icons.Filled.Repeat,
                         contentDescription = "Repeat",
-                        tint     = if (repeatMode != Player.REPEAT_MODE_OFF) SpotifyGreen
-                        else SpotifyGray,
-                        modifier = Modifier.size(22.dp)
+                        tint               = if (repeatMode != Player.REPEAT_MODE_OFF) SpotifyGreen
+                                             else SpotifyGray,
+                        modifier           = Modifier.size(22.dp)
                     )
                 }
             }
 
-            // ── BOTTOM ROW — Devices + Queue ──────────────────────────
+            // ── BOTTOM ROW ───────────────────────────────────────────────
             Row(
-                modifier = Modifier
+                modifier              = Modifier
                     .fillMaxWidth()
                     .padding(bottom = 16.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
