@@ -417,6 +417,25 @@ public class MusicViewModel extends AndroidViewModel {
             }
         }
     }
+    public void addSongsToPlaylist(String playlistName, List<Song> songsToAdd) {
+            Map<String, List<Long>> current = customPlaylistsLiveData.getValue();
+            if (current != null && current.containsKey(playlistName)) {
+                List<Long> ids = current.get(playlistName);
+                boolean changed = false;
+                
+                for (Song song : songsToAdd) {
+                    if (!ids.contains(song.getId())) {
+                        ids.add(song.getId());
+                        changed = true;
+                    }
+                }
+                
+                if (changed) {
+                    customPlaylistsLiveData.postValue(current);
+                    savePlaylists(current);
+                }
+            }
+        }
     
     private void savePlaylists(Map<String, List<Long>> playlists) {
         SharedPreferences.Editor editor = getApplication().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit();
@@ -452,6 +471,37 @@ public class MusicViewModel extends AndroidViewModel {
             }
         }
     }
+    
+        public void renamePlaylist(String oldName, String newName) {
+            Map<String, List<Long>> current = customPlaylistsLiveData.getValue();
+            if (current != null && current.containsKey(oldName) && !current.containsKey(newName) && !newName.trim().isEmpty()) {
+                List<Long> ids = current.get(oldName);
+                current.remove(oldName);
+                current.put(newName, ids);
+                customPlaylistsLiveData.postValue(current);
+                savePlaylists(current);
+            }
+        }
+        
+        public void addListToQueue(List<Song> songs) {
+            if (songs == null || songs.isEmpty()) return;
+            
+            if (exoPlayer == null || currentPlaylist == null || currentPlaylist.isEmpty()) {
+                // If nothing is playing, just start playing the first song and queue the rest
+                playSong(songs.get(0), songs);
+                return;
+            }
+            
+            for (Song song : songs) {
+                currentPlaylist.add(song);
+                exoPlayer.addMediaItem(MediaItem.fromUri(song.getUri()));
+                
+                // Queue it in the shuffle list if shuffle is active
+                if (Boolean.TRUE.equals(shuffleModeLiveData.getValue())) {
+                    shuffleUnplayed.add(song);
+                }
+            }
+        }
     
     // ── Deletion Logic ────────────────────────────────────────────────────────
     
