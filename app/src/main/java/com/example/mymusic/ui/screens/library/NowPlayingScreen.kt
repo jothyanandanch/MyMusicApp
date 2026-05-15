@@ -3,7 +3,7 @@ package com.example.mymusic.ui.screens.library
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
-import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
@@ -42,7 +42,7 @@ import com.example.mymusic.ui.components.AlbumArt
 @Composable
 fun NowPlayingScreen(
     song             : Song,
-    queue            : List<Song>,
+    queue            : List<Song>, // ✅ NEW: Queue passed in
     isPlaying        : Boolean,
     progress         : Long,
     duration         : Long,
@@ -60,13 +60,8 @@ fun NowPlayingScreen(
 ) {
     val rawFraction = if (duration > 0) (progress.toFloat() / duration.toFloat()).coerceIn(0f, 1f) else 0f
 
-    // State to manage if the Bottom Sheet is open or closed
+    // ✅ State to manage if the Bottom Sheet is open or closed
     var showQueueSheet by remember { mutableStateOf(false) }
-
-    // ✅ FIX: Move these OUTSIDE the if-block - must be called unconditionally
-    // Composable functions must be called the same number of times in every recomposition
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val screenHeight = LocalConfiguration.current.screenHeightDp.dp
 
     Box(
         modifier = Modifier
@@ -241,6 +236,7 @@ fun NowPlayingScreen(
                     Icon(Icons.Filled.DevicesOther, "Devices", tint = SpotifyGray, modifier = Modifier.size(22.dp))
                 }
 
+                // ✅ TRIGGER THE BOTTOM SHEET HERE
                 IconButton(onClick = { showQueueSheet = true }) {
                     Icon(Icons.AutoMirrored.Filled.QueueMusic, "Queue", tint = SpotifyWhite, modifier = Modifier.size(22.dp))
                 }
@@ -250,20 +246,16 @@ fun NowPlayingScreen(
 
     // ── THE QUEUE BOTTOM SHEET ───────────────────────────────────────────────
     if (showQueueSheet) {
+        // skipPartiallyExpanded = false means it will peek first, then go full screen if dragged up
+        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
+
         ModalBottomSheet(
             onDismissRequest = { showQueueSheet = false },
             sheetState = sheetState,
-            containerColor = SpotifySurface,
+            containerColor = SpotifySurface, // Match background
             dragHandle = { BottomSheetDefaults.DragHandle(color = SpotifyGray) }
         ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = screenHeight * 0.85f)
-                    .navigationBarsPadding()
-            ) {
-                QueueContent(queue = queue, currentSong = song)
-            }
+            QueueContent(queue = queue, currentSong = song)
         }
     }
 }
@@ -271,6 +263,7 @@ fun NowPlayingScreen(
 // ── QUEUE LIST COMPOSABLE ────────────────────────────────────────────────────
 @Composable
 fun QueueContent(queue: List<Song>, currentSong: Song) {
+    // Find where the current song is in the queue to split History vs Upcoming
     val currentIndex = queue.indexOfFirst { it.id == currentSong.id }
 
     val history = if (currentIndex > 0) queue.subList(0, currentIndex) else emptyList()
@@ -278,7 +271,7 @@ fun QueueContent(queue: List<Song>, currentSong: Song) {
 
     LazyColumn(
         modifier = Modifier
-            .fillMaxWidth()
+            .fillMaxSize() // Will fill screen when dragged all the way up
             .padding(horizontal = 16.dp)
     ) {
         item {
@@ -344,9 +337,11 @@ fun QueueSongItem(song: Song, isPlaying: Boolean, isHistory: Boolean = false) {
             )
         }
 
+        // Show audio bars icon if it's currently playing, otherwise show re-order handle (just visual for now)
         if (isPlaying) {
             Icon(Icons.Filled.GraphicEq, contentDescription = "Playing", tint = SpotifyGreen, modifier = Modifier.size(20.dp))
         } else if (!isHistory) {
+            // Visual drag handle placeholder
             Icon(Icons.Filled.DragHandle, contentDescription = "Reorder", tint = SpotifyGray, modifier = Modifier.size(24.dp))
         }
     }
