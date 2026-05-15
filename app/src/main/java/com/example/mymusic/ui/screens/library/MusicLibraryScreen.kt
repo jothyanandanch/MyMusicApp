@@ -1,10 +1,11 @@
 package com.example.mymusic.ui.screens.library
 
-import android.view.inputmethod.DeleteGesture
-import com.example.mymusic.ui.screens.search.SearchScreen
-import androidx.compose.foundation.ExperimentalFoundationApi
+import android.app.Activity
 import android.widget.Toast
-import androidx.compose.ui.platform.LocalContext
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.IntentSenderRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -23,19 +24,19 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-
 import com.example.mymusic.model.Song
-import com.example.mymusic.viewmodel.MusicViewModel
-import java.util.Locale
-import java.util.concurrent.TimeUnit
 import com.example.mymusic.ui.components.AlbumArt
 import com.example.mymusic.ui.screens.favorites.FavoritesScreen
 import com.example.mymusic.ui.screens.playlist.PlaylistScreen
+import com.example.mymusic.ui.screens.search.SearchScreen
+import com.example.mymusic.viewmodel.MusicViewModel
+import java.util.Locale
+import java.util.concurrent.TimeUnit
 
 // ─── Spotify Color Tokens ─────────────────────────────────────────────
 val SpotifyBlack     = Color(0xFF121212)
@@ -66,10 +67,33 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
     var showNowPlaying by remember { mutableStateOf(false) }
     var selectedTab    by remember { mutableIntStateOf(0) }
     var searchQuery    by remember { mutableStateOf("") }
+
     val playlists by viewModel.customPlaylists.observeAsState(initial = emptyMap())
     var songForPlaylistDialog by remember { mutableStateOf<Song?>(null) }
     var showCreatePlaylistDialog by remember { mutableStateOf(false) }
     var newPlaylistName by remember { mutableStateOf("") }
+    val context = LocalContext.current
+
+    // ── ✅ NEW: Scoped Storage Delete Dialog Launcher ──
+    val deleteIntentSender by viewModel.deleteIntentSender.observeAsState()
+
+    val deleteLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartIntentSenderForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            viewModel.confirmPendingDeletion()
+            Toast.makeText(context, "Successfully Deleted", Toast.LENGTH_SHORT).show()
+        } else {
+            Toast.makeText(context, "Deletion cancelled", Toast.LENGTH_SHORT).show()
+        }
+        viewModel.clearDeleteIntent()
+    }
+
+    LaunchedEffect(deleteIntentSender) {
+        deleteIntentSender?.let { sender ->
+            deleteLauncher.launch(IntentSenderRequest.Builder(sender).build())
+        }
+    }
 
     LaunchedEffect(nowPlayingSignal) {
         if (!nowPlayingSignal) showNowPlaying = false
@@ -275,7 +299,7 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                 SpotifyBottomNav(selectedTab = selectedTab, onTabSelected = { selectedTab = it })
             }
         }
-    ) { paddingValues ->                           // ← paddingValues now USED ✅
+    ) { paddingValues ->
         val filteredSongs = if (searchQuery.isBlank()) songs
         else songs.filter {
             it.title.contains(searchQuery, true) || it.artist.contains(searchQuery, true)
@@ -284,7 +308,7 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(paddingValues)            // ← THIS is the only line added
+                .padding(paddingValues)
         ) {
             when (selectedTab) {
                 0 -> HomeTab(
@@ -297,7 +321,7 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                     onSongClick      = { song -> viewModel.playSong(song, songs) },
                     onToggleFavorite = { song -> viewModel.toggleFavorite(song) },
                     onShufflePlay    = { viewModel.playAllShuffled(songs) },
-                    onAddToPlaylist  = { song -> songForPlaylistDialog = song }, // ✅ ADD THIS LINE
+                    onAddToPlaylist  = { song -> songForPlaylistDialog = song },
                     viewModel        = viewModel
                 )
                 1 -> SearchScreen(
@@ -306,8 +330,8 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                     favoriteIds      = favoriteIds,
                     onSongClick      = { song -> viewModel.playSong(song, filteredSongs) },
                     onToggleFavorite = { song -> viewModel.toggleFavorite(song) },
-                    onPlayNext       = { song -> viewModel.setPlayNext(song) }, // ✅ Handle Action
-                    onAddToQueue     = { song -> viewModel.addToQueue(song) },   // ✅ Handle Action
+                    onPlayNext       = { song -> viewModel.setPlayNext(song) },
+                    onAddToQueue     = { song -> viewModel.addToQueue(song) },
                     onAddToPlaylist  = { song -> songForPlaylistDialog=song }
                 )
                 2 -> PlaylistScreen(
@@ -338,17 +362,17 @@ fun HomeTab(
     favorites        : List<Song>,
     currentSong      : Song?,
     favoriteIds      : Set<Long>,
-    showShuffle      : Boolean = true,      // ← ADDED
-    showQuickAccess  : Boolean = true,      // ← ADDED
+    showShuffle      : Boolean = true,
+    showQuickAccess  : Boolean = true,
     onSongClick      : (Song) -> Unit,
     onToggleFavorite : (Song) -> Unit,
     onShufflePlay    : () -> Unit,
-    onAddToPlaylist  : (Song) -> Unit, // ✅ ADD THIS LINE
+    onAddToPlaylist  : (Song) -> Unit,
     viewModel        : MusicViewModel
 ) {
     LazyColumn(contentPadding = PaddingValues(bottom = 8.dp)) {
         // Quick-access grid (top 6 most-played / recent)
-        if (showQuickAccess && songs.isNotEmpty()) {    // ← ADDED check
+        if (showQuickAccess && songs.isNotEmpty()) {
             item {
                 QuickAccessGrid(
                     songs       = songs.take(6),
@@ -361,34 +385,34 @@ fun HomeTab(
 
         // Shuffle button and Header
         if (showShuffle) {
-        item {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment     = Alignment.CenterVertically
-            ) {
-                Text(
-                    "Your songs",
-                    color      = SpotifyWhite,
-                    fontWeight = FontWeight.Bold,
-                    fontSize   = 18.sp
-                )
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = onShufflePlay) {
-                        Icon(
-                            Icons.Filled.Shuffle, "Shuffle",
-                            tint     = SpotifyGreen,
-                            modifier = Modifier.size(24.dp)
-                        )
-                    }
-                    IconButton(onClick = {}) {
-                        Icon(Icons.Filled.MoreVert, null, tint = SpotifyGray)
+            item {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment     = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "Your songs",
+                        color      = SpotifyWhite,
+                        fontWeight = FontWeight.Bold,
+                        fontSize   = 18.sp
+                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(onClick = onShufflePlay) {
+                            Icon(
+                                Icons.Filled.Shuffle, "Shuffle",
+                                tint     = SpotifyGreen,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+                        IconButton(onClick = {}) {
+                            Icon(Icons.Filled.MoreVert, null, tint = SpotifyGray)
+                        }
                     }
                 }
             }
-        }
         }
 
         // Song list
@@ -399,10 +423,10 @@ fun HomeTab(
                 isFavorite       = favoriteIds.contains(song.id),
                 onSongClick      = { onSongClick(song) },
                 onToggleFavorite = { onToggleFavorite(song) },
-                onPlayNext       = { viewModel.setPlayNext(song) },   // ✅ Pass Play Next
-                onAddToQueue     = { viewModel.addToQueue(song) },    // ✅ Pass Add to Queue
-                onAddToPlaylist  = { onAddToPlaylist(song) },       // ✅ ADD THIS LINE
-                onDelete         = {viewModel.deleteSong(song)}
+                onPlayNext       = { viewModel.setPlayNext(song) },
+                onAddToQueue     = { viewModel.addToQueue(song) },
+                onAddToPlaylist  = { onAddToPlaylist(song) },
+                onDelete         = { viewModel.deleteSong(song) }
             )
         }
     }
@@ -411,8 +435,8 @@ fun HomeTab(
 // ─── Quick Access Grid ────────────────────────────────────────────────
 @Composable
 fun QuickAccessGrid(
-    songs       : List<Song>,       // keep for fallback
-    favorites   : List<Song>,       // NEW — favorite songs
+    songs       : List<Song>,
+    favorites   : List<Song>,
     currentSong : Song?,
     onSongClick : (Song) -> Unit
 ) {
@@ -457,14 +481,15 @@ fun SongItem(
     isFavorite       : Boolean,
     onSongClick      : () -> Unit,
     onToggleFavorite : () -> Unit,
-    onPlayNext       : () -> Unit = {},  // ✅ NEW callback
+    onPlayNext       : () -> Unit = {},
     onAddToQueue     : () -> Unit = {},
-    onAddToPlaylist  : () -> Unit = {},  // ✅ NEW callback
+    onAddToPlaylist  : () -> Unit = {},
     onDelete         : () -> Unit = {}
 ) {
     // State to manage the visibility of the dropdown menu
     var showMenu by remember { mutableStateOf(false) }
-    val context = LocalContext.current // ✅ To show feedback toasts
+    val context = LocalContext.current
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -509,6 +534,7 @@ fun SongItem(
         }
         Text(formatDuration(song.duration), color = SpotifyGray, fontSize = 12.sp)
         Spacer(Modifier.width(4.dp))
+
         // ─── Options Menu Area ───
         Box {
             // 1. Make the 3 dots clickable
@@ -549,7 +575,7 @@ fun SongItem(
                 DropdownMenuItem(
                     text = { Text("Add to Playlist", color = SpotifyWhite) },
                     onClick = { showMenu = false
-                        onAddToPlaylist()  // ✅ Trigger callback
+                        onAddToPlaylist()
                     }
                 )
 
@@ -558,7 +584,7 @@ fun SongItem(
                     onClick = {
                         showMenu = false
                         onDelete()
-                        Toast.makeText(context,"Successfully Deleted",Toast.LENGTH_SHORT).show()
+                        // ✅ Toast is removed here, feedback is handled by the intent sender callback in MusicLibraryScreen
                     }
                 )
             }
@@ -641,7 +667,7 @@ fun MiniPlayerBar(
             verticalAlignment     = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            // Album art — AlbumArt handles null URI + load errors + fallback icon
+            // Album art
             AlbumArt(
                 artUri       = song.albumArtUri,
                 isActive     = true,

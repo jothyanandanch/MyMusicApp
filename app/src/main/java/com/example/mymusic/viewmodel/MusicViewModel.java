@@ -4,6 +4,7 @@ import android.app.Application;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.database.ContentObserver;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
@@ -21,8 +22,6 @@ import com.example.mymusic.model.Song;
 import com.example.mymusic.repository.LocalMusicRepository;
 import com.example.mymusic.utils.AppLog;
 
-import org.jetbrains.annotations.NotNull;
-
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -31,7 +30,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-import kotlin.Unit;
+import android.app.PendingIntent;
+import android.content.IntentSender;
 
 public class MusicViewModel extends AndroidViewModel {
     
@@ -84,6 +84,7 @@ public class MusicViewModel extends AndroidViewModel {
         super(application);
         repository = new LocalMusicRepository(application);
         loadFavoritesFromPrefs();
+        loadPlaylistsFromPrefs();
         
         exoPlayer = new ExoPlayer.Builder(application).build();
         exoPlayer.setShuffleModeEnabled(false);
@@ -174,6 +175,11 @@ public class MusicViewModel extends AndroidViewModel {
     public LiveData<Boolean>    getShowEndDialog()   { return showEndDialogLiveData; }
     public LiveData<Set<Long>>  getFavoriteIds()     { return favoriteIdsLiveData; }
     public LiveData<Boolean>    isNowPlayingOpen()   { return isNowPlayingOpenLiveData; }
+    private final MutableLiveData<IntentSender> deleteIntentSenderLiveData = new MutableLiveData<>();
+    private Song pendingDeleteSong = null;
+    
+    public LiveData<IntentSender> getDeleteIntentSender() { return deleteIntentSenderLiveData; }
+    public void clearDeleteIntent() { deleteIntentSenderLiveData.postValue(null); }
     public void setNowPlayingOpen(boolean open)      { isNowPlayingOpenLiveData.postValue(open); }
     
     // ── Favorites ─────────────────────────────────────────────────────────────
@@ -222,10 +228,7 @@ public class MusicViewModel extends AndroidViewModel {
                 .apply();
     }
     
-    public List<Song> getFavoritesList() {
-        return new ArrayList<>(favoritesMap.values());
-    }
-    
+
     // ── Playback controls ─────────────────────────────────────────────────────
     
     public void playSong(Song song, List<Song> playlist) {
@@ -455,6 +458,47 @@ public class MusicViewModel extends AndroidViewModel {
     public void deleteSong(Song song) {
         if (song == null) return;
         
+        try {
+            // Attempt to physically delete from Device first
+            int deletedRows = getApplication().getContentResolver().delete(song.getUri(), null, null);
+            if (deletedRows > 0) {
+                AppLog.d(AppLog.PERMISSION, "Song permanently deleted from device storage.");
+                removeSongFromState(song); // Success without dialog (Android 9 and below)
+            }
+        } catch (SecurityException e) {
+            // Android 11+ (API 30+) Scoped Storage requires user permission dialog
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                List<Uri> uris = new ArrayList<>();
+                uris.add(song.getUri());
+                PendingIntent pi = MediaStore.createDeleteRequest(getApplication().getContentResolver(), uris);
+                pendingDeleteSong = song;
+                deleteIntentSenderLiveData.postValue(pi.getIntentSender());
+            }
+            // Android 10 (API 29) uses RecoverableSecurityException
+            else if (Build.VERSION.SDK_INT == Build.VERSION_CODES.Q) {
+                if (e instanceof android.app.RecoverableSecurityException) {
+                    android.app.RecoverableSecurityException rse = (android.app.RecoverableSecurityException) e;
+                    pendingDeleteSong = song;
+                    deleteIntentSenderLiveData.postValue(rse.getUserAction().getActionIntent().getIntentSender());
+                } else {
+                    AppLog.e(AppLog.PERMISSION, "SecurityException: " + e.getMessage());
+                }
+            } else {
+                AppLog.e(AppLog.PERMISSION, "Cannot physically delete file. " + e.getMessage());
+            }
+        }
+    }
+    
+    public void confirmPendingDeletion() {
+        if (pendingDeleteSong != null) {
+            removeSongFromState(pendingDeleteSong);
+            pendingDeleteSong = null;
+        }
+    }
+    
+    private void removeSongFromState(Song song) {
+        if (song == null) return;
+        
         // 1. Remove from local LiveData (Updates the UI immediately)
         List<Song> currentList = songsLiveData.getValue();
         if (currentList != null) {
@@ -474,18 +518,15 @@ public class MusicViewModel extends AndroidViewModel {
             currentPlaylist.remove(indexToRemove);
             
             if (exoPlayer != null) {
-                exoPlayer.removeMediaItem(indexToRemove); // ✅ Removes directly from Player
+                exoPlayer.removeMediaItem(indexToRemove); // Removes directly from Player
             }
             
             // Shift our current index tracker
             if (indexToRemove < currentIndex) {
                 currentIndex--;
             } else if (indexToRemove == currentIndex) {
-                // If we deleted the song currently playing, the ExoPlayer automatically skips
-                // to the next item. We just need to update our LiveData tracking.
                 if (currentPlaylist.isEmpty()) {
-					assert exoPlayer != null;
-					exoPlayer.stop();
+                    if (exoPlayer != null) exoPlayer.stop();
                     currentSongLiveData.postValue(null);
                     isPlayingLiveData.postValue(false);
                 } else {
@@ -499,17 +540,6 @@ public class MusicViewModel extends AndroidViewModel {
         // 4. Remove from Shuffle queues
         shuffleUnplayed.remove(song);
         shufflePlayed.remove(song);
-        
-        // 5. Attempt to physically delete from Device
-        try {
-            int deletedRows = getApplication().getContentResolver().delete(song.getUri(), null, null);
-            if (deletedRows > 0) {
-                AppLog.d(AppLog.PERMISSION, "Song permanently deleted from device storage.");
-            }
-        } catch (SecurityException e) {
-            // Android 10+ blocks silent physical deletion. It acts as a "soft delete" for now.
-            AppLog.e(AppLog.PERMISSION, "Cannot physically delete file due to Android Scoped Storage. " + e.getMessage());
-        }
     }
     
     // ── Queue Management ──────────────────────────────────────────────────────
