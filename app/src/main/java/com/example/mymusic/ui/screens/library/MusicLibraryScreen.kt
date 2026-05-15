@@ -61,7 +61,8 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
     val showEndDialog by viewModel.getShowEndDialog().observeAsState(false)
     val favoriteIds   by viewModel.getFavoriteIds().observeAsState(initial = emptySet())
     val nowPlayingSignal by viewModel.isNowPlayingOpen().observeAsState(false)
-
+    // Inside MusicLibraryScreen.kt, near the top where you observe states:
+    val queue by viewModel.getQueue().observeAsState(initial = emptyList())
     val favorites = songs.filter { song -> favoriteIds.contains(song.id) }
 
     var showNowPlaying by remember { mutableStateOf(false) }
@@ -189,6 +190,7 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
     if (showNowPlaying && currentSong != null) {
         NowPlayingScreen(
             song              = currentSong!!,
+            queue             = queue,
             isPlaying         = isPlaying,
             progress          = progress,
             duration          = duration,
