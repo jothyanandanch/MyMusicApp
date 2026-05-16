@@ -45,6 +45,10 @@ import androidx.media3.common.Player
 import coil.compose.AsyncImage
 import com.example.mymusic.model.Song
 import com.example.mymusic.ui.components.AlbumArt
+import androidx.compose.animation.core.Animatable
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -73,10 +77,39 @@ fun NowPlayingScreen(
     val rawFraction = if (duration > 0) (progress.toFloat() / duration.toFloat()).coerceIn(0f, 1f) else 0f
 
     var showQueueSheet by remember { mutableStateOf(false) }
+    // ✅ NEW: Setup state for drag-to-dismiss
+    val coroutineScope = rememberCoroutineScope()
+    val offsetY = remember { Animatable(0f) }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
+            // ✅ NEW: Move the screen visually based on the drag offset
+            .graphicsLayer { translationY = offsetY.value }
+            // ✅ NEW: Detect vertical drag gestures
+            .pointerInput(Unit) {
+                detectVerticalDragGestures(
+                    onDragEnd = {
+                        // If dragged down more than 400 pixels, dismiss it
+                        if (offsetY.value > 400f) {
+                            onBack()
+                        } else {
+                            // Otherwise, smoothly snap it back to the top
+                            coroutineScope.launch {
+                                offsetY.animateTo(0f)
+                            }
+                        }
+                    },
+                    onVerticalDrag = { change, dragAmount ->
+                        change.consume()
+                        // Update offset, but coerceAtLeast(0f) prevents dragging it upwards off screen
+                        val newOffset = (offsetY.value + dragAmount).coerceAtLeast(0f)
+                        coroutineScope.launch {
+                            offsetY.snapTo(newOffset)
+                        }
+                    }
+                )
+            }
             .background(
                 Brush.verticalGradient(
                     listOf(Color(0xFF3D6B4F), SpotifyBlack),
@@ -270,7 +303,8 @@ fun NowPlayingScreen(
                     onSongClick = onQueueItemClick,
                     onSongRemove = onQueueItemRemove,
                     onSongsRemove=onQueueItemsRemove,
-                    onSongReorder = onQueueItemReorder
+                    onSongReorder = onQueueItemReorder,
+                    isFullyExpanded = sheetState.currentValue ==SheetValue.Expanded
                 )
             }
         }
@@ -285,7 +319,9 @@ fun QueueContent(queue: List<Song>,
                  onSongClick: (Song) -> Unit,
                  onSongRemove: (Song) -> Unit,
                  onSongsRemove: (Set<Song>) -> Unit,
-                 onSongReorder: (Int, Int) -> Unit) {
+                 onSongReorder: (Int, Int) -> Unit,
+                 isFullyExpanded: Boolean
+) {
 
     val currentIndex = queue.indexOfFirst { it.id == currentSong.id }
     val history = if (currentIndex > 0) queue.take(currentIndex) else emptyList()
@@ -305,6 +341,12 @@ fun QueueContent(queue: List<Song>,
     LaunchedEffect(upstreamUpcoming) {
         if (draggedItemIndex == null) {
             localUpcoming = upstreamUpcoming
+        }
+    }
+    LaunchedEffect(isFullyExpanded) {
+        if (!isFullyExpanded){
+            isSelectionMode=false
+            selectedSongs=emptySet()
         }
     }
 
@@ -384,17 +426,24 @@ fun QueueContent(queue: List<Song>,
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("Next In Queue", color = SpotifyWhite, fontWeight = FontWeight.Bold, fontSize = 18.sp)
                         Text(
-                            text = if (isSelectionMode) "Cancel" else "Select",
-                            color = SpotifyGreen,
-                            fontWeight = FontWeight.SemiBold,
-                            fontSize = 14.sp,
-                            modifier = Modifier.clickable {
-                                isSelectionMode = !isSelectionMode
-                                if (!isSelectionMode) selectedSongs = emptySet()
-                            }
+                            "Next In Queue",
+                            color = SpotifyWhite,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 18.sp
                         )
+                        if (isFullyExpanded) {
+                            Text(
+                                text = if (isSelectionMode) "Cancel" else "Select",
+                                color = SpotifyGreen,
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 14.sp,
+                                modifier = Modifier.clickable {
+                                    isSelectionMode = !isSelectionMode
+                                    if (!isSelectionMode) selectedSongs = emptySet()
+                                }
+                            )
+                        }
                     }
                 }
 

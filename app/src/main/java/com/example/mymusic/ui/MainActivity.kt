@@ -4,9 +4,7 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
-import android.widget.Toast
 import androidx.activity.ComponentActivity
-import androidx.activity.addCallback
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.ActivityResultLauncher
@@ -23,8 +21,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var permissionLauncher: ActivityResultLauncher<String>
     private lateinit var musicViewModel: MusicViewModel
 
-    private var backPressedTime: Long = 0
-    private val backPressDelay = 2000L  // 2 seconds
+
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -52,26 +49,7 @@ class MainActivity : ComponentActivity() {
 
         checkStoragePermission()
 
-        onBackPressedDispatcher.addCallback(this) {
-            // If NowPlayingScreen is open, close it first — don't exit the app
-            val nowPlayingOpen = musicViewModel.isNowPlayingOpen().value ?: false
-            if (nowPlayingOpen) {
-                musicViewModel.setNowPlayingOpen(false)
-                return@addCallback
-            }
 
-            // Home screen — double-back to exit
-            if (backPressedTime + backPressDelay > System.currentTimeMillis()) {
-                finishAffinity()  // Exit app completely
-            } else {
-                backPressedTime = System.currentTimeMillis()
-                Toast.makeText(
-                    this@MainActivity,
-                    "Press back again to exit",
-                    Toast.LENGTH_SHORT
-                ).show()
-            }
-        }
     }
 
     private fun checkStoragePermission() {

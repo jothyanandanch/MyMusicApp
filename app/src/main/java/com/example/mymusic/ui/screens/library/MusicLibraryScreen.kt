@@ -1,7 +1,9 @@
 package com.example.mymusic.ui.screens.library
 
 import android.app.Activity
+import android.os.Build
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -66,14 +68,43 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
     val favorites = songs.filter { song -> favoriteIds.contains(song.id) }
 
     val showNowPlaying by viewModel.isNowPlayingOpen().observeAsState(false)
-    var selectedTab    by remember { mutableIntStateOf(0) }
+
+    // 1. REPLACE THIS:
+    // var selectedTab by remember { mutableIntStateOf(0) }
+
+    // WITH THIS:
+    val tabHistory = remember { mutableStateListOf(0) } // Tracks clicked tabs
+    var selectedTab by remember { mutableIntStateOf(0) } // Currently active tab
+    var backPressedTime by remember { mutableStateOf(0L) }
+    val context = LocalContext.current
+    // 2. ADD THIS BACK HANDLER:
+    BackHandler {
+        if (showNowPlaying) {
+            // Close Full Player if open
+            viewModel.setNowPlayingOpen(false)
+        } else if (tabHistory.size > 1) {
+            // Go to the previous tab in history
+            tabHistory.removeAt(tabHistory.lastIndex) // ✅ Fixes the Vanilla Ice Cream API 35 warning safely
+            selectedTab = tabHistory.last()
+
+        } else {
+            // If on the root tab (history size is 1), double-back to exit
+            val currentTime = System.currentTimeMillis()
+            if (currentTime - backPressedTime < 2000) {
+                (context as? Activity)?.finishAffinity()
+            } else {
+                backPressedTime = currentTime
+                Toast.makeText(context, "Press back again to exit", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
     var searchQuery    by remember { mutableStateOf("") }
 
     val playlists by viewModel.customPlaylists.observeAsState(initial = emptyMap())
     var songForPlaylistDialog by remember { mutableStateOf<Song?>(null) }
     var showCreatePlaylistDialog by remember { mutableStateOf(false) }
     var newPlaylistName by remember { mutableStateOf("") }
-    val context = LocalContext.current
+
 
     // ── ✅ NEW: Scoped Storage Delete Dialog Launcher ──
     val deleteIntentSender by viewModel.deleteIntentSender.observeAsState()
@@ -299,7 +330,16 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                         onClick           = { viewModel.setNowPlayingOpen(true) },
                     )
                 }
-                SpotifyBottomNav(selectedTab = selectedTab, onTabSelected = { selectedTab = it })
+                SpotifyBottomNav(
+                    selectedTab = selectedTab,
+                    onTabSelected = { newTab ->
+                        if (newTab != selectedTab) {
+                            tabHistory.remove(newTab) // Prevent duplicates in history stack
+                            tabHistory.add(newTab)    // Add the newly clicked tab to the top
+                            selectedTab = newTab
+                        }
+                    }
+                )
             }
         }
     ) { paddingValues ->
