@@ -10,6 +10,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -26,6 +30,8 @@ import com.example.mymusic.ui.screens.library.SpotifyGreen
 import com.example.mymusic.ui.screens.library.SpotifySurface
 import com.example.mymusic.ui.screens.library.SpotifySurface2
 import com.example.mymusic.ui.screens.library.SpotifyWhite
+import com.example.mymusic.ui.screens.playlist.SortMenu
+import com.example.mymusic.ui.screens.playlist.SortType
 
 @Composable
 fun FavoritesScreen(
@@ -36,6 +42,17 @@ fun FavoritesScreen(
     onSongClick      : (Song) -> Unit,
     onToggleFavorite : (Song) -> Unit
 ) {
+    var sortType by remember { mutableStateOf(SortType.DEFAULT) }
+
+    val displayFavorites = remember(favorites, sortType) {
+        when (sortType) {
+            SortType.DEFAULT -> favorites
+            SortType.TITLE_AZ -> favorites.sortedBy { it.title.lowercase() }
+            SortType.TITLE_ZA -> favorites.sortedByDescending { it.title.lowercase() }
+            SortType.ARTIST -> favorites.sortedBy { it.artist.lowercase() }
+        }
+    }
+
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
@@ -92,6 +109,7 @@ fun FavoritesScreen(
                 verticalAlignment     = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
+                SortMenu(sortType =sortType,onSortChange={sortType = it})
                 IconButton(onClick = {}, modifier = Modifier.size(36.dp)) {
                     Icon(Icons.Filled.MoreVert, null, tint = SpotifyGray)
                 }
@@ -112,7 +130,7 @@ fun FavoritesScreen(
             }
         }
 
-        if (favorites.isEmpty()) {
+        if (displayFavorites.isEmpty()) {
             item {
                 Column(
                     modifier = Modifier
@@ -131,7 +149,7 @@ fun FavoritesScreen(
                 }
             }
         } else {
-            itemsIndexed(favorites) { index, song ->
+            itemsIndexed(displayFavorites) { index, song ->
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()

@@ -562,9 +562,12 @@ public class MusicViewModel extends AndroidViewModel {
     }
     
     @SuppressLint("ApplySharedPref")
-	private void savePlaylistsToPrefs(Map<String, List<Long>> playlists) {
+    private void savePlaylistsToPrefs(Map<String, List<Long>> playlists) {
         SharedPreferences.Editor editor = getApplication().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit();
-        editor.putStringSet(KEY_PLAYLISTS, playlists.keySet());
+        
+        // FIXED LINE: Wrap it in a new HashSet so Android always saves it
+        editor.putStringSet(KEY_PLAYLISTS, new java.util.HashSet<>(playlists.keySet()));
+        
         for (Map.Entry<String, List<Long>> entry : playlists.entrySet()) {
             StringBuilder sb = new StringBuilder();
             for (int i = 0; i < entry.getValue().size(); i++) {
@@ -575,7 +578,6 @@ public class MusicViewModel extends AndroidViewModel {
         }
         editor.commit();
     }
-    
     public void removeSongFromPlaylist(String playlistName, Song song) {
         Map<String, List<Long>> current = customPlaylistsLiveData.getValue();
         if (current != null && current.containsKey(playlistName)) {

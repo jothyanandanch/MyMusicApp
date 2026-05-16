@@ -1,5 +1,7 @@
 package com.example.mymusic.ui.screens.library
 
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -83,11 +85,15 @@ fun NowPlayingScreen(
     onQueueItemClick : (Song) -> Unit,
     onQueueItemRemove: (Song) -> Unit,
     onQueueItemsRemove: (Set<Song>) -> Unit,
-    onQueueItemReorder: (Int, Int) -> Unit
-) {
+    onQueueItemReorder: (Int, Int) -> Unit,
+    onAddToPlaylist:() -> Unit={},
+    onAddToQueue:() -> Unit={},
+    onDelete : () -> Unit ={}
+){
     val rawFraction = if (duration > 0) (progress.toFloat() / duration.toFloat()).coerceIn(0f, 1f) else 0f
 
     var showQueueSheet by remember { mutableStateOf(false) }
+    var showMenu by remember { mutableStateOf(false) }
 
     // ✅ FIXED: Setup state for drag-to-dismiss
     val coroutineScope = rememberCoroutineScope()
@@ -156,8 +162,39 @@ fun NowPlayingScreen(
                     Text("PLAYING FROM YOUR LIBRARY", color = SpotifyGray, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
                     Text("All Songs", color = SpotifyWhite, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
                 }
-                IconButton(onClick = {}) {
-                    Icon(Icons.Filled.MoreVert, "More", tint = SpotifyWhite, modifier = Modifier.size(24.dp))
+                // ✅ FIXED: Box wrapper and DropdownMenu logic
+                Box {
+                    IconButton(onClick = { showMenu = true }) {
+                        Icon(Icons.Filled.MoreVert, "More", tint = SpotifyWhite, modifier = Modifier.size(24.dp))
+                    }
+
+                    DropdownMenu(
+                        expanded = showMenu,
+                        onDismissRequest = { showMenu = false },
+                        modifier = Modifier.background(SpotifySurface2)
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("Add to Playlist", color = SpotifyWhite) },
+                            onClick = {
+                                showMenu = false
+                                onAddToPlaylist()
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Add to Queue", color = SpotifyWhite) },
+                            onClick = {
+                                showMenu = false
+                                onAddToQueue()
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Delete Song", color = Color(0xFFFF5555)) },
+                            onClick = {
+                                showMenu = false
+                                onDelete()
+                            }
+                        )
+                    }
                 }
             }
 

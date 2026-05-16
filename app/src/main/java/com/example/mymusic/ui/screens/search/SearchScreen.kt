@@ -15,9 +15,10 @@ fun SearchScreen(
     favoriteIds      : Set<Long>,
     onSongClick      : (Song) -> Unit,
     onToggleFavorite : (Song) -> Unit,
-    onPlayNext       : (Song) -> Unit, // ✅ NEW
-    onAddToQueue     : (Song) -> Unit,  // ✅ NEW
-    onAddToPlaylist  : (Song) -> Unit  // ✅ ADD THIS
+    onPlayNext       : (Song) -> Unit,
+    onAddToQueue     : (Song) -> Unit,
+    onAddToPlaylist  : (Song) -> Unit,
+    onDelete         : (Song) -> Unit  // ✅ 1. ADD THIS PARAMETER
 ) {
     LazyColumn(contentPadding = PaddingValues(bottom = 8.dp)) {
         items(filteredSongs, key = { it.id }) { song ->
@@ -27,9 +28,10 @@ fun SearchScreen(
                 isFavorite       = favoriteIds.contains(song.id),
                 onSongClick      = { onSongClick(song) },
                 onToggleFavorite = { onToggleFavorite(song) },
-                onPlayNext       = { onPlayNext(song) },    // ✅ Pass down
-                onAddToQueue     = { onAddToQueue(song) },   // ✅ Pass down
-                onAddToPlaylist  = { onAddToPlaylist(song) } // ✅ ADD THIS
+                onPlayNext       = { onPlayNext(song) },
+                onAddToQueue     = { onAddToQueue(song) },
+                onAddToPlaylist  = { onAddToPlaylist(song) },
+                onDelete         = { onDelete(song) } // ✅ 2. PASS IT DOWN TO SONG ITEM
             )
         }
     }

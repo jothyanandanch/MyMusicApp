@@ -37,6 +37,8 @@ import com.example.mymusic.model.Song
 import com.example.mymusic.ui.components.AlbumArt
 import com.example.mymusic.ui.screens.favorites.FavoritesScreen
 import com.example.mymusic.ui.screens.playlist.PlaylistScreen
+import com.example.mymusic.ui.screens.playlist.SortMenu
+import com.example.mymusic.ui.screens.playlist.SortType
 import com.example.mymusic.ui.screens.search.SearchScreen
 import com.example.mymusic.viewmodel.MusicViewModel
 import java.util.Locale
@@ -50,7 +52,6 @@ val SpotifyGreen     = Color(0xFF1DB954)
 val SpotifyWhite     = Color(0xFFFFFFFF)
 val SpotifyGray      = Color(0xFFB3B3B3)
 val SpotifyLightGray = Color(0xFF535353)
-val SpotifyElevated  = Color(0xFF3E3E3E)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -225,7 +226,20 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
             onQueueItemClick = { clickedSong -> viewModel.playSongFromQueue(clickedSong) },
             onQueueItemRemove = { removedSong -> viewModel.removeSongFromUpcoming(removedSong) },
             onQueueItemsRemove = { removedSongs -> viewModel.removeSongsFromUpcoming(removedSongs) },
-            onQueueItemReorder = { from, to -> viewModel.moveSongInUpcoming(from, to) }
+            onQueueItemReorder = { from, to -> viewModel.moveSongInUpcoming(from, to) },
+            // ✅ PASS THE NEW ACTIONS DOWN
+            onAddToPlaylist = {
+                songForPlaylistDialog = currentSong
+            },
+            onAddToQueue = {
+                viewModel.addToQueue(currentSong!!)
+                Toast.makeText(context, "Added to queue", Toast.LENGTH_SHORT).show()
+            },
+            onDelete = {
+                viewModel.deleteSong(currentSong!!)
+                viewModel.setNowPlayingOpen(false) // Close the player when the currently playing song is deleted
+            }
+
         )
         return
     }
@@ -349,7 +363,8 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                         onToggleFavorite = { song -> viewModel.toggleFavorite(song) },
                         onPlayNext = { song -> viewModel.setPlayNext(song) },
                         onAddToQueue = { song -> viewModel.addToQueue(song) },
-                        onAddToPlaylist = { song -> songForPlaylistDialog=song }
+                        onAddToPlaylist = { song -> songForPlaylistDialog=song },
+                        onDelete = { song -> viewModel.deleteSong(song)}
                     )
                     2 -> PlaylistScreen(
                         songs = songs, currentSong = currentSong, favoriteIds = favoriteIds,
@@ -388,7 +403,31 @@ fun HomeTab(
     var selectedAlbum by remember { mutableStateOf<String?>(null) }
     var selectedArtist by remember { mutableStateOf<String?>(null) }
 
-    // If a grouping is selected, show list of items directly in the tab hierarchy
+    // ✅ Keep track of sort state
+    var sortType by remember { mutableStateOf(SortType.DEFAULT) }
+
+    // ✅ Dynamically sort based on the selected SortType
+    val displaySongs = remember(songs, sortType) {
+        when (sortType) {
+            SortType.DEFAULT -> songs
+            SortType.TITLE_AZ -> songs.sortedBy { it.title.lowercase() }
+            SortType.TITLE_ZA -> songs.sortedByDescending { it.title.lowercase() }
+            SortType.ARTIST -> songs.sortedBy { it.artist.lowercase() }
+        }
+    }
+
+    LazyColumn(contentPadding = PaddingValues(bottom = 8.dp)) {
+        // If a grouping is selected, show list of items directly in the tab hierarchy
+        if (selectedAlbum != null) {
+            val albumSongs = songs.filter { it.album == selectedAlbum }
+            item {
+                // We wrap the detail view in a Box/Item since it's inside a LazyColumn parent
+                // Or simply return out of the LazyColumn flow (as it was before). Let's step out!
+            }
+        }
+    }
+
+    // ✅ Move Collection Views outside the LazyColumn to prevent nesting issues
     if (selectedAlbum != null) {
         val albumSongs = songs.filter { it.album == selectedAlbum }
         CollectionDetailView(
@@ -423,6 +462,7 @@ fun HomeTab(
         return
     }
 
+    // ✅ Main LazyColumn for Home Tab
     LazyColumn(contentPadding = PaddingValues(bottom = 8.dp)) {
         if (showQuickAccess && songs.isNotEmpty() && selectedCategory == "Songs") {
             item {
@@ -451,14 +491,21 @@ fun HomeTab(
                         verticalAlignment     = Alignment.CenterVertically
                     ) {
                         Text("Your songs", color = SpotifyWhite, fontWeight = FontWeight.Bold, fontSize = 18.sp)
-                        IconButton(onClick = onShufflePlay) {
-                            Icon(Icons.Filled.Shuffle, "Shuffle", tint = SpotifyGreen, modifier = Modifier.size(24.dp))
+
+                        // ✅ Inserted SortMenu before the Shuffle button
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            SortMenu(sortType = sortType, onSortChange = { sortType = it })
+                            Spacer(Modifier.width(8.dp))
+                            IconButton(onClick = onShufflePlay) {
+                                Icon(Icons.Filled.Shuffle, "Shuffle", tint = SpotifyGreen, modifier = Modifier.size(24.dp))
+                            }
                         }
                     }
                 }
             }
 
-            items(songs, key = { it.id }) { song ->
+            // ✅ Use `displaySongs` here, NOT `songs`
+            items(displaySongs, key = { it.id }) { song ->
                 SongItem(
                     song = song, currentSong = currentSong, isFavorite = favoriteIds.contains(song.id),
                     onSongClick = { onSongClick(song) }, onToggleFavorite = { onToggleFavorite(song) },
@@ -540,6 +587,17 @@ fun CollectionDetailView(
     onBack: () -> Unit, onSongClick: (Song) -> Unit, onToggleFavorite: (Song) -> Unit,
     onShufflePlay: () -> Unit, onAddToPlaylist: (Song) -> Unit, viewModel: MusicViewModel
 ) {
+    // ✅ Add Sorting to Artist/Album Detail views
+    var sortType by remember { mutableStateOf(SortType.DEFAULT) }
+    val displaySongs = remember(songs, sortType) {
+        when (sortType) {
+            SortType.DEFAULT -> songs
+            SortType.TITLE_AZ -> songs.sortedBy { it.title.lowercase() }
+            SortType.TITLE_ZA -> songs.sortedByDescending { it.title.lowercase() }
+            SortType.ARTIST -> songs.sortedBy { it.artist.lowercase() }
+        }
+    }
+
     LazyColumn(modifier = Modifier.fillMaxSize().background(SpotifyBlack)) {
         item {
             Row(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -550,15 +608,22 @@ fun CollectionDetailView(
         }
         item {
             Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.End) {
-                Box(
-                    modifier = Modifier.size(56.dp).clip(CircleShape).background(SpotifyGreen).clickable(onClick = onShufflePlay),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(Icons.Filled.Shuffle, "Shuffle", tint = SpotifyBlack, modifier = Modifier.size(28.dp))
+                // ✅ Add Sort Menu next to Shuffle
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    SortMenu(sortType = sortType, onSortChange = { sortType = it })
+                    Spacer(Modifier.width(8.dp))
+                    Box(
+                        modifier = Modifier.size(56.dp).clip(CircleShape).background(SpotifyGreen).clickable(onClick = onShufflePlay),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(Icons.Filled.Shuffle, "Shuffle", tint = SpotifyBlack, modifier = Modifier.size(28.dp))
+                    }
                 }
             }
         }
-        items(songs, key = { it.id }) { song ->
+
+        // ✅ Use displaySongs here
+        items(displaySongs, key = { it.id }) { song ->
             SongItem(
                 song = song, currentSong = currentSong, isFavorite = favoriteIds.contains(song.id),
                 onSongClick = { onSongClick(song) }, onToggleFavorite = { onToggleFavorite(song) },
