@@ -60,12 +60,12 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
     val shuffleMode   by viewModel.getShuffleMode().observeAsState(false)
     val showEndDialog by viewModel.getShowEndDialog().observeAsState(false)
     val favoriteIds   by viewModel.getFavoriteIds().observeAsState(initial = emptySet())
-    val nowPlayingSignal by viewModel.isNowPlayingOpen().observeAsState(false)
+
     // Inside MusicLibraryScreen.kt, near the top where you observe states:
     val queue by viewModel.getQueue().observeAsState(initial = emptyList())
     val favorites = songs.filter { song -> favoriteIds.contains(song.id) }
 
-    var showNowPlaying by remember { mutableStateOf(false) }
+    val showNowPlaying by viewModel.isNowPlayingOpen().observeAsState(false)
     var selectedTab    by remember { mutableIntStateOf(0) }
     var searchQuery    by remember { mutableStateOf("") }
 
@@ -96,9 +96,6 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
         }
     }
 
-    LaunchedEffect(nowPlayingSignal) {
-        if (!nowPlayingSignal) showNowPlaying = false
-    }
 
 
     // ── The "Select Playlist" Dialog ──
@@ -197,14 +194,18 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
             repeatMode        = repeatMode,
             shuffleMode       = shuffleMode,
             isFavorite        = favoriteIds.contains(currentSong!!.id),
-            onBack            = { showNowPlaying = false; viewModel.setNowPlayingOpen(false) },
+            onBack = { viewModel.setNowPlayingOpen(false) },
             onTogglePlayPause = { viewModel.togglePlayPause() },
             onNext            = { viewModel.playNextFromFullPlayer() },
             onPrevious        = { viewModel.playPrevious() },
             onSeek            = { viewModel.seekTo(it) },
             onToggleRepeat    = { viewModel.toggleRepeat() },
             onToggleShuffle   = { viewModel.toggleShuffle() },
-            onToggleFavorite  = { viewModel.toggleFavorite(currentSong!!) }
+            onToggleFavorite  = { viewModel.toggleFavorite(currentSong!!) },
+            onQueueItemClick  = { clickedSong -> viewModel.playSongFromQueue(clickedSong) },
+            onQueueItemRemove = { removedSong -> viewModel.removeSongFromUpcoming(removedSong) },
+            onQueueItemsRemove = { removedSongs -> viewModel.removeSongsFromUpcoming(removedSongs) },
+            onQueueItemReorder= { from, to -> viewModel.moveSongInUpcoming(from, to) }
         )
         return
     }
@@ -295,7 +296,7 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                         onPrevious        = { viewModel.playPrevious() },
                         onNext            = { viewModel.playNextFromMiniPlayer() },
                         onToggleFavorite  = { viewModel.toggleFavorite(song) },
-                        onClick           = { showNowPlaying = true; viewModel.setNowPlayingOpen(true) }
+                        onClick           = { viewModel.setNowPlayingOpen(true) },
                     )
                 }
                 SpotifyBottomNav(selectedTab = selectedTab, onTabSelected = { selectedTab = it })
