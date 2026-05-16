@@ -62,7 +62,10 @@ public class MusicViewModel extends AndroidViewModel {
     private final MutableLiveData<Boolean>    endOfQueueLiveData       = new MutableLiveData<>(false);
     private final MutableLiveData<Boolean>    showEndDialogLiveData    = new MutableLiveData<>(false);
     private final MutableLiveData<Boolean>    isNowPlayingOpenLiveData = new MutableLiveData<>(false);
-    
+    private final MutableLiveData<Boolean> isLoadingLiveData = new MutableLiveData<>(true);
+    public LiveData<Boolean> getIsLoading() {
+        return isLoadingLiveData;
+    }
     private final Map<Long, Song>             favoritesMap             = new LinkedHashMap<>();
     private final MutableLiveData<Set<Long>>  favoriteIdsLiveData      = new MutableLiveData<>(new LinkedHashSet<>());
     private final MutableLiveData<Map<String, List<Long>>> customPlaylistsLiveData = new MutableLiveData<>(new LinkedHashMap<>());
@@ -115,11 +118,20 @@ public class MusicViewModel extends AndroidViewModel {
     private final Handler  progressHandler  = new Handler(Looper.getMainLooper());
     private final Runnable progressRunnable = new Runnable() {
         @Override public void run() {
-            if (exoPlayer != null && exoPlayer.isPlaying()) {
+            if (exoPlayer != null) {
+                // Post progress update
                 progressLiveData.postValue(exoPlayer.getCurrentPosition());
+                
+                // ✅ CRITICAL FIX: Always update duration, not just during playback
                 long dur = exoPlayer.getDuration();
                 durationLiveData.postValue(dur > 0 ? dur : 0L);
-                progressHandler.postDelayed(this, 200);
+                
+                // Continue polling
+                if (exoPlayer.isPlaying()) {
+                    progressHandler.postDelayed(this, 200);  // 200ms when playing
+                } else {
+                    progressHandler.postDelayed(this, 500);  // 500ms when paused (less frequent)
+                }
             }
         }
     };
@@ -172,11 +184,19 @@ public class MusicViewModel extends AndroidViewModel {
                             
                             currentSongLiveData.setValue(song);
                             persistLastIndex(currentIndex);
+                            
+                            if (exoPlayer.getDuration() > 0) {
+                                durationLiveData.postValue(exoPlayer.getDuration());
+                            }
                         }
                     }
                     
                     @Override
                     public void onPlaybackStateChanged(int state) {
+                        if (exoPlayer != null && exoPlayer.getDuration() > 0) {
+                            durationLiveData.postValue(exoPlayer.getDuration());
+                        }
+                        
                         if (state == Player.STATE_ENDED) {
                             isPlayingLiveData.postValue(false);
                             endOfQueueLiveData.postValue(true);
@@ -281,7 +301,7 @@ public class MusicViewModel extends AndroidViewModel {
     }
     
     @SuppressLint("ApplySharedPref")
-	public void toggleFavorite(Song song) {
+    public void toggleFavorite(Song song) {
         Set<Long> ids = new LinkedHashSet<>(favoriteIdsLiveData.getValue() != null
                 ? favoriteIdsLiveData.getValue() : new LinkedHashSet<>());
         if (ids.contains(song.getId())) {
@@ -317,6 +337,12 @@ public class MusicViewModel extends AndroidViewModel {
         exoPlayer.setShuffleModeEnabled(false);
         exoPlayer.setMediaItems(items, currentIndex, 0L);
         exoPlayer.prepare();
+        // ✅ Post duration after prepare
+        new Handler(Looper.getMainLooper()).postDelayed(() -> {
+            if (exoPlayer != null && exoPlayer.getDuration() > 0) {
+                durationLiveData.postValue(exoPlayer.getDuration());
+            }
+        }, 100);
         exoPlayer.play();
         
         currentSongLiveData.setValue(song);
@@ -482,23 +508,35 @@ public class MusicViewModel extends AndroidViewModel {
     }
     
     public void createPlaylist(String name) {
-        Map<String, List<Long>> current = customPlaylistsLiveData.getValue();
-        if (current == null) current = new LinkedHashMap<>();
-        if (!current.containsKey(name)) {
-            current.put(name, new ArrayList<>());
-            customPlaylistsLiveData.setValue(current);
-            savePlaylists(current);
+        if (name.isBlank()) return;
+        
+        Map<String, List<Long>> playlists = customPlaylistsLiveData.getValue();
+        if (playlists == null) playlists = new LinkedHashMap<>();
+        
+        if (!playlists.containsKey(name)) {
+            playlists.put(name, new ArrayList<>());
+            customPlaylistsLiveData.setValue(playlists);
+            savePlaylistsToPrefs(playlists);
+        }
+    }
+    
+    public void deletePlaylist(String name) {
+        Map<String, List<Long>> playlists = customPlaylistsLiveData.getValue();
+        if (playlists != null && playlists.containsKey(name)) {
+            playlists.remove(name);
+            customPlaylistsLiveData.setValue(playlists);
+            savePlaylistsToPrefs(playlists);
         }
     }
     
     public void addSongToPlaylist(String playlistName, Song song) {
-        Map<String, List<Long>> current = customPlaylistsLiveData.getValue();
-        if (current != null && current.containsKey(playlistName)) {
-            List<Long> ids = current.get(playlistName);
-            if (!ids.contains(song.getId())) {
-                ids.add(song.getId());
-                customPlaylistsLiveData.setValue(current);
-                savePlaylists(current);
+        Map<String, List<Long>> playlists = customPlaylistsLiveData.getValue();
+        if (playlists != null && playlists.containsKey(playlistName)) {
+            List<Long> songs = playlists.get(playlistName);
+            if (!songs.contains(song.getId())) {
+                songs.add(song.getId());
+                customPlaylistsLiveData.setValue(playlists);
+                savePlaylistsToPrefs(playlists);
             }
         }
     }
@@ -518,12 +556,13 @@ public class MusicViewModel extends AndroidViewModel {
             
             if (changed) {
                 customPlaylistsLiveData.setValue(current);
-                savePlaylists(current);
+                savePlaylistsToPrefs(current);
             }
         }
     }
     
-    private void savePlaylists(Map<String, List<Long>> playlists) {
+    @SuppressLint("ApplySharedPref")
+	private void savePlaylistsToPrefs(Map<String, List<Long>> playlists) {
         SharedPreferences.Editor editor = getApplication().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit();
         editor.putStringSet(KEY_PLAYLISTS, playlists.keySet());
         for (Map.Entry<String, List<Long>> entry : playlists.entrySet()) {
@@ -537,22 +576,13 @@ public class MusicViewModel extends AndroidViewModel {
         editor.commit();
     }
     
-    public void deletePlaylist(String name) {
-        Map<String, List<Long>> current = customPlaylistsLiveData.getValue();
-        if (current != null && current.containsKey(name)) {
-            current.remove(name);
-            customPlaylistsLiveData.setValue(current);
-            savePlaylists(current);
-        }
-    }
-    
     public void removeSongFromPlaylist(String playlistName, Song song) {
         Map<String, List<Long>> current = customPlaylistsLiveData.getValue();
         if (current != null && current.containsKey(playlistName)) {
             List<Long> ids = current.get(playlistName);
             if (ids.remove(Long.valueOf(song.getId()))) {
                 customPlaylistsLiveData.setValue(current);
-                savePlaylists(current);
+                savePlaylistsToPrefs(current);
             }
         }
     }
@@ -564,7 +594,7 @@ public class MusicViewModel extends AndroidViewModel {
             current.remove(oldName);
             current.put(newName, ids);
             customPlaylistsLiveData.setValue(current);
-            savePlaylists(current);
+            savePlaylistsToPrefs(current);
         }
     }
     
@@ -858,12 +888,14 @@ public class MusicViewModel extends AndroidViewModel {
     // ── Local music loader ────────────────────────────────────────────────────
     
     public void loadLocalMusic() {
+        isLoadingLiveData.postValue(true);
         new Thread(() -> {
             List<Song> local = repository.fetchLocalSongs();
             songsLiveData.postValue(local);
             syncFavoritesWithSongs(local);
             restoreLastSession(local);
             updateQueueUI();
+            isLoadingLiveData.postValue(false);  // ✅ Done loading
         }).start();
     }
     
@@ -929,6 +961,14 @@ public class MusicViewModel extends AndroidViewModel {
             
             exoPlayer.setMediaItems(items, finalIndex, savedPosition);
             exoPlayer.prepare();
+            new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                if (exoPlayer != null) {
+                    long songDuration = exoPlayer.getDuration();
+                    if (songDuration > 0) {
+                        durationLiveData.postValue(songDuration);
+                    }
+                }
+            }, 100); // Small delay to let ExoPlayer load duration
             currentSongLiveData.postValue(currentPlaylist.get(finalIndex));
             shuffleModeLiveData.setValue(savedShuffle);
             repeatModeLiveData.setValue(savedRepeat);

@@ -59,8 +59,40 @@ fun PlaylistScreen(
     var playlistToRename by remember { mutableStateOf<String?>(null) }
     var newPlaylistName by remember { mutableStateOf("") }
 
+    // Create state
+    var showCreateDialog by remember { mutableStateOf(false) }
+    var playlistNameToCreate by remember { mutableStateOf("") }
+
     // Add Songs state
     var playlistToAddSongsTo by remember { mutableStateOf<String?>(null) }
+
+    // ── The "Create Playlist" Dialog ──
+    if (showCreateDialog) {
+        AlertDialog(
+            onDismissRequest = { showCreateDialog = false },
+            containerColor = SpotifySurface2,
+            title = { Text("Create New Playlist", color = SpotifyWhite, fontWeight = FontWeight.Bold) },
+            text = {
+                OutlinedTextField(
+                    value = playlistNameToCreate,
+                    onValueChange = { playlistNameToCreate = it },
+                    singleLine = true,
+                    label = { Text("Playlist name", color = SpotifyGray) },
+                    colors = OutlinedTextFieldDefaults.colors(focusedTextColor = SpotifyWhite)
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    if (playlistNameToCreate.isNotBlank()) {
+                        viewModel.createPlaylist(playlistNameToCreate)
+                        playlistNameToCreate = ""
+                        showCreateDialog = false
+                    }
+                }) { Text("Create", color = SpotifyGreen, fontWeight = FontWeight.Bold) }
+            },
+            dismissButton = { TextButton(onClick = { showCreateDialog = false }) { Text("Cancel", color = SpotifyGray) } }
+        )
+    }
 
     // ── The "Confirm Delete" Dialog ──
     if (playlistToDelete != null) {
@@ -171,11 +203,23 @@ fun PlaylistScreen(
     // ── 3. Main Playlists List ──
     LazyColumn(modifier = modifier.fillMaxSize().background(SpotifyBlack)) {
         item {
-            Text(
-                "Your Playlists",
-                color = SpotifyWhite, fontWeight = FontWeight.Bold, fontSize = 20.sp,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 16.dp)
-            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "Your Playlists",
+                    color = SpotifyWhite,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 20.sp
+                )
+                IconButton(onClick = { showCreateDialog = true }) {
+                    Icon(Icons.Filled.Add, "Create Playlist", tint = SpotifyWhite)
+                }
+            }
         }
 
         item {
@@ -505,7 +549,6 @@ fun AddSongsScreen(
                             .padding(horizontal = 16.dp, vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        // Using your existing AlbumArt composable if possible, or fallback
                         AlbumArt(
                             artUri = song.albumArtUri,
                             isActive = isSelected,
