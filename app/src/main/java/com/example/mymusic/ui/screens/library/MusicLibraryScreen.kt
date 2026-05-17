@@ -685,7 +685,7 @@ fun SongItem(
     ) {
         // ✅ UPDATED: Pass audioUri
         AlbumArt(
-            audioUri     = song.uri,
+            audioUri     = song.albumArtUri,
             isActive     = song.id == currentSong?.id,
             size         = 48.dp,
             cornerRadius = 4.dp
