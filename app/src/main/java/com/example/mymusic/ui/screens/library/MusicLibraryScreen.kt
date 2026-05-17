@@ -1,6 +1,7 @@
 package com.example.mymusic.ui.screens.library
 
 import android.app.Activity
+import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -118,7 +119,6 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
         }
     }
 
-    // ── The "Select Playlist" Dialog ──
     if (songForPlaylistDialog != null) {
         AlertDialog(
             onDismissRequest = { songForPlaylistDialog = null },
@@ -148,7 +148,6 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
         )
     }
 
-    // ── The "Create Playlist" Dialog ──
     if (showCreatePlaylistDialog) {
         AlertDialog(
             onDismissRequest = { showCreatePlaylistDialog = false },
@@ -179,7 +178,6 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
         )
     }
 
-    // ── The "End of Queue" Dialog ──
     if (showEndDialog) {
         AlertDialog(
             onDismissRequest = { viewModel.dismissEndOfQueue() },
@@ -204,7 +202,6 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
         )
     }
 
-    // Fullscreen Player
     if (showNowPlaying && currentSong != null) {
         NowPlayingScreen(
             song = currentSong!!,
@@ -227,7 +224,6 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
             onQueueItemRemove = { removedSong -> viewModel.removeSongFromUpcoming(removedSong) },
             onQueueItemsRemove = { removedSongs -> viewModel.removeSongsFromUpcoming(removedSongs) },
             onQueueItemReorder = { from, to -> viewModel.moveSongInUpcoming(from, to) },
-            // ✅ PASS THE NEW ACTIONS DOWN
             onAddToPlaylist = {
                 songForPlaylistDialog = currentSong
             },
@@ -237,9 +233,8 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
             },
             onDelete = {
                 viewModel.deleteSong(currentSong!!)
-                viewModel.setNowPlayingOpen(false) // Close the player when the currently playing song is deleted
+                viewModel.setNowPlayingOpen(false)
             }
-
         )
         return
     }
@@ -331,7 +326,6 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
         else songs.filter { it.title.contains(searchQuery, true) || it.artist.contains(searchQuery, true) }
 
         Box(modifier = Modifier.fillMaxSize().padding(paddingValues)) {
-            // Loading & Empty States
             if (isLoading) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator(color = SpotifyGreen)
@@ -403,10 +397,8 @@ fun HomeTab(
     var selectedAlbum by remember { mutableStateOf<String?>(null) }
     var selectedArtist by remember { mutableStateOf<String?>(null) }
 
-    // ✅ Keep track of sort state
     var sortType by remember { mutableStateOf(SortType.DEFAULT) }
 
-    // ✅ Dynamically sort based on the selected SortType
     val displaySongs = remember(songs, sortType) {
         when (sortType) {
             SortType.DEFAULT -> songs
@@ -417,17 +409,11 @@ fun HomeTab(
     }
 
     LazyColumn(contentPadding = PaddingValues(bottom = 8.dp)) {
-        // If a grouping is selected, show list of items directly in the tab hierarchy
         if (selectedAlbum != null) {
-            val albumSongs = songs.filter { it.album == selectedAlbum }
-            item {
-                // We wrap the detail view in a Box/Item since it's inside a LazyColumn parent
-                // Or simply return out of the LazyColumn flow (as it was before). Let's step out!
-            }
+            item { }
         }
     }
 
-    // ✅ Move Collection Views outside the LazyColumn to prevent nesting issues
     if (selectedAlbum != null) {
         val albumSongs = songs.filter { it.album == selectedAlbum }
         CollectionDetailView(
@@ -462,7 +448,6 @@ fun HomeTab(
         return
     }
 
-    // ✅ Main LazyColumn for Home Tab
     LazyColumn(contentPadding = PaddingValues(bottom = 8.dp)) {
         if (showQuickAccess && songs.isNotEmpty() && selectedCategory == "Songs") {
             item {
@@ -470,7 +455,6 @@ fun HomeTab(
             }
         }
 
-        // Segment Tabs List
         item {
             Row(
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
@@ -492,7 +476,6 @@ fun HomeTab(
                     ) {
                         Text("Your songs", color = SpotifyWhite, fontWeight = FontWeight.Bold, fontSize = 18.sp)
 
-                        // ✅ Inserted SortMenu before the Shuffle button
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             SortMenu(sortType = sortType, onSortChange = { sortType = it })
                             Spacer(Modifier.width(8.dp))
@@ -504,7 +487,6 @@ fun HomeTab(
                 }
             }
 
-            // ✅ Use `displaySongs` here, NOT `songs`
             items(displaySongs, key = { it.id }) { song ->
                 SongItem(
                     song = song, currentSong = currentSong, isFavorite = favoriteIds.contains(song.id),
@@ -514,22 +496,20 @@ fun HomeTab(
                 )
             }
         } else if (selectedCategory == "Albums") {
-            // Group by Album
             val albums = songs.groupBy { it.album ?: "Unknown Album" }.entries.toList()
             items(albums) { (albumName, albumSongs) ->
                 LibraryGroupItem(
                     title = albumName, subtitle = "${albumSongs.size} songs",
-                    artUri = albumSongs.firstOrNull()?.albumArtUri,
+                    audioUri = albumSongs.firstOrNull()?.uri, // ✅ Pass actual uri
                     onClick = { selectedAlbum = albumName }
                 )
             }
         } else if (selectedCategory == "Artists") {
-            // Group by Artist
             val artists = songs.groupBy { it.artist }.entries.toList()
             items(artists) { (artistName, artistSongs) ->
                 LibraryGroupItem(
                     title = artistName, subtitle = "${artistSongs.size} songs",
-                    artUri = artistSongs.firstOrNull()?.albumArtUri,
+                    audioUri = artistSongs.firstOrNull()?.uri, // ✅ Pass actual uri
                     onClick = { selectedArtist = artistName },
                     isCircular = true
                 )
@@ -554,7 +534,7 @@ fun CategoryChip(text: String, isSelected: Boolean, onClick: () -> Unit) {
 }
 
 @Composable
-fun LibraryGroupItem(title: String, subtitle: String, artUri: android.net.Uri?, onClick: () -> Unit, isCircular: Boolean = false) {
+fun LibraryGroupItem(title: String, subtitle: String, audioUri: Uri?, onClick: () -> Unit, isCircular: Boolean = false) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -562,16 +542,24 @@ fun LibraryGroupItem(title: String, subtitle: String, artUri: android.net.Uri?, 
             .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
+        // ✅ UPDATED: Safely handle the nullable URI by wrapping in AlbumArt or fallback
         if (isCircular) {
-            Box(modifier = Modifier.size(56.dp).clip(CircleShape).background(SpotifySurface2), contentAlignment = Alignment.Center) {
-                if (artUri != null) {
-                    AsyncImage(model = artUri, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-                } else {
+            if (audioUri != null) {
+                // Pass a large cornerRadius to fake a circle via the updated AlbumArt
+                AlbumArt(audioUri = audioUri, isActive = false, size = 56.dp, cornerRadius = 28.dp)
+            } else {
+                Box(modifier = Modifier.size(56.dp).clip(CircleShape).background(SpotifySurface2), contentAlignment = Alignment.Center) {
                     Icon(Icons.Filled.Person, contentDescription = null, tint = SpotifyGray, modifier = Modifier.size(32.dp))
                 }
             }
         } else {
-            AlbumArt(artUri = artUri, isActive = false, size = 56.dp, cornerRadius = 4.dp)
+            if (audioUri != null) {
+                AlbumArt(audioUri = audioUri, isActive = false, size = 56.dp, cornerRadius = 4.dp)
+            } else {
+                Box(modifier = Modifier.size(56.dp).clip(RoundedCornerShape(4.dp)).background(SpotifySurface2), contentAlignment = Alignment.Center) {
+                    Icon(Icons.Filled.MusicNote, contentDescription = null, tint = SpotifyGray, modifier = Modifier.size(24.dp))
+                }
+            }
         }
         Spacer(Modifier.width(12.dp))
         Column {
@@ -587,7 +575,6 @@ fun CollectionDetailView(
     onBack: () -> Unit, onSongClick: (Song) -> Unit, onToggleFavorite: (Song) -> Unit,
     onShufflePlay: () -> Unit, onAddToPlaylist: (Song) -> Unit, viewModel: MusicViewModel
 ) {
-    // ✅ Add Sorting to Artist/Album Detail views
     var sortType by remember { mutableStateOf(SortType.DEFAULT) }
     val displaySongs = remember(songs, sortType) {
         when (sortType) {
@@ -608,7 +595,6 @@ fun CollectionDetailView(
         }
         item {
             Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.End) {
-                // ✅ Add Sort Menu next to Shuffle
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     SortMenu(sortType = sortType, onSortChange = { sortType = it })
                     Spacer(Modifier.width(8.dp))
@@ -622,7 +608,6 @@ fun CollectionDetailView(
             }
         }
 
-        // ✅ Use displaySongs here
         items(displaySongs, key = { it.id }) { song ->
             SongItem(
                 song = song, currentSong = currentSong, isFavorite = favoriteIds.contains(song.id),
@@ -642,7 +627,6 @@ fun QuickAccessGrid(
     currentSong : Song?,
     onSongClick : (Song) -> Unit
 ) {
-    // Show favorites if available, else fall back to recent songs
     val displaySongs = if (favorites.isNotEmpty()) favorites.take(6) else songs.take(6)
 
     Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
@@ -699,9 +683,9 @@ fun SongItem(
         verticalAlignment     = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        // AlbumArt handles null URI + load errors + fallback MusicNote icon
+        // ✅ UPDATED: Pass audioUri
         AlbumArt(
-            artUri       = song.albumArtUri,
+            audioUri     = song.uri,
             isActive     = song.id == currentSong?.id,
             size         = 48.dp,
             cornerRadius = 4.dp
@@ -735,9 +719,7 @@ fun SongItem(
         Text(formatDuration(song.duration), color = SpotifyGray, fontSize = 12.sp)
         Spacer(Modifier.width(4.dp))
 
-        // ─── Options Menu Area ───
         Box {
-            // 1. Make the 3 dots clickable
             IconButton(
                 onClick = { showMenu = true },
                 modifier = Modifier.size(32.dp)
@@ -750,11 +732,10 @@ fun SongItem(
                 )
             }
 
-            // 2. The Dropdown Menu
             DropdownMenu(
                 expanded = showMenu,
                 onDismissRequest = { showMenu = false },
-                modifier = Modifier.background(SpotifySurface2) // Matches your Spotify theme
+                modifier = Modifier.background(SpotifySurface2)
             ) {
                 DropdownMenuItem(
                     text = { Text("Play Next", color = SpotifyWhite) },
@@ -802,8 +783,9 @@ fun QuickAccessItem(song: Song, isActive: Boolean, onClick: () -> Unit, modifier
             .clickable { onClick() },
         verticalAlignment = Alignment.CenterVertically
     ) {
+        // ✅ UPDATED: Pass audioUri
         AlbumArt(
-            artUri       = song.albumArtUri,
+            audioUri     = song.uri,
             isActive     = isActive,
             size         = 56.dp,
             cornerRadius = 4.dp
@@ -862,8 +844,9 @@ fun MiniPlayerBar(
             verticalAlignment     = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
+            // ✅ UPDATED: Pass audioUri
             AlbumArt(
-                artUri       = song.albumArtUri,
+                audioUri     = song.uri,
                 isActive     = true,
                 size         = 40.dp,
                 cornerRadius = 4.dp

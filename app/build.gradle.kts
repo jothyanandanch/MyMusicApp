@@ -1,6 +1,7 @@
 plugins {
     alias(libs.plugins.android.application)
     id("org.jetbrains.kotlin.plugin.compose") version "2.0.0"
+    alias(libs.plugins.google.gms.google.services)
 }
 
 android {
@@ -49,6 +50,7 @@ dependencies {
     // Compose UI Core (Compose 1.7.0)
     implementation("androidx.compose.ui:ui:1.7.0")
     implementation("androidx.compose.ui:ui-tooling-preview:1.7.0")
+    implementation(libs.firebase.storage)
     debugImplementation("androidx.compose.ui:ui-tooling:1.7.0")
 
     // Material3 (1.3.0)

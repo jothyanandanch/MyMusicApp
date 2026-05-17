@@ -52,17 +52,6 @@ import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.launch
 
-// ============================================================================
-// 🎵 FIXED NowPlayingScreen - FULL VERSION WITH ALL IMPROVEMENTS
-// ============================================================================
-// Key Fixes:
-// 1. ✅ Progress bar shows correct position (not stuck at 0)
-// 2. ✅ Duration displays correctly (not 0)
-// 3. ✅ No white screen flash when swiping down
-// 4. ✅ Time labels show current/total duration
-// 5. ✅ Smooth drag preview while seeking
-// ============================================================================
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun NowPlayingScreen(
@@ -95,15 +84,12 @@ fun NowPlayingScreen(
     var showQueueSheet by remember { mutableStateOf(false) }
     var showMenu by remember { mutableStateOf(false) }
 
-    // ✅ FIXED: Setup state for drag-to-dismiss
     val coroutineScope = rememberCoroutineScope()
     val offsetY = remember { Animatable(0f) }
 
-    // ✅ CRITICAL FIX: Background BEFORE graphicsLayer to prevent white screen
     Box(
         modifier = Modifier
             .fillMaxSize()
-            // ✅ Apply background FIRST
             .background(
                 Brush.verticalGradient(
                     listOf(Color(0xFF3D6B4F), SpotifyBlack),
@@ -111,13 +97,10 @@ fun NowPlayingScreen(
                     endY   = 1800f
                 )
             )
-            // ✅ Then apply the drag translation with fade-out
             .graphicsLayer {
                 translationY = offsetY.value
-                // ✅ NEW: Fade out as user drags down for smooth transition
                 alpha = (1f - (offsetY.value / 600f)).coerceIn(0f, 1f)
             }
-            // ✅ Handle vertical drag gesture
             .pointerInput(Unit) {
                 detectVerticalDragGestures(
                     onDragEnd = {
@@ -162,7 +145,6 @@ fun NowPlayingScreen(
                     Text("PLAYING FROM YOUR LIBRARY", color = SpotifyGray, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
                     Text("All Songs", color = SpotifyWhite, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
                 }
-                // ✅ FIXED: Box wrapper and DropdownMenu logic
                 Box {
                     IconButton(onClick = { showMenu = true }) {
                         Icon(Icons.Filled.MoreVert, "More", tint = SpotifyWhite, modifier = Modifier.size(24.dp))
@@ -207,16 +189,13 @@ fun NowPlayingScreen(
                     .background(SpotifySurface2),
                 contentAlignment = Alignment.Center
             ) {
-                if (song.albumArtUri != null) {
-                    AsyncImage(
-                        model = song.albumArtUri,
-                        contentDescription = "Album art",
-                        modifier = Modifier.fillMaxSize(),
-                        contentScale = ContentScale.Crop
-                    )
-                } else {
-                    Icon(Icons.Filled.MusicNote, null, tint = SpotifyGreen, modifier = Modifier.size(96.dp))
-                }
+                // ✅ UPDATED: Uses the new AlbumArt to fetch the image right out of the file
+                AlbumArt(
+                    audioUri = song.uri,
+                    isActive = true,
+                    size = null, // Set to null so it completely fills the Box constraints
+                    cornerRadius = 12.dp
+                )
             }
 
             // ── SONG INFO + HEART ───────────────────────────────────────
@@ -257,7 +236,6 @@ fun NowPlayingScreen(
                     label = "thumbScale"
                 )
 
-                // ✅ FIXED: Progress slider with proper range and duration display
                 BoxWithConstraints(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -292,7 +270,6 @@ fun NowPlayingScreen(
                 ) {
                     val trackWidthDp = this.maxWidth
 
-                    // ✅ Background track
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -302,7 +279,6 @@ fun NowPlayingScreen(
                             .background(SpotifyLightGray)
                     )
 
-                    // ✅ Progress track
                     Box(
                         modifier = Modifier
                             .fillMaxWidth(animatedFraction)
@@ -312,7 +288,6 @@ fun NowPlayingScreen(
                             .background(SpotifyGreen)
                     )
 
-                    // ✅ Thumb (draggable circle)
                     Box(
                         modifier = Modifier
                             .size(14.dp)
@@ -325,7 +300,6 @@ fun NowPlayingScreen(
                     )
                 }
 
-                // ✅ FIXED: Show time labels and preview
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -333,7 +307,6 @@ fun NowPlayingScreen(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // Current time or preview time while dragging
                     Text(
                         text = formatDuration(if (isDragging) dragPreviewTime else progress),
                         color = if (isDragging) SpotifyGreen else SpotifyGray,
@@ -341,7 +314,6 @@ fun NowPlayingScreen(
                         fontWeight = FontWeight.SemiBold
                     )
 
-                    // ✅ NEW: Show "Seeking to:" preview during drag
                     if (isDragging) {
                         Text(
                             text = "Seeking to: ${formatDuration(dragPreviewTime)}",
@@ -351,7 +323,6 @@ fun NowPlayingScreen(
                         )
                     }
 
-                    // Total duration
                     Text(
                         text = if (duration > 0) formatDuration(duration) else "0:00",
                         color = SpotifyGray,
@@ -385,7 +356,6 @@ fun NowPlayingScreen(
                     )
                 }
 
-                // Play/Pause button
                 Box(
                     modifier = Modifier
                         .size(64.dp)
@@ -465,7 +435,6 @@ fun NowPlayingScreen(
     }
 }
 
-// ── QUEUE LIST COMPOSABLE ────────────────────────────────────────────────
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun QueueContent(
@@ -489,7 +458,6 @@ fun QueueContent(
     var initialDraggedIndex by remember { mutableStateOf<Int?>(null) }
     var draggedDistance by remember { mutableStateOf(0f) }
 
-    // ✅ Selection States
     var isSelectionMode by remember { mutableStateOf(false) }
     var selectedSongs by remember { mutableStateOf(setOf<Song>()) }
 
@@ -506,14 +474,12 @@ fun QueueContent(
         }
     }
 
-    // Wrap in a Box so we can float the Delete button at the bottom
     Box(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
             state = listState,
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp)
-                // Disable drag gestures when in selection mode
                 .pointerInput(isSelectionMode) {
                     if (isSelectionMode) return@pointerInput
 
@@ -583,7 +549,6 @@ fun QueueContent(
             item { QueueSongItem(song = currentSong, isPlaying = true, onClick = {}) }
 
             if (localUpcoming.isNotEmpty()) {
-                // ✅ Add "Select" / "Cancel" Button
                 item {
                     Row(
                         modifier = Modifier
@@ -628,7 +593,6 @@ fun QueueContent(
                             .shadow(elevation.dp, RoundedCornerShape(8.dp))
                             .background(if (isDragged || isSelected) SpotifySurface2 else Color.Transparent)
                     ) {
-                        // ✅ Swap out the swipeable item for a standard item if selecting
                         if (isSelectionMode) {
                             QueueSongItem(
                                 song = song,
@@ -669,10 +633,9 @@ fun QueueContent(
                     )
                 }
             }
-            item { Spacer(modifier = Modifier.height(80.dp)) } // Extra padding for the bottom button
+            item { Spacer(modifier = Modifier.height(80.dp)) }
         }
 
-        // ✅ BATCH DELETE BUTTON
         if (isSelectionMode && selectedSongs.isNotEmpty()) {
             Button(
                 onClick = {
@@ -693,7 +656,6 @@ fun QueueContent(
     }
 }
 
-// ── SWIPE TO DISMISS WRAPPER ─────────────────────────────────────────────────
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SwipeableQueueItem(
@@ -704,19 +666,13 @@ fun SwipeableQueueItem(
     val dismissState = rememberSwipeToDismissBoxState(
         confirmValueChange = { dismissValue ->
             if (dismissValue == SwipeToDismissBoxValue.EndToStart) {
-                // 1. Trigger the actual deletion in the ViewModel
                 onRemove()
-
-                // 2. ✅ CRITICAL FIX: Return false!
-                // This prevents the UI node from permanently locking into the "dismissed" state.
-                // Because Compose reuses the row for the next song, we want this row to stay "open/settled".
                 return@rememberSwipeToDismissBoxState false
             }
             false
         }
     )
 
-    // ✅ Keep this to ensure it snaps back instantly if there's any lingering animation
     LaunchedEffect(song.id) {
         if (dismissState.currentValue != SwipeToDismissBoxValue.Settled || dismissState.targetValue != SwipeToDismissBoxValue.Settled) {
             dismissState.snapTo(SwipeToDismissBoxValue.Settled)
@@ -729,7 +685,7 @@ fun SwipeableQueueItem(
         backgroundContent = {
             val color by animateColorAsState(
                 targetValue = if (dismissState.targetValue == SwipeToDismissBoxValue.EndToStart)
-                    Color(0xFFE57373).copy(alpha = 0.8f) // Red delete color
+                    Color(0xFFE57373).copy(alpha = 0.8f)
                 else Color.Transparent,
                 label = "swipeColor"
             )
@@ -750,7 +706,6 @@ fun SwipeableQueueItem(
     }
 }
 
-// ── BASE ROW UI ──────────────────────────────────────────────────────────────
 @Composable
 fun QueueSongItem(
     song: Song,
@@ -767,7 +722,8 @@ fun QueueSongItem(
             .padding(vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        AlbumArt(artUri = song.albumArtUri, isActive = isPlaying, size = 48.dp, cornerRadius = 4.dp)
+        // ✅ UPDATED: Pass song.uri to AlbumArt
+        AlbumArt(audioUri = song.uri, isActive = isPlaying, size = 48.dp, cornerRadius = 4.dp)
         Spacer(modifier = Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(
@@ -787,7 +743,6 @@ fun QueueSongItem(
             )
         }
 
-        // ✅ Show Checkboxes instead of Icons when selecting
         if (isSelectionMode) {
             Icon(
                 imageVector = if (isSelected) Icons.Filled.CheckCircle else Icons.Outlined.Circle,
@@ -802,7 +757,3 @@ fun QueueSongItem(
         }
     }
 }
-
-// ============================================================================
-// ✨ HELPER FUNCTIONS
-// ============================================================================

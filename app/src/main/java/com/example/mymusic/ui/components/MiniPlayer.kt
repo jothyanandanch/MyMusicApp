@@ -117,7 +117,7 @@ private fun ArtistInfoTab(
     ) {
         // ✅ Replace Box + Icon fallback with AlbumArt
         AlbumArt(
-            artUri = audioItem.albumArtUri,   // or audioItem.albumArtUri depending on your model
+            audioUri = audioItem.albumArtUri,   // or audioItem.albumArtUri depending on your model
             isActive = true,
             size = 42.dp
         )

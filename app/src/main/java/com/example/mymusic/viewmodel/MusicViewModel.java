@@ -247,13 +247,7 @@ public class MusicViewModel extends AndroidViewModel {
                 .apply();
     }
     
-    private int indexInPlaylist(Song song) {
-        if (currentPlaylist == null || song == null) return -1;
-        for (int i = 0; i < currentPlaylist.size(); i++) {
-            if (currentPlaylist.get(i).getId() == song.getId()) return i;
-        }
-        return -1;
-    }
+
     
     // ── LiveData getters ──────────────────────────────────────────────────────
     public LiveData<List<Song>> getSongs()           { return songsLiveData; }
@@ -263,7 +257,6 @@ public class MusicViewModel extends AndroidViewModel {
     public LiveData<Long>       getDuration()        { return durationLiveData; }
     public LiveData<Integer>    getRepeatMode()      { return repeatModeLiveData; }
     public LiveData<Boolean>    getShuffleMode()     { return shuffleModeLiveData; }
-    public LiveData<Boolean>    getEndOfQueue()      { return endOfQueueLiveData; }
     public LiveData<Boolean>    getShowEndDialog()   { return showEndDialogLiveData; }
     public LiveData<Set<Long>>  getFavoriteIds()     { return favoriteIdsLiveData; }
     public LiveData<Boolean>    isNowPlayingOpen()   { return isNowPlayingOpenLiveData; }
@@ -510,33 +503,40 @@ public class MusicViewModel extends AndroidViewModel {
     public void createPlaylist(String name) {
         if (name.isBlank()) return;
         
-        Map<String, List<Long>> playlists = customPlaylistsLiveData.getValue();
-        if (playlists == null) playlists = new LinkedHashMap<>();
+        Map<String, List<Long>> current = customPlaylistsLiveData.getValue();
+        // ✅ Create a NEW Map reference so Compose knows it changed
+        Map<String, List<Long>> newPlaylists = new LinkedHashMap<>(current != null ? current : new LinkedHashMap<>());
         
-        if (!playlists.containsKey(name)) {
-            playlists.put(name, new ArrayList<>());
-            customPlaylistsLiveData.setValue(playlists);
-            savePlaylistsToPrefs(playlists);
+        if (!newPlaylists.containsKey(name)) {
+            newPlaylists.put(name, new ArrayList<>());
+            customPlaylistsLiveData.setValue(newPlaylists);
+            savePlaylistsToPrefs(newPlaylists);
         }
     }
     
     public void deletePlaylist(String name) {
-        Map<String, List<Long>> playlists = customPlaylistsLiveData.getValue();
-        if (playlists != null && playlists.containsKey(name)) {
-            playlists.remove(name);
-            customPlaylistsLiveData.setValue(playlists);
-            savePlaylistsToPrefs(playlists);
+        Map<String, List<Long>> current = customPlaylistsLiveData.getValue();
+        if (current != null && current.containsKey(name)) {
+            // ✅ Create a NEW Map reference
+            Map<String, List<Long>> newPlaylists = new LinkedHashMap<>(current);
+            newPlaylists.remove(name);
+            customPlaylistsLiveData.setValue(newPlaylists);
+            savePlaylistsToPrefs(newPlaylists);
         }
     }
     
     public void addSongToPlaylist(String playlistName, Song song) {
-        Map<String, List<Long>> playlists = customPlaylistsLiveData.getValue();
-        if (playlists != null && playlists.containsKey(playlistName)) {
-            List<Long> songs = playlists.get(playlistName);
-            if (!songs.contains(song.getId())) {
-                songs.add(song.getId());
-                customPlaylistsLiveData.setValue(playlists);
-                savePlaylistsToPrefs(playlists);
+        Map<String, List<Long>> current = customPlaylistsLiveData.getValue();
+        if (current != null && current.containsKey(playlistName)) {
+            // ✅ Create a NEW Map reference AND a NEW List reference
+            Map<String, List<Long>> newPlaylists = new LinkedHashMap<>(current);
+            List<Long> newSongs = new ArrayList<>(newPlaylists.get(playlistName));
+            
+            if (!newSongs.contains(song.getId())) {
+                newSongs.add(song.getId());
+                newPlaylists.put(playlistName, newSongs);
+                customPlaylistsLiveData.setValue(newPlaylists);
+                savePlaylistsToPrefs(newPlaylists);
             }
         }
     }
@@ -544,28 +544,39 @@ public class MusicViewModel extends AndroidViewModel {
     public void addSongsToPlaylist(String playlistName, List<Song> songsToAdd) {
         Map<String, List<Long>> current = customPlaylistsLiveData.getValue();
         if (current != null && current.containsKey(playlistName)) {
-            List<Long> ids = current.get(playlistName);
+            // ✅ Create NEW references
+            Map<String, List<Long>> newPlaylists = new LinkedHashMap<>(current);
+            List<Long> newSongs = new ArrayList<>(newPlaylists.get(playlistName));
             boolean changed = false;
             
             for (Song song : songsToAdd) {
-                if (!ids.contains(song.getId())) {
-                    ids.add(song.getId());
+                if (!newSongs.contains(song.getId())) {
+                    newSongs.add(song.getId());
                     changed = true;
                 }
             }
             
             if (changed) {
-                customPlaylistsLiveData.setValue(current);
-                savePlaylistsToPrefs(current);
+                newPlaylists.put(playlistName, newSongs);
+                customPlaylistsLiveData.setValue(newPlaylists);
+                savePlaylistsToPrefs(newPlaylists);
             }
         }
     }
     
     @SuppressLint("ApplySharedPref")
     private void savePlaylistsToPrefs(Map<String, List<Long>> playlists) {
-        SharedPreferences.Editor editor = getApplication().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit();
+        SharedPreferences prefs = getApplication().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        SharedPreferences.Editor editor = prefs.edit();
         
-        // FIXED LINE: Wrap it in a new HashSet so Android always saves it
+        // Cleanup old names to avoid orphaned data when renaming/deleting
+        Set<String> oldNames = prefs.getStringSet(KEY_PLAYLISTS, new java.util.HashSet<>());
+        if (oldNames != null) {
+            for (String oldName : oldNames) {
+                editor.remove("playlist_" + oldName);
+            }
+        }
+        
         editor.putStringSet(KEY_PLAYLISTS, new java.util.HashSet<>(playlists.keySet()));
         
         for (Map.Entry<String, List<Long>> entry : playlists.entrySet()) {
@@ -578,13 +589,18 @@ public class MusicViewModel extends AndroidViewModel {
         }
         editor.commit();
     }
+    
     public void removeSongFromPlaylist(String playlistName, Song song) {
         Map<String, List<Long>> current = customPlaylistsLiveData.getValue();
         if (current != null && current.containsKey(playlistName)) {
-            List<Long> ids = current.get(playlistName);
-            if (ids.remove(Long.valueOf(song.getId()))) {
-                customPlaylistsLiveData.setValue(current);
-                savePlaylistsToPrefs(current);
+            // ✅ Create NEW references
+            Map<String, List<Long>> newPlaylists = new LinkedHashMap<>(current);
+            List<Long> newSongs = new ArrayList<>(newPlaylists.get(playlistName));
+            
+            if (newSongs.remove(Long.valueOf(song.getId()))) {
+                newPlaylists.put(playlistName, newSongs);
+                customPlaylistsLiveData.setValue(newPlaylists);
+                savePlaylistsToPrefs(newPlaylists);
             }
         }
     }
@@ -592,11 +608,13 @@ public class MusicViewModel extends AndroidViewModel {
     public void renamePlaylist(String oldName, String newName) {
         Map<String, List<Long>> current = customPlaylistsLiveData.getValue();
         if (current != null && current.containsKey(oldName) && !current.containsKey(newName) && !newName.trim().isEmpty()) {
-            List<Long> ids = current.get(oldName);
-            current.remove(oldName);
-            current.put(newName, ids);
-            customPlaylistsLiveData.setValue(current);
-            savePlaylistsToPrefs(current);
+            // ✅ Create a NEW Map reference
+            Map<String, List<Long>> newPlaylists = new LinkedHashMap<>(current);
+            List<Long> ids = newPlaylists.get(oldName);
+            newPlaylists.remove(oldName);
+            newPlaylists.put(newName, ids);
+            customPlaylistsLiveData.setValue(newPlaylists);
+            savePlaylistsToPrefs(newPlaylists);
         }
     }
     
