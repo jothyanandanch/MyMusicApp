@@ -41,7 +41,7 @@ fun SongRow(
     ) {
         // AlbumArt handles null URI + Coil load errors + fallback MusicNote icon
         AlbumArt(
-            audioUri       = song.albumArtUri,
+            audioUri       = song.uri,
             isActive     = song.id == currentSong?.id,
             size         = 48.dp,
             cornerRadius = 4.dp

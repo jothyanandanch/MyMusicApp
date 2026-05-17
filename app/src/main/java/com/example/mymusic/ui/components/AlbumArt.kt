@@ -42,14 +42,16 @@ fun AlbumArt(
     // Extract the embedded ID3 cover art in the background
     LaunchedEffect(audioUri) {
         withContext(Dispatchers.IO) {
+            val retriever = MediaMetadataRetriever()
             try {
-                val retriever = MediaMetadataRetriever()
-                retriever.setDataSource(context, audioUri)
+                context.contentResolver.openFileDescriptor(audioUri, "r")?.use { pfd ->
+                    retriever.setDataSource(pfd.fileDescriptor)
+                }
                 artByteArray = retriever.embeddedPicture
-                retriever.release()
             } catch (e: Exception) {
                 artByteArray = null
             } finally {
+                retriever.release()
                 isLoading = false
             }
         }
