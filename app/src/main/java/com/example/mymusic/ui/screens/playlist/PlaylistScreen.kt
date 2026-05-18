@@ -691,7 +691,7 @@ fun AddSongsScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         AlbumArt(
-                            audioUri = song.albumArtUri,
+                            audioUri = song.uri,
                             isActive = isSelected,
                             size = 48.dp,
                             cornerRadius = 4.dp

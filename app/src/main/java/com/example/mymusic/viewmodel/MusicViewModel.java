@@ -63,6 +63,8 @@ public class MusicViewModel extends AndroidViewModel {
     private final MutableLiveData<Boolean>    showEndDialogLiveData    = new MutableLiveData<>(false);
     private final MutableLiveData<Boolean>    isNowPlayingOpenLiveData = new MutableLiveData<>(false);
     private final MutableLiveData<Boolean> isLoadingLiveData = new MutableLiveData<>(true);
+    private final MutableLiveData<String> lyricsLiveData = new MutableLiveData<>(null);
+    public LiveData<String> getLyrics() { return lyricsLiveData; }
     public LiveData<Boolean> getIsLoading() {
         return isLoadingLiveData;
     }
@@ -184,6 +186,8 @@ public class MusicViewModel extends AndroidViewModel {
                             
                             currentSongLiveData.setValue(song);
                             persistLastIndex(currentIndex);
+                            // ✅ FETCH LYRICS HERE
+                            fetchLyricsForCurrentSong(song);
                             
                             if (exoPlayer.getDuration() > 0) {
                                 durationLiveData.postValue(exoPlayer.getDuration());
@@ -916,6 +920,18 @@ public class MusicViewModel extends AndroidViewModel {
             restoreLastSession(local);
             updateQueueUI();
             isLoadingLiveData.postValue(false);  // ✅ Done loading
+        }).start();
+    }
+    
+    private void fetchLyricsForCurrentSong(Song song) {
+        lyricsLiveData.postValue("Loading...");
+        new Thread(() -> {
+            String lyrics = com.example.mymusic.utils.LyricsUtils.extractLyrics(getApplication(), song.getUri());
+            if (lyrics != null) {
+                lyricsLiveData.postValue(lyrics);
+            } else {
+                lyricsLiveData.postValue("No lyrics found in this audio file.");
+            }
         }).start();
     }
     

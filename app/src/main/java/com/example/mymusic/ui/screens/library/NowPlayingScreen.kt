@@ -37,19 +37,20 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import androidx.media3.common.Player
-import coil.compose.AsyncImage
 import com.example.mymusic.model.Song
 import com.example.mymusic.ui.components.AlbumArt
 import androidx.compose.animation.core.Animatable
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.rememberCoroutineScope
+import com.example.mymusic.utils.parseLrc
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -57,6 +58,7 @@ import kotlinx.coroutines.launch
 fun NowPlayingScreen(
     song             : Song,
     queue            : List<Song>,
+    lyrics           : String?,
     isPlaying        : Boolean,
     progress         : Long,
     duration         : Long,
@@ -75,13 +77,16 @@ fun NowPlayingScreen(
     onQueueItemRemove: (Song) -> Unit,
     onQueueItemsRemove: (Set<Song>) -> Unit,
     onQueueItemReorder: (Int, Int) -> Unit,
-    onAddToPlaylist:() -> Unit={},
-    onAddToQueue:() -> Unit={},
-    onDelete : () -> Unit ={}
-){
-    val rawFraction = if (duration > 0) (progress.toFloat() / duration.toFloat()).coerceIn(0f, 1f) else 0f
+    onAddToPlaylist  : () -> Unit = {},
+    onAddToQueue     : () -> Unit = {},
+    onDelete         : () -> Unit = {}
+) {
+    val rawFraction =
+        if (duration > 0) (progress.toFloat() / duration.toFloat()).coerceIn(0f, 1f) else 0f
 
     var showQueueSheet by remember { mutableStateOf(false) }
+    var showLyricsView by remember { mutableStateOf(false) }
+    var showLyricsSheet by remember { mutableStateOf(false) } // ✅ Added to track sliding Lyrics Sheet
     var showMenu by remember { mutableStateOf(false) }
 
     val coroutineScope = rememberCoroutineScope()
@@ -94,7 +99,7 @@ fun NowPlayingScreen(
                 Brush.verticalGradient(
                     listOf(Color(0xFF3D6B4F), SpotifyBlack),
                     startY = 0f,
-                    endY   = 1800f
+                    endY = 1800f
                 )
             )
             .graphicsLayer {
@@ -136,18 +141,39 @@ fun NowPlayingScreen(
                     .fillMaxWidth()
                     .padding(top = 16.dp, bottom = 8.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment     = Alignment.CenterVertically
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 IconButton(onClick = onBack) {
-                    Icon(Icons.Filled.KeyboardArrowDown, "Collapse", tint = SpotifyWhite, modifier = Modifier.size(32.dp))
+                    Icon(
+                        Icons.Filled.KeyboardArrowDown,
+                        "Collapse",
+                        tint = SpotifyWhite,
+                        modifier = Modifier.size(32.dp)
+                    )
                 }
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("PLAYING FROM YOUR LIBRARY", color = SpotifyGray, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-                    Text("All Songs", color = SpotifyWhite, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                    Text(
+                        "PLAYING FROM YOUR LIBRARY",
+                        color = SpotifyGray,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.sp
+                    )
+                    Text(
+                        "All Songs",
+                        color = SpotifyWhite,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 13.sp
+                    )
                 }
                 Box {
                     IconButton(onClick = { showMenu = true }) {
-                        Icon(Icons.Filled.MoreVert, "More", tint = SpotifyWhite, modifier = Modifier.size(24.dp))
+                        Icon(
+                            Icons.Filled.MoreVert,
+                            "More",
+                            tint = SpotifyWhite,
+                            modifier = Modifier.size(24.dp)
+                        )
                     }
 
                     DropdownMenu(
@@ -180,7 +206,7 @@ fun NowPlayingScreen(
                 }
             }
 
-            // ── ALBUM ART ─────────────────────────────────────────────
+            // ── ALBUM ART OR LYRICS ─────────────────────────────────────
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -189,13 +215,21 @@ fun NowPlayingScreen(
                     .background(SpotifySurface2),
                 contentAlignment = Alignment.Center
             ) {
-                // ✅ UPDATED: Uses the new AlbumArt to fetch the image right out of the file
-                AlbumArt(
-                    audioUri = song.uri,
-                    isActive = true,
-                    size = null, // Set to null so it completely fills the Box constraints
-                    cornerRadius = 12.dp
-                )
+                if (showLyricsView) {
+                    SyncedLyricsView(
+                        lyricsText = lyrics,
+                        progress = progress,
+                        onSeek = onSeek, // ✅ Pass seeking functionality
+                        modifier = Modifier.padding(16.dp)
+                    )
+                } else {
+                    AlbumArt(
+                        audioUri = song.uri,
+                        isActive = true,
+                        size = null,
+                        cornerRadius = 12.dp
+                    )
+                }
             }
 
             // ── SONG INFO + HEART ───────────────────────────────────────
@@ -205,9 +239,22 @@ fun NowPlayingScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(song.title, color = SpotifyWhite, fontWeight = FontWeight.Bold, fontSize = 22.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        song.title,
+                        color = SpotifyWhite,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 22.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
                     Spacer(Modifier.height(4.dp))
-                    Text(song.artist, color = SpotifyGray, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        song.artist,
+                        color = SpotifyGray,
+                        fontSize = 15.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
                 }
                 IconButton(onClick = onToggleFavorite) {
                     Icon(
@@ -248,11 +295,13 @@ fun NowPlayingScreen(
                                     isDragging = true
                                 },
                                 onHorizontalDrag = { _, dragAmount ->
-                                    dragFraction = (dragFraction + dragAmount / size.width).coerceIn(0f, 1f)
+                                    dragFraction =
+                                        (dragFraction + dragAmount / size.width).coerceIn(0f, 1f)
                                     dragPreviewTime = (dragFraction * duration).toLong()
                                 },
                                 onDragEnd = {
-                                    val seekPosition = (dragFraction * duration).toLong().coerceIn(0L, duration)
+                                    val seekPosition =
+                                        (dragFraction * duration).toLong().coerceIn(0L, duration)
                                     onSeek(seekPosition)
                                     isDragging = false
                                 },
@@ -403,12 +452,23 @@ fun NowPlayingScreen(
                 IconButton(onClick = {}) {
                     Icon(Icons.Filled.DevicesOther, "Devices", tint = SpotifyGray, modifier = Modifier.size(22.dp))
                 }
+
+                // ✅ Open the slidable lyrics sheet instead
+                IconButton(onClick = { showLyricsSheet = true }) {
+                    Icon(
+                        imageVector = Icons.Filled.Lyrics,
+                        contentDescription = "Lyrics",
+                        tint = if (showLyricsSheet) SpotifyGreen else SpotifyWhite,
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
+
                 IconButton(onClick = { showQueueSheet = true }) {
                     Icon(Icons.AutoMirrored.Filled.QueueMusic, "Queue", tint = SpotifyWhite, modifier = Modifier.size(22.dp))
                 }
             }
-        }
-    }
+        } // End of Column
+    } // End of Box
 
     // ── QUEUE BOTTOM SHEET ─────────────────────────────────────────────
     if (showQueueSheet) {
@@ -433,8 +493,105 @@ fun NowPlayingScreen(
             }
         }
     }
+
+    // ── LYRICS BOTTOM SHEET ─────────────────────────────────────────────
+    if (showLyricsSheet) {
+        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
+
+        ModalBottomSheet(
+            onDismissRequest = { showLyricsSheet = false },
+            sheetState = sheetState,
+            containerColor = SpotifySurface,
+            dragHandle = { BottomSheetDefaults.DragHandle(color = SpotifyGray) }
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .fillMaxHeight(0.85f)
+                    .padding(horizontal = 24.dp)
+            ) {
+                Text(
+                    text = "Lyrics",
+                    color = SpotifyWhite,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 20.sp,
+                    modifier = Modifier.padding(bottom = 16.dp)
+                )
+
+                // ✅ Pass in robust SyncedLyricsView component
+                SyncedLyricsView(
+                    lyricsText = lyrics,
+                    progress = progress,
+                    onSeek = onSeek,
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+        }
+    }
 }
 
+@Composable
+fun SyncedLyricsView(
+    lyricsText: String?,
+    progress: Long,
+    onSeek: (Long) -> Unit, // ✅ Enable passing a seek command back to the ViewModel
+    modifier: Modifier = Modifier
+) {
+    val lyricsLines = remember(lyricsText) { parseLrc(lyricsText) }
+    val listState = rememberLazyListState()
+
+    if (lyricsLines.isEmpty()) {
+        Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Text(
+                text = lyricsText ?: "No lyrics available.",
+                color = SpotifyGray,
+                fontSize = 18.sp,
+                fontWeight = FontWeight.SemiBold,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                modifier = Modifier.verticalScroll(rememberScrollState())
+            )
+        }
+        return
+    }
+
+    // Determine the active lyric
+    val activeIndex = lyricsLines.indexOfLast { it.startTimeMs <= progress }.coerceAtLeast(0)
+
+    // ✅ Check if the user is dragging the list. If they are, pause the auto-scrolling
+    val isUserScrolling = listState.isScrollInProgress
+
+    LaunchedEffect(activeIndex) {
+        if (activeIndex >= 0 && !isUserScrolling) {
+            listState.animateScrollToItem(
+                index = maxOf(0, activeIndex - 3)
+            )
+        }
+    }
+
+    LazyColumn(
+        state = listState,
+        modifier = modifier.fillMaxSize(),
+        contentPadding = PaddingValues(vertical = 32.dp)
+    ) {
+        itemsIndexed(lyricsLines) { index, line ->
+            val isActive = index == activeIndex
+
+            Text(
+                text = line.text.ifEmpty { "♪" },
+                color = if (isActive) SpotifyWhite else SpotifyGray,
+                fontSize = if (isActive) 24.sp else 20.sp,
+                fontWeight = if (isActive) FontWeight.Bold else FontWeight.SemiBold,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    // ✅ Make line interactive — tap to seek to that timestamp!
+                    .clickable { onSeek(line.startTimeMs) }
+                    .padding(vertical = 12.dp)
+            )
+        }
+    }
+}
+
+// ... Keep existing QueueContent, SwipeableQueueItem, and QueueSongItem implementations below ...
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun QueueContent(
@@ -722,7 +879,6 @@ fun QueueSongItem(
             .padding(vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // ✅ UPDATED: Pass song.uri to AlbumArt
         AlbumArt(audioUri = song.uri, isActive = isPlaying, size = 48.dp, cornerRadius = 4.dp)
         Spacer(modifier = Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {

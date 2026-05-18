@@ -71,6 +71,7 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
     val queue by viewModel.getQueue().observeAsState(initial = emptyList())
     val favorites = songs.filter { song -> favoriteIds.contains(song.id) }
     val showNowPlaying by viewModel.isNowPlayingOpen().observeAsState(false)
+    val currentLyrics by viewModel.getLyrics().observeAsState("Loading...")
 
     val tabHistory = remember { mutableStateListOf(0) }
     var selectedTab by remember { mutableIntStateOf(0) }
@@ -206,6 +207,7 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
         NowPlayingScreen(
             song = currentSong!!,
             queue = queue,
+            lyrics = currentLyrics,
             isPlaying = isPlaying,
             progress = progress,
             duration = duration,
@@ -399,6 +401,7 @@ fun HomeTab(
 
     var sortType by remember { mutableStateOf(SortType.DEFAULT) }
 
+    // 1. Sort logic for Songs
     val displaySongs = remember(songs, sortType) {
         when (sortType) {
             SortType.DEFAULT -> songs
@@ -408,9 +411,24 @@ fun HomeTab(
         }
     }
 
-    LazyColumn(contentPadding = PaddingValues(bottom = 8.dp)) {
-        if (selectedAlbum != null) {
-            item { }
+    // 2. Sort logic for Albums
+    val displayAlbums = remember(songs, sortType) {
+        val albums = songs.groupBy { it.album ?: "Unknown Album" }.entries.toList()
+        when (sortType) {
+            SortType.DEFAULT -> albums
+            SortType.TITLE_AZ -> albums.sortedBy { it.key.lowercase() }
+            SortType.TITLE_ZA -> albums.sortedByDescending { it.key.lowercase() }
+            SortType.ARTIST -> albums.sortedBy { it.value.firstOrNull()?.artist?.lowercase() ?: "" }
+        }
+    }
+
+    // 3. Sort logic for Artists
+    val displayArtists = remember(songs, sortType) {
+        val artists = songs.groupBy { it.artist }.entries.toList()
+        when (sortType) {
+            SortType.DEFAULT -> artists
+            SortType.TITLE_AZ, SortType.ARTIST -> artists.sortedBy { it.key.lowercase() }
+            SortType.TITLE_ZA -> artists.sortedByDescending { it.key.lowercase() }
         }
     }
 
@@ -449,7 +467,8 @@ fun HomeTab(
     }
 
     LazyColumn(contentPadding = PaddingValues(bottom = 8.dp)) {
-        if (showQuickAccess && songs.isNotEmpty() && selectedCategory == "Songs") {
+        // ✅ FIX 1: Removed `&& selectedCategory == "Songs"` so it stays visible on Album/Artist tabs
+        if (showQuickAccess && songs.isNotEmpty()) {
             item {
                 QuickAccessGrid(songs = songs.take(6), favorites = favorites, currentSong = currentSong, onSongClick = onSongClick)
             }
@@ -466,58 +485,67 @@ fun HomeTab(
             }
         }
 
-        if (selectedCategory == "Songs") {
-            if (showShuffle) {
-                item {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment     = Alignment.CenterVertically
-                    ) {
-                        Text("Your songs", color = SpotifyWhite, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+        // ✅ FIX 2: Universal Header that applies to all categories
+        if (showShuffle) {
+            item {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment     = Alignment.CenterVertically
+                ) {
+                    val headerText = when (selectedCategory) {
+                        "Albums" -> "Your albums"
+                        "Artists" -> "Your artists"
+                        else -> "Your songs"
+                    }
+                    Text(headerText, color = SpotifyWhite, fontWeight = FontWeight.Bold, fontSize = 18.sp)
 
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            SortMenu(sortType = sortType, onSortChange = { sortType = it })
-                            Spacer(Modifier.width(8.dp))
-                            IconButton(onClick = onShufflePlay) {
-                                Icon(Icons.Filled.Shuffle, "Shuffle", tint = SpotifyGreen, modifier = Modifier.size(24.dp))
-                            }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        SortMenu(sortType = sortType, onSortChange = { sortType = it })
+                        Spacer(Modifier.width(8.dp))
+                        IconButton(onClick = onShufflePlay) {
+                            Icon(Icons.Filled.Shuffle, "Shuffle", tint = SpotifyGreen, modifier = Modifier.size(24.dp))
                         }
                     }
                 }
             }
+        }
 
-            items(displaySongs, key = { it.id }) { song ->
-                SongItem(
-                    song = song, currentSong = currentSong, isFavorite = favoriteIds.contains(song.id),
-                    onSongClick = { onSongClick(song) }, onToggleFavorite = { onToggleFavorite(song) },
-                    onPlayNext = { viewModel.setPlayNext(song) }, onAddToQueue = { viewModel.addToQueue(song) },
-                    onAddToPlaylist = { onAddToPlaylist(song) }, onDelete = { viewModel.deleteSong(song) }
-                )
+        when (selectedCategory) {
+            "Songs" -> {
+                items(displaySongs, key = { it.id }) { song ->
+                    SongItem(
+                        song = song, currentSong = currentSong, isFavorite = favoriteIds.contains(song.id),
+                        onSongClick = { onSongClick(song) }, onToggleFavorite = { onToggleFavorite(song) },
+                        onPlayNext = { viewModel.setPlayNext(song) }, onAddToQueue = { viewModel.addToQueue(song) },
+                        onAddToPlaylist = { onAddToPlaylist(song) }, onDelete = { viewModel.deleteSong(song) }
+                    )
+                }
             }
-        } else if (selectedCategory == "Albums") {
-            val albums = songs.groupBy { it.album ?: "Unknown Album" }.entries.toList()
-            items(albums) { (albumName, albumSongs) ->
-                LibraryGroupItem(
-                    title = albumName, subtitle = "${albumSongs.size} songs",
-                    audioUri = albumSongs.firstOrNull()?.uri, // ✅ Pass actual uri
-                    onClick = { selectedAlbum = albumName }
-                )
+            "Albums" -> {
+                items(displayAlbums) { (albumName, albumSongs) ->
+                    LibraryGroupItem(
+                        title = albumName, subtitle = "${albumSongs.size} songs",
+                        audioUri = albumSongs.firstOrNull()?.uri,
+                        onClick = { selectedAlbum = albumName }
+                    )
+                }
             }
-        } else if (selectedCategory == "Artists") {
-            val artists = songs.groupBy { it.artist }.entries.toList()
-            items(artists) { (artistName, artistSongs) ->
-                LibraryGroupItem(
-                    title = artistName, subtitle = "${artistSongs.size} songs",
-                    audioUri = artistSongs.firstOrNull()?.uri, // ✅ Pass actual uri
-                    onClick = { selectedArtist = artistName },
-                    isCircular = true
-                )
+            "Artists" -> {
+                items(displayArtists) { (artistName, artistSongs) ->
+                    LibraryGroupItem(
+                        title = artistName, subtitle = "${artistSongs.size} songs",
+                        audioUri = artistSongs.firstOrNull()?.uri,
+                        onClick = { selectedArtist = artistName },
+                        isCircular = true
+                    )
+                }
             }
         }
     }
 }
-
 // ─── Reusable Layouts for Home Groupings ────────────────────────────────
 @Composable
 fun CategoryChip(text: String, isSelected: Boolean, onClick: () -> Unit) {
@@ -685,7 +713,7 @@ fun SongItem(
     ) {
         // ✅ UPDATED: Pass audioUri
         AlbumArt(
-            audioUri     = song.albumArtUri,
+            audioUri     = song.uri,
             isActive     = song.id == currentSong?.id,
             size         = 48.dp,
             cornerRadius = 4.dp

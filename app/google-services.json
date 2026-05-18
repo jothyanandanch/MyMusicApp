@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "48872977385",
+    "project_id": "my-music-storage-3a1d7",
+    "storage_bucket": "my-music-storage-3a1d7.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:48872977385:android:de693b4e0c87c143829178",
+        "android_client_info": {
+          "package_name": "com.example.mymusic"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAEEtEkZcgZfDEXgCr1mWV10bvlM240J08"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

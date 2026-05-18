@@ -51,6 +51,7 @@ dependencies {
     implementation("androidx.compose.ui:ui:1.7.0")
     implementation("androidx.compose.ui:ui-tooling-preview:1.7.0")
     implementation(libs.firebase.storage)
+    implementation(libs.androidx.foundation)
     debugImplementation("androidx.compose.ui:ui-tooling:1.7.0")
 
     // Material3 (1.3.0)
@@ -72,6 +73,7 @@ dependencies {
     implementation("androidx.media3:media3-session:1.3.1")
 
     // Coil for image loading
+    implementation("net.jthink:jaudiotagger:3.0.1")
     implementation("io.coil-kt:coil-compose:2.7.0")
 
     // Tests
