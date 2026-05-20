@@ -7,9 +7,9 @@
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:48872977385:android:de693b4e0c87c143829178",
+        "mobilesdk_app_id": "1:48872977385:android:585db42d59b0913f829178",
         "android_client_info": {
-          "package_name": "com.example.mymusic"
+          "package_name": "com.nandu.mymusic"
         }
       },
       "oauth_client": [],

@@ -13,8 +13,9 @@
 
     <!-- Post notifications (Android 13+) for media notification -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-
+    <uses-permission android:name="android.permission.INTERNET" />
     <application
+
         android:requestLegacyExternalStorage="true"
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
@@ -26,7 +27,7 @@
         android:theme="@style/Theme.MyMusic">
 
         <activity
-            android:name=".ui.MainActivity"
+            android:name="com.nandu.mymusic.ui.MainActivity"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -36,7 +37,7 @@
 
         <!-- Media3 MediaSessionService for background playback -->
         <service
-            android:name=".service.MusicPlaybackService"
+            android:name="com.nandu.mymusic.service.MusicPlaybackService"
             android:exported="true"
             android:foregroundServiceType="mediaPlayback">
             <intent-filter>

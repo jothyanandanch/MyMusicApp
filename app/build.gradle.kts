@@ -1,19 +1,20 @@
 plugins {
     alias(libs.plugins.android.application)
     id("org.jetbrains.kotlin.plugin.compose") version "2.0.0"
-    alias(libs.plugins.google.gms.google.services)
+
+    id("com.google.gms.google-services")
 }
 
 android {
-    namespace = "com.example.mymusic"
+    namespace = "com.nandu.mymusic"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.example.mymusic"
+        applicationId = "com.nandu.mymusic"
         minSdk = 24
         targetSdk = 35
-        versionCode = 2
-        versionName = "1.1"
+        versionCode = 1
+        versionName = "1.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -25,6 +26,7 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
 
@@ -46,11 +48,13 @@ dependencies {
 
     // ✅ Compose BOM (keeps versions aligned automatically)
     implementation(platform("androidx.compose:compose-bom:2024.04.00"))
+    implementation(platform("com.google.firebase:firebase-bom:34.13.0"))
 
     // Compose UI Core (Compose 1.7.0)
     implementation("androidx.compose.ui:ui:1.7.0")
     implementation("androidx.compose.ui:ui-tooling-preview:1.7.0")
-    implementation(libs.firebase.storage)
+    implementation("com.google.firebase:firebase-firestore:24.10.0")
+
     implementation(libs.androidx.foundation)
     debugImplementation("androidx.compose.ui:ui-tooling:1.7.0")
 
