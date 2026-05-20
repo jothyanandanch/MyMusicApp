@@ -7,6 +7,7 @@ import org.jaudiotagger.audio.AudioFile;
 import org.jaudiotagger.audio.AudioFileIO;
 import org.jaudiotagger.tag.FieldKey;
 import org.jaudiotagger.tag.Tag;
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.BufferedReader;
@@ -64,42 +65,52 @@ public class LyricsUtils {
 	}
 	
 	// Fetches lyrics from a free public API
+// Inside LyricsUtils.java
 	private static String fetchOnlineLyrics(String title, String artist) {
-		if (title == null || artist == null || title.contains("Unknown") || artist.contains("Unknown")) {
-			return null; // Skip if metadata is missing
-		}
-		
 		try {
-			// Clean up titles like "Song Title (Official Music Video)"
-			String cleanTitle = title.replaceAll("(?i)\\(.*?video.*?\\)|\\(.*?lyrics.*?\\)|\\[.*?]", "").trim();
-			String cleanArtist = artist.trim();
-			
-			String urlString = "https://api.lyrics.ovh/v1/" +
-					URLEncoder.encode(cleanArtist, "UTF-8") + "/" +
-					URLEncoder.encode(cleanTitle, "UTF-8");
+			// LRCLIB API Endpoint
+			String urlString = "https://lrclib.net/api/search?track_name="
+					+ URLEncoder.encode(title, "UTF-8")
+					+ "&artist_name=" + URLEncoder.encode(artist, "UTF-8");
 			
 			URL url = new URL(urlString);
 			HttpURLConnection connection = (HttpURLConnection) url.openConnection();
 			connection.setRequestMethod("GET");
+			// LRCLIB requires a User-Agent header
+			connection.setRequestProperty("User-Agent", "MyMusicApp/1.0");
 			connection.setConnectTimeout(5000);
 			connection.setReadTimeout(5000);
 			
-			if (connection.getResponseCode() == HttpURLConnection.HTTP_OK) {
+			if (connection.getResponseCode() == 200) {
 				BufferedReader reader = new BufferedReader(new InputStreamReader(connection.getInputStream()));
 				StringBuilder response = new StringBuilder();
 				String line;
 				while ((line = reader.readLine()) != null) {
-					response.append(line).append("\n");
+					response.append(line);
 				}
 				reader.close();
 				
-				JSONObject jsonObject = new JSONObject(response.toString());
-				if (jsonObject.has("lyrics")) {
-					return jsonObject.getString("lyrics").trim();
+				// Parse the JSON Array returned by LRCLIB
+				JSONArray jsonArray = new JSONArray(response.toString());
+				if (jsonArray.length() > 0) {
+					// Get the best match (the first result)
+					JSONObject bestMatch = jsonArray.getJSONObject(0);
+					
+					// Try to get synced lyrics first
+					String syncedLyrics = bestMatch.optString("syncedLyrics", null);
+					if (syncedLyrics != null && !syncedLyrics.equals("null") && !syncedLyrics.trim().isEmpty()) {
+						return syncedLyrics;
+					}
+					
+					// Fallback to plain lyrics if synced isn't available
+					String plainLyrics = bestMatch.optString("plainLyrics", null);
+					if (plainLyrics != null && !plainLyrics.equals("null")) {
+						return plainLyrics;
+					}
 				}
 			}
 		} catch (Exception e) {
-			AppLog.e(AppLog.REPO, "Online lyrics fetch failed: " + e.getMessage());
+			AppLog.e(AppLog.LYRICS, "Error fetching from LRCLIB: " + e.getMessage());
 		}
 		return null;
 	}

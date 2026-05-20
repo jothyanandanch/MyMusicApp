@@ -15,6 +15,7 @@ import android.os.Looper;
 import android.provider.MediaStore;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.OptIn;
 import androidx.core.content.ContextCompat;
 import androidx.lifecycle.AndroidViewModel;
 import androidx.lifecycle.LiveData;
@@ -22,6 +23,7 @@ import androidx.lifecycle.MutableLiveData;
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.MediaMetadata;
 import androidx.media3.common.Player;
+import androidx.media3.common.util.UnstableApi;
 import androidx.media3.session.MediaController;
 import androidx.media3.session.SessionToken;
 
@@ -53,8 +55,12 @@ public class MusicViewModel extends AndroidViewModel {
     private static final String KEY_QUEUE_IDS     = "saved_queue_ids";
     
     private final LocalMusicRepository        repository;
+    // Default is true (Data Saver ON)
+    private boolean isDataSaverMode = true;
     private final OnlineMusicRepository onlineRepository = new OnlineMusicRepository();
     private final MutableLiveData<List<Song>> songsLiveData            = new MutableLiveData<>();
+    // Stores the complete online library fetched at startup
+    private final MutableLiveData<List<Song>> allOnlineSongsLiveData = new MutableLiveData<>(new ArrayList<>());
     private final MutableLiveData<Song>       currentSongLiveData      = new MutableLiveData<>();
     private final MutableLiveData<Boolean>    isPlayingLiveData        = new MutableLiveData<>(false);
     private final MutableLiveData<Long>       progressLiveData         = new MutableLiveData<>(0L);
@@ -73,24 +79,26 @@ public class MusicViewModel extends AndroidViewModel {
     private final Map<Long, Song>             favoritesMap             = new LinkedHashMap<>();
     private final MutableLiveData<Set<Long>>  favoriteIdsLiveData      = new MutableLiveData<>(new LinkedHashSet<>());
     private final MutableLiveData<Map<String, List<Long>>> customPlaylistsLiveData = new MutableLiveData<>(new LinkedHashMap<>());
-    private final MutableLiveData<List<Song>> allOnlineSongsLiveData = new MutableLiveData<>(new ArrayList<>());
-    
+    // Tracks whether the user is browsing the Cloud (true) or Device (false)
+    // 0 = Local, 1 = Cloud, 2 = Hybrid
+    private final MutableLiveData<Integer> libraryModeLiveData = new MutableLiveData<>(0);
     private Player exoPlayer;
     private ListenableFuture<MediaController> controllerFuture;
     private List<Song> currentPlaylist;
     private int        currentIndex = -1;
     
     private MediaItem createMediaItem(Song song) {
-        MediaMetadata metadata = new MediaMetadata.Builder()
-                .setTitle(song.getTitle())
-                .setArtist(song.getArtist())
-                .setArtworkUri(song.getAlbumArtUri())
-                .build();
+        String finalUrl = song.getUri().toString();
+        
+        // If Data Saver is OFF, we strip out the Cloudinary compression tag
+        // to force it to download the original high-quality file.
+        if (!isDataSaverMode && finalUrl.contains("/upload/q_auto,f_auto/")) {
+            finalUrl = finalUrl.replace("/upload/q_auto,f_auto/", "/upload/");
+        }
         
         return new MediaItem.Builder()
-                .setUri(song.getUri())
+                .setUri(Uri.parse(finalUrl))
                 .setMediaId(String.valueOf(song.getId()))
-                .setMediaMetadata(metadata)
                 .build();
     }
     
@@ -98,7 +106,16 @@ public class MusicViewModel extends AndroidViewModel {
     private Song pendingDeleteSong = null;
     private final MutableLiveData<List<Song>> queueLiveData = new MutableLiveData<>(new ArrayList<>());
     private final MutableLiveData<List<Song>> onlineSearchResults = new MutableLiveData<>(new ArrayList<>());
+    public LiveData<Integer> getLibraryMode() {
+        return libraryModeLiveData;
+    }
+    public LiveData<List<Song>> getAllOnlineSongs() {
+        return allOnlineSongsLiveData;
+    }
     
+    public void setLibraryMode(int mode) {
+        libraryModeLiveData.setValue(mode);
+    }
     public LiveData<List<Song>> getOnlineSearchResults() {
         return onlineSearchResults;
     }
@@ -148,8 +165,9 @@ public class MusicViewModel extends AndroidViewModel {
     private final ContentObserver contentObserver;
     private final Handler         handler        = new Handler(Looper.getMainLooper());
     private final Runnable        reloadRunnable = this::loadLocalMusic;
-    
-    public MusicViewModel(@NonNull Application application) {
+	
+	@OptIn(markerClass = UnstableApi.class)
+	public MusicViewModel(@NonNull Application application) {
         super(application);
         repository = new LocalMusicRepository(application);
         loadFavoritesFromPrefs();
@@ -277,6 +295,8 @@ public class MusicViewModel extends AndroidViewModel {
     
     public void clearDeleteIntent() { deleteIntentSenderLiveData.postValue(null); }
     public void setNowPlayingOpen(boolean open)      { isNowPlayingOpenLiveData.postValue(open); }
+    
+    
     
     // ── Favorites ─────────────────────────────────────────────────────────────
     
@@ -929,7 +949,7 @@ public class MusicViewModel extends AndroidViewModel {
         
         if (allOnline != null) {
             for (Song song : allOnline) {
-                // ✅ EXACT MATCH TO LOCAL: We now check substring on BOTH Title and Artist
+                // ✅ In-memory search: Checks both Title and Artist instantly
                 if (song.getTitle().toLowerCase().contains(queryLower) ||
                         song.getArtist().toLowerCase().contains(queryLower)) {
                     matches.add(song);
@@ -938,11 +958,14 @@ public class MusicViewModel extends AndroidViewModel {
         }
         onlineSearchResults.postValue(matches);
     }
+    
+    
     private void loadOnlineMusic() {
         onlineRepository.fetchAllOnlineSongs(new OnlineMusicRepository.OnMusicFetchedListener() {
             @Override
             public void onSuccess(List<Song> songs) {
                 allOnlineSongsLiveData.postValue(songs);
+                AppLog.d(AppLog.REPO, "Successfully loaded " + songs.size() + " online songs into memory.");
             }
             
             @Override
@@ -951,7 +974,6 @@ public class MusicViewModel extends AndroidViewModel {
             }
         });
     }
-    
     // ── Local music loader ────────────────────────────────────────────────────
     
     public void loadLocalMusic() {

@@ -2,10 +2,12 @@ package com.nandu.mymusic.repository;
 
 import android.net.Uri;
 import com.google.firebase.firestore.FirebaseFirestore;
-import com.google.firebase.firestore.QueryDocumentSnapshot;
+import com.google.firebase.firestore.DocumentSnapshot;
 import com.nandu.mymusic.model.Song;
+import com.nandu.mymusic.utils.AppLog;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 public class OnlineMusicRepository {
 	private final FirebaseFirestore db = FirebaseFirestore.getInstance();
@@ -15,42 +17,46 @@ public class OnlineMusicRepository {
 		void onError(Exception e);
 	}
 	
-	// Inside OnlineMusicRepository.java
+	// ✅ Phase 2: Fetch the entire library EXACTLY ONCE
 	public void fetchAllOnlineSongs(OnMusicFetchedListener listener) {
-		db.collection("songs")
+		AppLog.d(AppLog.REPO, "Fetching online library from Firestore...");
+		
+		db.collection("online_library").document("metadata")
 				.get()
 				.addOnCompleteListener(task -> {
 					if (task.isSuccessful()) {
+						DocumentSnapshot document = task.getResult();
 						List<Song> allSongs = new ArrayList<>();
-						for (QueryDocumentSnapshot document : task.getResult()) {
+						
+						if (document != null && document.exists()) {
+							// Extract the "songs" array from the document
+							List<Map<String, Object>> songsArray = (List<Map<String, Object>>) document.get("songs");
 							
-							long id = document.getString("audioUrl") != null
-									? Math.abs((long) document.getString("audioUrl").hashCode())
-									: System.currentTimeMillis();
-							String title = document.getString("title");
-							String artist = document.getString("artist");
-							String audioUrl = document.getString("audioUrl");
-							
-							long duration = 0L;
-							Object durationObj = document.get("duration");
-							if (durationObj instanceof Number) {
-								duration = ((Number) durationObj).longValue();
-							} else if (durationObj instanceof String) {
-								try { duration = Long.parseLong((String) durationObj); }
-								catch (NumberFormatException e) { duration = 0L; }
-							}
-							
-							if (audioUrl != null) {
-								Song song = new Song(
-										id,
-										artist != null ? artist : "Unknown Artist",
-										title != null ? title : "Unknown Title",
-										"Online Single",
-										Uri.parse(audioUrl),
-										duration,
-										null
-								);
-								allSongs.add(song);
+							if (songsArray != null) {
+								for (Map<String, Object> songMap : songsArray) {
+									try {
+										long id = ((Number) songMap.get("id")).longValue();
+										String title = (String) songMap.get("title");
+										String artist = (String) songMap.get("artist");
+										String album = (String) songMap.get("album");
+										String audioUrl = (String) songMap.get("audioUrl");
+										String coverUrl = (String) songMap.get("coverUrl");
+										long duration = ((Number) songMap.get("duration")).longValue();
+										
+										Song song = new Song(
+												id,
+												artist,
+												title,
+												album,
+												Uri.parse(audioUrl),
+												duration,
+												Uri.parse(coverUrl) // ✅ We now have exact cover URLs!
+										);
+										allSongs.add(song);
+									} catch (Exception e) {
+										AppLog.e(AppLog.REPO, "Error parsing a song: " + e.getMessage());
+									}
+								}
 							}
 						}
 						listener.onSuccess(allSongs);
@@ -59,6 +65,4 @@ public class OnlineMusicRepository {
 					}
 				});
 	}
-	
-
 }

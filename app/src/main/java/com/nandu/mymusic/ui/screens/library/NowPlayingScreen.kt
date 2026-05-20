@@ -84,7 +84,7 @@ fun NowPlayingScreen(
         if (duration > 0) (progress.toFloat() / duration.toFloat()).coerceIn(0f, 1f) else 0f
 
     var showQueueSheet by remember { mutableStateOf(false) }
-    var showLyricsView by remember { mutableStateOf(false) } // ✅ Now controls the main screen layout toggle
+    var showLyricsView by remember { mutableStateOf(false) }
     var showMenu by remember { mutableStateOf(false) }
 
     val coroutineScope = rememberCoroutineScope()
@@ -93,17 +93,8 @@ fun NowPlayingScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(
-                Brush.verticalGradient(
-                    listOf(Color(0xFF3D6B4F), SpotifyBlack),
-                    startY = 0f,
-                    endY = 1800f
-                )
-            )
-            .graphicsLayer {
-                translationY = offsetY.value
-                alpha = (1f - (offsetY.value / 600f)).coerceIn(0f, 1f)
-            }
+            .background(Brush.verticalGradient(listOf(Color(0xFF3D6B4F), SpotifyBlack), startY = 0f, endY = 1800f))
+            .graphicsLayer { translationY = offsetY.value; alpha = (1f - (offsetY.value / 600f)).coerceIn(0f, 1f) }
             .pointerInput(Unit) {
                 detectVerticalDragGestures(
                     onDragEnd = {
@@ -122,38 +113,23 @@ fun NowPlayingScreen(
             }
     ) {
         Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .statusBarsPadding()
-                .navigationBarsPadding()
-                .padding(horizontal = 24.dp),
+            modifier = Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(horizontal = 24.dp),
             verticalArrangement = Arrangement.SpaceBetween
         ) {
             // ── TOP BAR ────────────────────────────────────────────────
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 16.dp, bottom = 8.dp),
+                modifier = Modifier.fillMaxWidth().padding(top = 16.dp, bottom = 8.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                IconButton(onClick = onBack) {
-                    Icon(Icons.Filled.KeyboardArrowDown, "Collapse", tint = SpotifyWhite, modifier = Modifier.size(32.dp))
-                }
+                IconButton(onClick = onBack) { Icon(Icons.Filled.KeyboardArrowDown, "Collapse", tint = SpotifyWhite, modifier = Modifier.size(32.dp)) }
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text("PLAYING FROM YOUR LIBRARY", color = SpotifyGray, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
                     Text("All Songs", color = SpotifyWhite, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
                 }
                 Box {
-                    IconButton(onClick = { showMenu = true }) {
-                        Icon(Icons.Filled.MoreVert, "More", tint = SpotifyWhite, modifier = Modifier.size(24.dp))
-                    }
-
-                    DropdownMenu(
-                        expanded = showMenu,
-                        onDismissRequest = { showMenu = false },
-                        modifier = Modifier.background(SpotifySurface2)
-                    ) {
+                    IconButton(onClick = { showMenu = true }) { Icon(Icons.Filled.MoreVert, "More", tint = SpotifyWhite, modifier = Modifier.size(24.dp)) }
+                    DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }, modifier = Modifier.background(SpotifySurface2)) {
                         DropdownMenuItem(text = { Text("Add to Playlist", color = SpotifyWhite) }, onClick = { showMenu = false; onAddToPlaylist() })
                         DropdownMenuItem(text = { Text("Add to Queue", color = SpotifyWhite) }, onClick = { showMenu = false; onAddToQueue() })
                         DropdownMenuItem(text = { Text("Delete Song", color = Color(0xFFFF5555)) }, onClick = { showMenu = false; onDelete() })
@@ -165,20 +141,15 @@ fun NowPlayingScreen(
             Crossfade(
                 targetState = showLyricsView,
                 animationSpec = tween(400),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f) // Takes up all remaining space above the controls
-                    .padding(vertical = 12.dp),
+                modifier = Modifier.fillMaxWidth().weight(1f).padding(vertical = 12.dp),
                 label = "LyricsTransition"
             ) { isLyricsMode ->
                 if (isLyricsMode) {
                     // ✅ COMPACT HEADER + LYRICS VIEW
                     Column(modifier = Modifier.fillMaxSize()) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            AlbumArt(audioUri = song.uri, isActive = true, size = 64.dp, cornerRadius = 8.dp)
+                        Row(modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                            // ✅ Passed 'song = song'
+                            AlbumArt(song = song, audioUri = song.uri, isActive = true, size = 64.dp, cornerRadius = 8.dp)
                             Spacer(modifier = Modifier.width(16.dp))
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(song.title, color = SpotifyWhite, fontWeight = FontWeight.Bold, fontSize = 20.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -188,34 +159,17 @@ fun NowPlayingScreen(
                                 Icon(imageVector = if (isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder, contentDescription = "Like", tint = if (isFavorite) SpotifyGreen else SpotifyWhite)
                             }
                         }
-
-                        SyncedLyricsView(
-                            lyricsText = lyrics,
-                            progress = progress,
-                            onSeek = onSeek,
-                            modifier = Modifier.fillMaxSize()
-                        )
+                        SyncedLyricsView(lyricsText = lyrics, progress = progress, onSeek = onSeek, modifier = Modifier.fillMaxSize())
                     }
                 } else {
                     // ✅ STANDARD HUGE ALBUM ART + INFO
-                    Column(
-                        modifier = Modifier.fillMaxSize(),
-                        verticalArrangement = Arrangement.Center
-                    ) {
-                        Box(
-                            modifier = Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(12.dp)).background(SpotifySurface2),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            AlbumArt(audioUri = song.uri, isActive = true, size = null, cornerRadius = 12.dp)
+                    Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center) {
+                        Box(modifier = Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(12.dp)).background(SpotifySurface2), contentAlignment = Alignment.Center) {
+                            // ✅ Passed 'song = song'
+                            AlbumArt(song = song, audioUri = song.uri, isActive = true, size = null, cornerRadius = 12.dp)
                         }
-
                         Spacer(modifier = Modifier.height(32.dp))
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(song.title, color = SpotifyWhite, fontWeight = FontWeight.Bold, fontSize = 22.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 Spacer(Modifier.height(4.dp))
@@ -239,9 +193,7 @@ fun NowPlayingScreen(
                 val thumbScale by animateFloatAsState(targetValue = if (isDragging) 1f else 0f, animationSpec = tween(durationMillis = 150), label = "thumbScale")
 
                 BoxWithConstraints(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(28.dp)
+                    modifier = Modifier.fillMaxWidth().height(28.dp)
                         .pointerInput(duration) {
                             detectHorizontalDragGestures(
                                 onDragStart = { offset -> dragFraction = (offset.x / size.width).coerceIn(0f, 1f); dragPreviewTime = (dragFraction * duration).toLong(); isDragging = true },
@@ -261,22 +213,13 @@ fun NowPlayingScreen(
                     Box(modifier = Modifier.size(14.dp).align(Alignment.CenterStart).offset(x = (trackWidthDp * animatedFraction) - 7.dp).scale(thumbScale).clip(CircleShape).background(SpotifyWhite).shadow(elevation = 3.dp, shape = CircleShape))
                 }
 
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+                Row(modifier = Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Text(text = formatDuration(if (isDragging) dragPreviewTime else progress), color = if (isDragging) SpotifyGreen else SpotifyGray, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                     if (isDragging) Text(text = "Seeking to: ${formatDuration(dragPreviewTime)}", color = SpotifyGreen, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     Text(text = if (duration > 0) formatDuration(duration) else "0:00", color = SpotifyGray, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                 }
 
-                // Playback Controls
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     IconButton(onClick = onToggleShuffle) { Icon(Icons.Filled.Shuffle, "Shuffle", tint = if (shuffleMode) SpotifyGreen else SpotifyGray, modifier = Modifier.size(22.dp)) }
                     IconButton(onClick = onPrevious, modifier = Modifier.size(48.dp)) { Icon(Icons.Filled.SkipPrevious, "Previous", tint = SpotifyWhite, modifier = Modifier.size(38.dp)) }
                     Box(modifier = Modifier.size(64.dp).clip(CircleShape).background(SpotifyWhite), contentAlignment = Alignment.Center) {
@@ -286,31 +229,17 @@ fun NowPlayingScreen(
                     IconButton(onClick = onToggleRepeat) { Icon(imageVector = if (repeatMode == Player.REPEAT_MODE_ONE) Icons.Filled.RepeatOne else Icons.Filled.Repeat, contentDescription = "Repeat", tint = if (repeatMode != Player.REPEAT_MODE_OFF) SpotifyGreen else SpotifyGray, modifier = Modifier.size(22.dp)) }
                 }
 
-                // Bottom Row Options
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+                Row(modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     IconButton(onClick = {}) { Icon(Icons.Filled.DevicesOther, "Devices", tint = SpotifyGray, modifier = Modifier.size(22.dp)) }
-
-                    // ✅ TOGGLES THE MAIN VIEW INSTEAD OF A SHEET
                     IconButton(onClick = { showLyricsView = !showLyricsView }) {
-                        Icon(
-                            imageVector = Icons.Filled.Lyrics,
-                            contentDescription = "Lyrics",
-                            tint = if (showLyricsView) SpotifyGreen else SpotifyWhite,
-                            modifier = Modifier.size(22.dp)
-                        )
+                        Icon(imageVector = Icons.Filled.Lyrics, contentDescription = "Lyrics", tint = if (showLyricsView) SpotifyGreen else SpotifyWhite, modifier = Modifier.size(22.dp))
                     }
-
                     IconButton(onClick = { showQueueSheet = true }) { Icon(Icons.AutoMirrored.Filled.QueueMusic, "Queue", tint = SpotifyWhite, modifier = Modifier.size(22.dp)) }
                 }
             }
         }
     }
 
-    // ── QUEUE BOTTOM SHEET (Remains as a sheet) ─────────────────────────
     if (showQueueSheet) {
         val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
         ModalBottomSheet(
@@ -327,24 +256,14 @@ fun NowPlayingScreen(
 }
 
 @Composable
-fun SyncedLyricsView(
-    lyricsText: String?,
-    progress: Long,
-    onSeek: (Long) -> Unit,
-    modifier: Modifier = Modifier
-) {
+fun SyncedLyricsView(lyricsText: String?, progress: Long, onSeek: (Long) -> Unit, modifier: Modifier = Modifier) {
     val lyricsLines = remember(lyricsText) { parseLrc(lyricsText) }
     val listState = rememberLazyListState()
 
     if (lyricsLines.isEmpty()) {
         Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Text(
-                text = lyricsText ?: "No lyrics available.",
-                color = SpotifyGray,
-                fontSize = 18.sp,
-                fontWeight = FontWeight.SemiBold,
-                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                modifier = Modifier.verticalScroll(rememberScrollState())
+                text = lyricsText ?: "No lyrics available.", color = SpotifyGray, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, textAlign = androidx.compose.ui.text.style.TextAlign.Center, modifier = Modifier.verticalScroll(rememberScrollState())
             )
         }
         return
@@ -359,47 +278,28 @@ fun SyncedLyricsView(
         }
     }
 
-    LazyColumn(
-        state = listState,
-        modifier = modifier.fillMaxSize(),
-        contentPadding = PaddingValues(top = 16.dp, bottom = 64.dp)
-    ) {
+    LazyColumn(state = listState, modifier = modifier.fillMaxSize(), contentPadding = PaddingValues(top = 16.dp, bottom = 64.dp)) {
         itemsIndexed(lyricsLines) { index, line ->
             val isActive = index == activeIndex
-
             Text(
-                text = line.text.ifEmpty { "♪" },
-                color = if (isActive) SpotifyWhite else SpotifyGray,
-                fontSize = if (isActive) 24.sp else 20.sp,
+                text = line.text.ifEmpty { "♪" }, color = if (isActive) SpotifyWhite else SpotifyGray, fontSize = if (isActive) 24.sp else 20.sp,
                 fontWeight = if (isActive) FontWeight.Bold else FontWeight.SemiBold,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { onSeek(line.startTimeMs) }
-                    .padding(vertical = 12.dp)
+                modifier = Modifier.fillMaxWidth().clickable { onSeek(line.startTimeMs) }.padding(vertical = 12.dp)
             )
         }
     }
 }
 
-// ... Keep existing QueueContent, SwipeableQueueItem, and QueueSongItem implementations below ...
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun QueueContent(
-    queue: List<Song>,
-    currentSong: Song,
-    onSongClick: (Song) -> Unit,
-    onSongRemove: (Song) -> Unit,
-    onSongsRemove: (Set<Song>) -> Unit,
-    onSongReorder: (Int, Int) -> Unit,
-    isFullyExpanded: Boolean
+    queue: List<Song>, currentSong: Song, onSongClick: (Song) -> Unit, onSongRemove: (Song) -> Unit, onSongsRemove: (Set<Song>) -> Unit, onSongReorder: (Int, Int) -> Unit, isFullyExpanded: Boolean
 ) {
-
     val currentIndex = queue.indexOfFirst { it.id == currentSong.id }
     val history = if (currentIndex > 0) queue.take(currentIndex) else emptyList()
     val upstreamUpcoming = if (currentIndex >= 0) queue.drop(currentIndex + 1) else emptyList()
 
     val listState = rememberLazyListState()
-
     var localUpcoming by remember { mutableStateOf(upstreamUpcoming) }
     var draggedItemIndex by remember { mutableStateOf<Int?>(null) }
     var initialDraggedIndex by remember { mutableStateOf<Int?>(null) }
@@ -408,119 +308,64 @@ fun QueueContent(
     var isSelectionMode by remember { mutableStateOf(false) }
     var selectedSongs by remember { mutableStateOf(setOf<Song>()) }
 
-    LaunchedEffect(upstreamUpcoming) {
-        if (draggedItemIndex == null) {
-            localUpcoming = upstreamUpcoming
-        }
-    }
-
-    LaunchedEffect(isFullyExpanded) {
-        if (!isFullyExpanded){
-            isSelectionMode = false
-            selectedSongs = emptySet()
-        }
-    }
+    LaunchedEffect(upstreamUpcoming) { if (draggedItemIndex == null) localUpcoming = upstreamUpcoming }
+    LaunchedEffect(isFullyExpanded) { if (!isFullyExpanded){ isSelectionMode = false; selectedSongs = emptySet() } }
 
     Box(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
             state = listState,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp)
-                .pointerInput(isSelectionMode) {
-                    if (isSelectionMode) return@pointerInput
-
-                    detectDragGesturesAfterLongPress(
-                        onDragStart = { offset ->
-                            listState.layoutInfo.visibleItemsInfo
-                                .firstOrNull { offset.y.toInt() in it.offset..(it.offset + it.size) }
-                                ?.let { item ->
-                                    val keyStr = item.key as? String
-                                    if (keyStr?.startsWith("upcoming_") == true) {
-                                        val idx = keyStr.removePrefix("upcoming_").toInt()
-                                        draggedItemIndex = idx
-                                        initialDraggedIndex = idx
-                                        draggedDistance = 0f
-                                    }
-                                }
-                        },
-                        onDrag = { change, dragAmount ->
-                            change.consume()
-                            draggedDistance += dragAmount.y
-
-                            val draggedIdx = draggedItemIndex ?: return@detectDragGesturesAfterLongPress
-                            val itemHeight = listState.layoutInfo.visibleItemsInfo.firstOrNull()?.size ?: 1
-                            if (itemHeight == 0) return@detectDragGesturesAfterLongPress
-
-                            val targetDelta = (draggedDistance / itemHeight).toInt()
-
-                            if (targetDelta != 0) {
-                                val targetIdx = (draggedIdx + targetDelta).coerceIn(0, localUpcoming.size - 1)
-                                if (draggedIdx != targetIdx) {
-                                    val newList = localUpcoming.toMutableList()
-                                    val item = newList.removeAt(draggedIdx)
-                                    newList.add(targetIdx, item)
-                                    localUpcoming = newList
-
-                                    draggedItemIndex = targetIdx
-                                    draggedDistance -= (targetDelta * itemHeight)
-                                }
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).pointerInput(isSelectionMode) {
+                if (isSelectionMode) return@pointerInput
+                detectDragGesturesAfterLongPress(
+                    onDragStart = { offset ->
+                        listState.layoutInfo.visibleItemsInfo.firstOrNull { offset.y.toInt() in it.offset..(it.offset + it.size) }?.let { item ->
+                            val keyStr = item.key as? String
+                            if (keyStr?.startsWith("upcoming_") == true) {
+                                val idx = keyStr.removePrefix("upcoming_").toInt()
+                                draggedItemIndex = idx
+                                initialDraggedIndex = idx
+                                draggedDistance = 0f
                             }
-                        },
-                        onDragEnd = {
-                            if (initialDraggedIndex != null && draggedItemIndex != null && initialDraggedIndex != draggedItemIndex) {
-                                onSongReorder(initialDraggedIndex!!, draggedItemIndex!!)
-                            }
-                            draggedItemIndex = null
-                            initialDraggedIndex = null
-                            draggedDistance = 0f
-                        },
-                        onDragCancel = {
-                            draggedItemIndex = null
-                            initialDraggedIndex = null
-                            draggedDistance = 0f
-                            localUpcoming = upstreamUpcoming
                         }
-                    )
-                }
-        ) {
-            item {
-                Text(
-                    "Now Playing",
-                    color = SpotifyWhite,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 18.sp,
-                    modifier = Modifier.padding(vertical = 12.dp)
+                    },
+                    onDrag = { change, dragAmount ->
+                        change.consume(); draggedDistance += dragAmount.y
+                        val draggedIdx = draggedItemIndex ?: return@detectDragGesturesAfterLongPress
+                        val itemHeight = listState.layoutInfo.visibleItemsInfo.firstOrNull()?.size ?: 1
+                        if (itemHeight == 0) return@detectDragGesturesAfterLongPress
+                        val targetDelta = (draggedDistance / itemHeight).toInt()
+
+                        if (targetDelta != 0) {
+                            val targetIdx = (draggedIdx + targetDelta).coerceIn(0, localUpcoming.size - 1)
+                            if (draggedIdx != targetIdx) {
+                                val newList = localUpcoming.toMutableList()
+                                val item = newList.removeAt(draggedIdx)
+                                newList.add(targetIdx, item)
+                                localUpcoming = newList
+                                draggedItemIndex = targetIdx
+                                draggedDistance -= (targetDelta * itemHeight)
+                            }
+                        }
+                    },
+                    onDragEnd = {
+                        if (initialDraggedIndex != null && draggedItemIndex != null && initialDraggedIndex != draggedItemIndex) {
+                            onSongReorder(initialDraggedIndex!!, draggedItemIndex!!)
+                        }
+                        draggedItemIndex = null; initialDraggedIndex = null; draggedDistance = 0f
+                    },
+                    onDragCancel = { draggedItemIndex = null; initialDraggedIndex = null; draggedDistance = 0f; localUpcoming = upstreamUpcoming }
                 )
             }
+        ) {
+            item { Text("Now Playing", color = SpotifyWhite, fontWeight = FontWeight.Bold, fontSize = 18.sp, modifier = Modifier.padding(vertical = 12.dp)) }
             item { QueueSongItem(song = currentSong, isPlaying = true, onClick = {}) }
 
             if (localUpcoming.isNotEmpty()) {
                 item {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 24.dp, bottom = 12.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            "Next In Queue",
-                            color = SpotifyWhite,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 18.sp
-                        )
+                    Row(modifier = Modifier.fillMaxWidth().padding(top = 24.dp, bottom = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Text("Next In Queue", color = SpotifyWhite, fontWeight = FontWeight.Bold, fontSize = 18.sp)
                         if (isFullyExpanded) {
-                            Text(
-                                text = if (isSelectionMode) "Cancel" else "Select",
-                                color = SpotifyGreen,
-                                fontWeight = FontWeight.SemiBold,
-                                fontSize = 14.sp,
-                                modifier = Modifier.clickable {
-                                    isSelectionMode = !isSelectionMode
-                                    if (!isSelectionMode) selectedSongs = emptySet()
-                                }
-                            )
+                            Text(text = if (isSelectionMode) "Cancel" else "Select", color = SpotifyGreen, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, modifier = Modifier.clickable { isSelectionMode = !isSelectionMode; if (!isSelectionMode) selectedSongs = emptySet() })
                         }
                     }
                 }
@@ -532,70 +377,27 @@ fun QueueContent(
                     val zIndex = if (isDragged) 1f else 0f
                     val isSelected = selectedSongs.contains(song)
 
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .zIndex(zIndex)
-                            .graphicsLayer { translationY = offsetY }
-                            .shadow(elevation.dp, RoundedCornerShape(8.dp))
-                            .background(if (isDragged || isSelected) SpotifySurface2 else Color.Transparent)
-                    ) {
+                    Box(modifier = Modifier.fillMaxWidth().zIndex(zIndex).graphicsLayer { translationY = offsetY }.shadow(elevation.dp, RoundedCornerShape(8.dp)).background(if (isDragged || isSelected) SpotifySurface2 else Color.Transparent)) {
                         if (isSelectionMode) {
-                            QueueSongItem(
-                                song = song,
-                                isPlaying = false,
-                                isSelectionMode = true,
-                                isSelected = isSelected,
-                                onClick = {
-                                    selectedSongs = if (isSelected) selectedSongs - song else selectedSongs + song
-                                }
-                            )
+                            QueueSongItem(song = song, isPlaying = false, isSelectionMode = true, isSelected = isSelected, onClick = { selectedSongs = if (isSelected) selectedSongs - song else selectedSongs + song })
                         } else {
-                            SwipeableQueueItem(
-                                song = song,
-                                onRemove = { onSongRemove(song) },
-                                onClick = { onSongClick(song) }
-                            )
+                            SwipeableQueueItem(song = song, onRemove = { onSongRemove(song) }, onClick = { onSongClick(song) })
                         }
                     }
                 }
             }
-
             if (history.isNotEmpty()) {
-                item {
-                    Text(
-                        "Previously Played",
-                        color = SpotifyGray,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 18.sp,
-                        modifier = Modifier.padding(top = 24.dp, bottom = 12.dp)
-                    )
-                }
-                itemsIndexed(history) { _, song ->
-                    QueueSongItem(
-                        song = song,
-                        isPlaying = false,
-                        isHistory = true,
-                        onClick = { onSongClick(song) }
-                    )
-                }
+                item { Text("Previously Played", color = SpotifyGray, fontWeight = FontWeight.Bold, fontSize = 18.sp, modifier = Modifier.padding(top = 24.dp, bottom = 12.dp)) }
+                itemsIndexed(history) { _, song -> QueueSongItem(song = song, isPlaying = false, isHistory = true, onClick = { onSongClick(song) }) }
             }
             item { Spacer(modifier = Modifier.height(80.dp)) }
         }
 
         if (isSelectionMode && selectedSongs.isNotEmpty()) {
             Button(
-                onClick = {
-                    onSongsRemove(selectedSongs)
-                    isSelectionMode = false
-                    selectedSongs = emptySet()
-                },
+                onClick = { onSongsRemove(selectedSongs); isSelectionMode = false; selectedSongs = emptySet() },
                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE57373)),
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(bottom = 24.dp)
-                    .fillMaxWidth(0.8f)
-                    .height(50.dp)
+                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 24.dp).fillMaxWidth(0.8f).height(50.dp)
             ) {
                 Text("Remove ${selectedSongs.size} Songs", color = Color.White, fontWeight = FontWeight.Bold)
             }
@@ -605,97 +407,39 @@ fun QueueContent(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SwipeableQueueItem(
-    song: Song,
-    onRemove: () -> Unit,
-    onClick: () -> Unit
-) {
+fun SwipeableQueueItem(song: Song, onRemove: () -> Unit, onClick: () -> Unit) {
     val dismissState = rememberSwipeToDismissBoxState(
         confirmValueChange = { dismissValue ->
-            if (dismissValue == SwipeToDismissBoxValue.EndToStart) {
-                onRemove()
-                return@rememberSwipeToDismissBoxState false
-            }
+            if (dismissValue == SwipeToDismissBoxValue.EndToStart) { onRemove(); return@rememberSwipeToDismissBoxState false }
             false
         }
     )
-
     LaunchedEffect(song.id) {
-        if (dismissState.currentValue != SwipeToDismissBoxValue.Settled || dismissState.targetValue != SwipeToDismissBoxValue.Settled) {
-            dismissState.snapTo(SwipeToDismissBoxValue.Settled)
-        }
+        if (dismissState.currentValue != SwipeToDismissBoxValue.Settled || dismissState.targetValue != SwipeToDismissBoxValue.Settled) dismissState.snapTo(SwipeToDismissBoxValue.Settled)
     }
-
     SwipeToDismissBox(
-        state = dismissState,
-        enableDismissFromStartToEnd = false,
+        state = dismissState, enableDismissFromStartToEnd = false,
         backgroundContent = {
-            val color by animateColorAsState(
-                targetValue = if (dismissState.targetValue == SwipeToDismissBoxValue.EndToStart)
-                    Color(0xFFE57373).copy(alpha = 0.8f)
-                else Color.Transparent,
-                label = "swipeColor"
-            )
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(color, RoundedCornerShape(8.dp))
-                    .padding(end = 16.dp),
-                contentAlignment = Alignment.CenterEnd
-            ) {
-                if (dismissState.targetValue == SwipeToDismissBoxValue.EndToStart) {
-                    Icon(Icons.Filled.Delete, contentDescription = "Remove", tint = Color.White)
-                }
+            val color by animateColorAsState(targetValue = if (dismissState.targetValue == SwipeToDismissBoxValue.EndToStart) Color(0xFFE57373).copy(alpha = 0.8f) else Color.Transparent, label = "swipeColor")
+            Box(modifier = Modifier.fillMaxSize().background(color, RoundedCornerShape(8.dp)).padding(end = 16.dp), contentAlignment = Alignment.CenterEnd) {
+                if (dismissState.targetValue == SwipeToDismissBoxValue.EndToStart) Icon(Icons.Filled.Delete, contentDescription = "Remove", tint = Color.White)
             }
         }
-    ) {
-        QueueSongItem(song = song, isPlaying = false, onClick = onClick)
-    }
+    ) { QueueSongItem(song = song, isPlaying = false, onClick = onClick) }
 }
 
 @Composable
-fun QueueSongItem(
-    song: Song,
-    isPlaying: Boolean,
-    isHistory: Boolean = false,
-    isSelectionMode: Boolean = false,
-    isSelected: Boolean = false,
-    onClick: () -> Unit
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onClick() }
-            .padding(vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        AlbumArt(audioUri = song.uri, isActive = isPlaying, size = 48.dp, cornerRadius = 4.dp)
+fun QueueSongItem(song: Song, isPlaying: Boolean, isHistory: Boolean = false, isSelectionMode: Boolean = false, isSelected: Boolean = false, onClick: () -> Unit) {
+    Row(modifier = Modifier.fillMaxWidth().clickable { onClick() }.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        // ✅ Passed 'song = song'
+        AlbumArt(song = song, audioUri = song.uri, isActive = isPlaying, size = 48.dp, cornerRadius = 4.dp)
         Spacer(modifier = Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = song.title,
-                color = if (isPlaying) SpotifyGreen else if (isHistory) SpotifyGray else SpotifyWhite,
-                fontWeight = FontWeight.SemiBold,
-                fontSize = 15.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            Text(
-                text = song.artist,
-                color = SpotifyGray,
-                fontSize = 13.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
+            Text(text = song.title, color = if (isPlaying) SpotifyGreen else if (isHistory) SpotifyGray else SpotifyWhite, fontWeight = FontWeight.SemiBold, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(text = song.artist, color = SpotifyGray, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
-
         if (isSelectionMode) {
-            Icon(
-                imageVector = if (isSelected) Icons.Filled.CheckCircle else Icons.Outlined.Circle,
-                contentDescription = "Select",
-                tint = if (isSelected) SpotifyGreen else SpotifyGray,
-                modifier = Modifier.size(24.dp)
-            )
+            Icon(imageVector = if (isSelected) Icons.Filled.CheckCircle else Icons.Outlined.Circle, contentDescription = "Select", tint = if (isSelected) SpotifyGreen else SpotifyGray, modifier = Modifier.size(24.dp))
         } else if (isPlaying) {
             Icon(Icons.Filled.GraphicEq, contentDescription = "Playing", tint = SpotifyGreen, modifier = Modifier.size(20.dp))
         } else if (!isHistory) {

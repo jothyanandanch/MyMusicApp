@@ -6,6 +6,8 @@ public class AppLog {
     public static final String PERMISSION = "MyMusicLog:Permission";
     public static final String REPO = "MyMusicLog:Repo";
     public static final String PLAYER = "MyMusicLog:Player";
+    
+    public static final String LYRICS = "MyMusicLog:Lyrics";
 
     //For Debugging (For Understanding Workflow)
     public static void d(String tag, String message) {
