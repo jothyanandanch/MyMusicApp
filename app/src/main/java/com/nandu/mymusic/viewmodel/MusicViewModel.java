@@ -39,6 +39,8 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class MusicViewModel extends AndroidViewModel {
     
@@ -61,6 +63,9 @@ public class MusicViewModel extends AndroidViewModel {
     
     private final LocalMusicRepository repository;
     private final OnlineMusicRepository onlineRepository = new OnlineMusicRepository();
+    
+    // ── Thread Management ────────────────────────────────────────────────
+    private final ExecutorService executorService = Executors.newFixedThreadPool(4);
     
     private final MutableLiveData<Boolean> isDataSaverModeLiveData;
     private final MutableLiveData<List<Song>> songsLiveData = new MutableLiveData<>();
@@ -200,20 +205,28 @@ public class MusicViewModel extends AndroidViewModel {
     public LiveData<String> getSortType() { return sortTypeLiveData; }
     public void setSortType(String sortTypeStr) {
         sortTypeLiveData.setValue(sortTypeStr);
-        getApplication().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                .edit().putString(KEY_SORT_TYPE, sortTypeStr).apply();
+        executorService.execute(() -> {
+            getApplication().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                    .edit().putString(KEY_SORT_TYPE, sortTypeStr).commit();
+        });
     }
     
     public LiveData<Boolean> getDataSaverMode() { return isDataSaverModeLiveData; }
     public void setDataSaverMode(boolean isEnabled) {
         isDataSaverModeLiveData.setValue(isEnabled);
-        getApplication().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putBoolean(KEY_DATA_SAVER, isEnabled).apply();
+        executorService.execute(() -> {
+            getApplication().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                    .edit().putBoolean(KEY_DATA_SAVER, isEnabled).commit();
+        });
     }
     
     public LiveData<Integer> getLibraryMode() { return libraryModeLiveData; }
     public void setLibraryMode(int mode) {
         libraryModeLiveData.setValue(mode);
-        getApplication().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putInt(KEY_LIBRARY_MODE, mode).apply();
+        executorService.execute(() -> {
+            getApplication().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                    .edit().putInt(KEY_LIBRARY_MODE, mode).commit();
+        });
     }
     
     public LiveData<String> getLyrics() { return lyricsLiveData; }
@@ -256,20 +269,27 @@ public class MusicViewModel extends AndroidViewModel {
                 sb.append(currentPlaylist.get(i).getId());
                 if (i < currentPlaylist.size() - 1) sb.append(",");
             }
-            getApplication().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                    .edit().putString(KEY_QUEUE_IDS, sb.toString()).apply();
+            executorService.execute(() -> {
+                getApplication().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                        .edit().putString(KEY_QUEUE_IDS, sb.toString()).commit();
+            });
         }
     }
     
     private void persistLastPosition(long position) {
-        getApplication().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putLong(KEY_LAST_POSITION, position).apply();
+        executorService.execute(() -> {
+            getApplication().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                    .edit().putLong(KEY_LAST_POSITION, position).commit();
+        });
     }
     
     private void persistLastIndex(int index) {
         if (currentPlaylist == null || index < 0 || index >= currentPlaylist.size()) return;
         String uriStr = currentPlaylist.get(index).getUri().toString();
-        getApplication().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                .edit().putInt(KEY_LAST_INDEX, index).putString(KEY_LAST_URI, uriStr).apply();
+        executorService.execute(() -> {
+            getApplication().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                    .edit().putInt(KEY_LAST_INDEX, index).putString(KEY_LAST_URI, uriStr).commit();
+        });
     }
     
     private void loadFavoritesFromPrefs() {
@@ -307,14 +327,16 @@ public class MusicViewModel extends AndroidViewModel {
             favoritesMap.put(song.getId(), song);
         }
         favoriteIdsLiveData.setValue(ids);
-        Set<String> stringSet = new LinkedHashSet<>();
-        for (Long id : ids) stringSet.add(String.valueOf(id));
-        getApplication().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putStringSet(KEY_FAV_IDS, stringSet).commit();
+        
+        executorService.execute(() -> {
+            Set<String> stringSet = new LinkedHashSet<>();
+            for (Long id : ids) stringSet.add(String.valueOf(id));
+            getApplication().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                    .edit().putStringSet(KEY_FAV_IDS, stringSet).commit();
+        });
     }
     
-    // ── Playback / Queue / Custom Playlists / Deletion logic remain the exact same ───────────────────
-    // (Truncated here for token size, Keep all the other methods intact just as they were like playSong,
-    // togglePlayPause, playNextFromFullPlayer, addToQueue, deleteSong, restoreLastSession, etc.)
+    // ── Playback / Queue / Custom Playlists / Deletion logic ───────────────────
     
     public void playSong(Song song, List<Song> playlist) {
         if (exoPlayer == null) return;
@@ -470,7 +492,11 @@ public class MusicViewModel extends AndroidViewModel {
                 : Player.REPEAT_MODE_OFF;
         exoPlayer.setRepeatMode(next);
         repeatModeLiveData.postValue(next);
-        getApplication().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putInt(KEY_REPEAT_MODE, next).apply();
+        
+        executorService.execute(() -> {
+            getApplication().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                    .edit().putInt(KEY_REPEAT_MODE, next).commit();
+        });
     }
     
     public void toggleShuffle() {
@@ -480,7 +506,11 @@ public class MusicViewModel extends AndroidViewModel {
         else unshuffleUpcomingQueue();
         exoPlayer.setShuffleModeEnabled(false);
         shuffleModeLiveData.setValue(next);
-        getApplication().getSharedPreferences(PREFS_NAME,Context.MODE_PRIVATE).edit().putBoolean(KEY_SHUFFLE_MODE,next).apply();
+        
+        executorService.execute(() -> {
+            getApplication().getSharedPreferences(PREFS_NAME,Context.MODE_PRIVATE)
+                    .edit().putBoolean(KEY_SHUFFLE_MODE,next).commit();
+        });
     }
     
     private void shuffleUpcomingQueue() {
@@ -523,7 +553,12 @@ public class MusicViewModel extends AndroidViewModel {
         exoPlayer.prepare();
         exoPlayer.play();
         shuffleModeLiveData.setValue(true);
-        getApplication().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putBoolean(KEY_SHUFFLE_MODE, true).apply();
+        
+        executorService.execute(() -> {
+            getApplication().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                    .edit().putBoolean(KEY_SHUFFLE_MODE, true).commit();
+        });
+        
         currentSongLiveData.setValue(shuffled.get(0));
         progressLiveData.setValue(0L);
         persistLastIndex(0);
@@ -662,22 +697,24 @@ public class MusicViewModel extends AndroidViewModel {
     
     @SuppressLint("ApplySharedPref")
     private void savePlaylistsToPrefs(Map<String, List<Long>> playlists) {
-        SharedPreferences prefs = getApplication().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
-        SharedPreferences.Editor editor = prefs.edit();
-        Set<String> oldNames = prefs.getStringSet(KEY_PLAYLISTS, new java.util.HashSet<>());
-        if (oldNames != null) {
-            for (String oldName : oldNames) { editor.remove("playlist_" + oldName); }
-        }
-        editor.putStringSet(KEY_PLAYLISTS, new java.util.HashSet<>(playlists.keySet()));
-        for (Map.Entry<String, List<Long>> entry : playlists.entrySet()) {
-            StringBuilder sb = new StringBuilder();
-            for (int i = 0; i < entry.getValue().size(); i++) {
-                sb.append(entry.getValue().get(i));
-                if (i < entry.getValue().size() - 1) sb.append(",");
+        executorService.execute(() -> {
+            SharedPreferences prefs = getApplication().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+            SharedPreferences.Editor editor = prefs.edit();
+            Set<String> oldNames = prefs.getStringSet(KEY_PLAYLISTS, new java.util.HashSet<>());
+            if (oldNames != null) {
+                for (String oldName : oldNames) { editor.remove("playlist_" + oldName); }
             }
-            editor.putString("playlist_" + entry.getKey(), sb.toString());
-        }
-        editor.commit();
+            editor.putStringSet(KEY_PLAYLISTS, new java.util.HashSet<>(playlists.keySet()));
+            for (Map.Entry<String, List<Long>> entry : playlists.entrySet()) {
+                StringBuilder sb = new StringBuilder();
+                for (int i = 0; i < entry.getValue().size(); i++) {
+                    sb.append(entry.getValue().get(i));
+                    if (i < entry.getValue().size() - 1) sb.append(",");
+                }
+                editor.putString("playlist_" + entry.getKey(), sb.toString());
+            }
+            editor.commit(); // Ensure background writes finish synchronously before releasing lock
+        });
     }
     
     public void removeSongFromPlaylist(String playlistName, Song song) {
@@ -821,25 +858,40 @@ public class MusicViewModel extends AndroidViewModel {
     
     public void loadLocalMusic() {
         isLoadingLiveData.postValue(true);
-        new Thread(() -> {
+        // Changed to use executorService instead of raw Thread
+        executorService.execute(() -> {
             List<Song> local = repository.fetchLocalSongs();
             songsLiveData.postValue(local);
             syncFavoritesWithSongs(local);
             restoreLastSession(local);
             updateQueueUI();
             isLoadingLiveData.postValue(false);
-        }).start();
+        });
     }
     
     private void fetchLyricsForCurrentSong(Song song) {
         lyricsLiveData.postValue("Loading...");
-        new Thread(() -> {
+        
+        // 1. Define 'allowOnlineFetch' based on the current library mode.
+        // If mode is 0 (Local), it's false. If 1 (Cloud) or 2 (Hybrid), it's true.
+        Integer currentMode = libraryModeLiveData.getValue();
+        boolean allowOnlineFetch = (currentMode != null && currentMode != 0);
+        
+        // Alternatively, if you only want to fetch lyrics for online songs:
+        // boolean allowOnlineFetch = song.getUri().toString().startsWith("http");
+        
+        // Changed to use executorService instead of raw Thread
+        executorService.execute(() -> {
             String lyrics = com.nandu.mymusic.utils.LyricsUtils.extractLyrics(
-                    getApplication(), song.getUri(), song.getTitle(), song.getArtist()
+                    getApplication(),
+                    song.getUri(),
+                    song.getTitle(),
+                    song.getArtist(),
+                    allowOnlineFetch // 2. Pass the defined boolean variable here
             );
             if (lyrics != null) lyricsLiveData.postValue(lyrics);
             else lyricsLiveData.postValue("No lyrics found in audio or online.");
-        }).start();
+        });
     }
     
     private void restoreLastSession(List<Song> songs) {
@@ -906,6 +958,11 @@ public class MusicViewModel extends AndroidViewModel {
     
     @Override
     protected void onCleared() {
+        // Shutdown the executor service cleanly to prevent memory leaks
+        if (executorService != null) {
+            executorService.shutdown();
+        }
+        
         if (exoPlayer != null) persistLastPosition(exoPlayer.getCurrentPosition());
         super.onCleared();
         getApplication().getContentResolver().unregisterContentObserver(contentObserver);

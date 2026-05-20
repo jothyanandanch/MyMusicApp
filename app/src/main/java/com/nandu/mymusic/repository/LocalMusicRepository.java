@@ -66,7 +66,7 @@ public class LocalMusicRepository {
                 MediaStore.Audio.Media.ALBUM,
                 MediaStore.Audio.Media.DURATION,
                 MediaStore.Audio.Media.ALBUM_ID,  // needed for album art
-                MediaStore.Audio.Media.DATA        // ✅ NEW: Get file path for filtering
+                MediaStore.Audio.Media.RELATIVE_PATH       // ✅ NEW: Get file path for filtering
         };
         
         AppLog.d(AppLog.REPO, "Starting scan for music...");
@@ -79,44 +79,49 @@ public class LocalMusicRepository {
                 MediaStore.Audio.Media.TITLE + " ASC"
         );
         
-        if (cursor != null && cursor.moveToFirst()) {
-            int idCol       = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media._ID);
-            int titleCol    = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.TITLE);
-            int artistCol   = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ARTIST);
-            int albumCol    = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM);
-            int durationCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION);
-            int albumIdCol  = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM_ID);
-            int dataCol     = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DATA);  // ✅ NEW
-            
-            do {
-                long id         = cursor.getLong(idCol);
-                String title    = cursor.getString(titleCol);
-                String artist   = cursor.getString(artistCol);
-                String album    = cursor.getString(albumCol);
-                long duration   = cursor.getLong(durationCol);
-                long albumId    = cursor.getLong(albumIdCol);
-                String filePath = cursor.getString(dataCol);  // ✅ NEW: Get file path
-                
-                // ✅ FILTER: Skip recording files and folders
-                if (shouldExcludePath(filePath)) {
-                    AppLog.d(AppLog.REPO, "Skipping recording file: " + title);
-                    continue;  // Skip this file
+        if (cursor != null) {
+            try {
+                if (cursor.moveToFirst()) {
+                    int idCol       = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media._ID);
+                    int titleCol    = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.TITLE);
+                    int artistCol   = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ARTIST);
+                    int albumCol    = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM);
+                    int durationCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION);
+                    int albumIdCol  = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM_ID);
+                    int dataCol     = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.RELATIVE_PATH);  // ✅ NEW
+                    
+                    do {
+                        long id         = cursor.getLong(idCol);
+                        String title    = cursor.getString(titleCol);
+                        String artist   = cursor.getString(artistCol);
+                        String album    = cursor.getString(albumCol);
+                        long duration   = cursor.getLong(durationCol);
+                        long albumId    = cursor.getLong(albumIdCol);
+                        String filePath = cursor.getString(dataCol);  // ✅ NEW: Get file path
+                        
+                        // ✅ FILTER: Skip recording files and folders
+                        if (shouldExcludePath(filePath)) {
+                            AppLog.d(AppLog.REPO, "Skipping recording file: " + title);
+                            continue;  // Skip this file
+                        }
+                        
+                        Uri songUri     = ContentUris.withAppendedId(
+                                MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id);
+                        
+                        // Album art URI — Coil will handle null gracefully in UI
+                        Uri artUri      = ContentUris.withAppendedId(ALBUM_ART_URI, albumId);
+                        
+                        
+                        Song song = new Song(id, artist, title,album, songUri, duration, artUri);
+                        AppLog.i(AppLog.REPO, "Found: " + title + " by " + artist);
+                        songs.add(song);
+                        
+                    } while (cursor.moveToNext());
                 }
-                
-                Uri songUri     = ContentUris.withAppendedId(
-                        MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id);
-                
-                // Album art URI — Coil will handle null gracefully in UI
-                Uri artUri      = ContentUris.withAppendedId(ALBUM_ART_URI, albumId);
-                
-                
-                Song song = new Song(id, artist, title,album, songUri, duration, artUri);
-                AppLog.i(AppLog.REPO, "Found: " + title + " by " + artist);
-                songs.add(song);
-                
-            } while (cursor.moveToNext());
-            
-            cursor.close();
+            } finally {
+                // This ensures the cursor is ALWAYS closed, even if an error happens inside the loop
+                cursor.close();
+            }
         }
         
         AppLog.d(AppLog.REPO, "Scan done. Total: " + songs.size());

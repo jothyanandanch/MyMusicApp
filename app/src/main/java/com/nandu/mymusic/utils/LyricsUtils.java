@@ -22,7 +22,8 @@ import java.net.URLEncoder;
 public class LyricsUtils {
 	
 	// We added title and artist parameters so we can use them to search online!
-	public static String extractLyrics(Context context, Uri uri, String title, String artist) {
+	// Notice the 5th parameter: boolean allowOnlineFetch
+	public static String extractLyrics(Context context, Uri uri, String title, String artist, boolean allowOnlineFetch) {
 		String scheme = uri.getScheme();
 		
 		// 1. If it's an online song, skip JAudioTagger and fetch from Web API directly
@@ -60,8 +61,13 @@ public class LyricsUtils {
 			if (tempFile != null && tempFile.exists()) tempFile.delete();
 		}
 		
-		// 3. Fallback: If local file had no lyrics, try fetching online anyway
-		return fetchOnlineLyrics(title, artist);
+		// 3. Fallback: Only hit the online API if allowOnlineFetch is true!
+		if (allowOnlineFetch) {
+			return fetchOnlineLyrics(title, artist);
+		}
+		
+		// Return null if local failed and online is not allowed
+		return null;
 	}
 	
 	// Fetches lyrics from a free public API
