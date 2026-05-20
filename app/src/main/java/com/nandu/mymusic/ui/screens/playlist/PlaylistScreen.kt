@@ -1,6 +1,5 @@
 package com.nandu.mymusic.ui.screens.playlist
 
-import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -25,7 +24,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -85,12 +83,14 @@ fun PlaylistScreen(
     songs            : List<Song>,
     currentSong      : Song?,
     favoriteIds      : Set<Long>,
+    sortType         : SortType,
+    onSortChange     : (SortType) -> Unit,
+    showSnackbar     : (String) -> Unit,
     modifier         : Modifier = Modifier,
     onSongClick      : (Song) -> Unit,
     onToggleFavorite : (Song) -> Unit,
     viewModel        : MusicViewModel
 ) {
-    val context = LocalContext.current
     val customPlaylists by viewModel.customPlaylists.observeAsState(initial = emptyMap())
 
     var showLocalDetail by remember { mutableStateOf(false) }
@@ -138,6 +138,7 @@ fun PlaylistScreen(
                 TextButton(onClick = {
                     if (playlistNameToCreate.isNotBlank()) {
                         viewModel.createPlaylist(playlistNameToCreate)
+                        showSnackbar("Playlist created: $playlistNameToCreate")
                         playlistNameToCreate = ""
                         showCreateDialog = false
                     }
@@ -158,6 +159,7 @@ fun PlaylistScreen(
                 TextButton(onClick = {
                     viewModel.deletePlaylist(playlistToDelete!!)
                     if (selectedCustomPlaylist == playlistToDelete) selectedCustomPlaylist = null
+                    showSnackbar("Playlist deleted")
                     playlistToDelete = null
                 }) { Text("Delete", color = Color(0xFFFF5555), fontWeight = FontWeight.Bold) }
             },
@@ -184,6 +186,7 @@ fun PlaylistScreen(
                     if (newPlaylistName.isNotBlank() && newPlaylistName != playlistToRename) {
                         viewModel.renamePlaylist(playlistToRename!!, newPlaylistName)
                         if (selectedCustomPlaylist == playlistToRename) selectedCustomPlaylist = newPlaylistName
+                        showSnackbar("Playlist renamed to $newPlaylistName")
                     }
                     playlistToRename = null
                     newPlaylistName = ""
@@ -205,7 +208,7 @@ fun PlaylistScreen(
             onDismiss = { playlistToAddSongsTo = null },
             onAddSongs = { selectedSongs ->
                 viewModel.addSongsToPlaylist(pName, selectedSongs)
-                Toast.makeText(context, "Added ${selectedSongs.size} songs", Toast.LENGTH_SHORT).show()
+                showSnackbar("Added ${selectedSongs.size} songs to $pName")
                 playlistToAddSongsTo = null
             }
         )
@@ -219,6 +222,9 @@ fun PlaylistScreen(
             songs            = songs,
             currentSong      = currentSong,
             favoriteIds      = favoriteIds,
+            sortType         = sortType,
+            onSortChange     = onSortChange,
+            showSnackbar     = showSnackbar,
             isProtected      = true,
             onBack           = { showLocalDetail = false },
             onSongClick      = onSongClick,
@@ -229,7 +235,7 @@ fun PlaylistScreen(
             onAddToQueue     = {
                 if (songs.isNotEmpty()) {
                     viewModel.addListToQueue(songs)
-                    Toast.makeText(context, "Added ${songs.size} songs to queue", Toast.LENGTH_SHORT).show()
+                    showSnackbar("Added ${songs.size} songs to queue")
                 }
             },
             onRemoveSong     = { },
@@ -251,6 +257,9 @@ fun PlaylistScreen(
             songs            = pSongs,
             currentSong      = currentSong,
             favoriteIds      = favoriteIds,
+            sortType         = sortType,
+            onSortChange     = onSortChange,
+            showSnackbar     = showSnackbar,
             isProtected      = false,
             onBack           = { selectedCustomPlaylist = null },
             onSongClick      = { song -> viewModel.playSong(song, pSongs) },
@@ -261,11 +270,11 @@ fun PlaylistScreen(
             onAddToQueue     = {
                 if (pSongs.isNotEmpty()) {
                     viewModel.addListToQueue(pSongs)
-                    Toast.makeText(context, "Added ${pSongs.size} songs to queue", Toast.LENGTH_SHORT).show()
+                    showSnackbar("Added ${pSongs.size} songs to queue")
                 }
             },
-            onRemoveSong     = { song -> viewModel.removeSongFromPlaylist(pName, song) },
-            onRemoveSongs    = { list -> list.forEach { viewModel.removeSongFromPlaylist(pName, it) } },
+            onRemoveSong     = { song -> viewModel.removeSongFromPlaylist(pName, song); showSnackbar("Removed 1 song") },
+            onRemoveSongs    = { list -> list.forEach { viewModel.removeSongFromPlaylist(pName, it) }; showSnackbar("Removed ${list.size} songs") },
             onDeletePlaylist = { playlistToDelete = pName },
             onRenamePlaylist = {
                 newPlaylistName = pName
@@ -285,35 +294,18 @@ fun PlaylistScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    "Your Playlists",
-                    color = SpotifyWhite,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 20.sp
-                )
+                Text("Your Playlists", color = SpotifyWhite, fontWeight = FontWeight.Bold, fontSize = 20.sp)
                 IconButton(onClick = { showCreateDialog = true }) {
                     Icon(Icons.Filled.Add, "Create Playlist", tint = SpotifyWhite)
                 }
             }
         }
 
-        item {
-            PlaylistCard(
-                name        = "Local",
-                songCount   = songs.size,
-                isProtected = true,
-                onClick     = { showLocalDetail = true }
-            )
-        }
+        item { PlaylistCard(name = "Local", songCount = songs.size, isProtected = true, onClick = { showLocalDetail = true }) }
 
         items(customPlaylists.entries.toList(), key = { it.key }) { (name, ids) ->
             val pSongs = songs.filter { ids.contains(it.id) }
-            PlaylistCard(
-                name        = name,
-                songCount   = ids.size,
-                isProtected = false,
-                onClick     = { selectedCustomPlaylist = name }
-            )
+            PlaylistCard(name = name, songCount = ids.size, isProtected = false, onClick = { selectedCustomPlaylist = name })
         }
         item { Spacer(Modifier.height(16.dp)) }
     }
@@ -328,21 +320,14 @@ fun PlaylistCard(
     onClick     : () -> Unit
 ) {
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onClick() }
-            .padding(horizontal = 16.dp, vertical = 10.dp),
+        modifier = Modifier.fillMaxWidth().clickable { onClick() }.padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(
-            modifier = Modifier
-                .size(64.dp)
-                .clip(RoundedCornerShape(6.dp))
+            modifier = Modifier.size(64.dp).clip(RoundedCornerShape(6.dp))
                 .background(Brush.linearGradient(listOf(Color(0xFF1DB954), Color(0xFF158A3E)))),
             contentAlignment = Alignment.Center
-        ) {
-            Icon(Icons.Filled.LibraryMusic, null, tint = Color.White, modifier = Modifier.size(32.dp))
-        }
+        ) { Icon(Icons.Filled.LibraryMusic, null, tint = Color.White, modifier = Modifier.size(32.dp)) }
         Column(modifier = Modifier.padding(start = 16.dp).weight(1f)) {
             Text(name, color = SpotifyWhite, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
             Text("$songCount song${if (songCount != 1) "s" else ""} ${if (isProtected) "· Device" else "· Custom"}", color = SpotifyGray, fontSize = 12.sp)
@@ -358,6 +343,9 @@ fun PlaylistDetailView(
     songs            : List<Song>,
     currentSong      : Song?,
     favoriteIds      : Set<Long>,
+    sortType         : SortType,
+    onSortChange     : (SortType) -> Unit,
+    showSnackbar     : (String) -> Unit,
     isProtected      : Boolean,
     onBack           : () -> Unit,
     onSongClick      : (Song) -> Unit,
@@ -371,13 +359,9 @@ fun PlaylistDetailView(
     onDeletePlaylist : () -> Unit,
     onRenamePlaylist : () -> Unit
 ) {
-    var sortType by remember { mutableStateOf(SortType.DEFAULT) }
-
-    // ✅ Edit Mode State
     var isEditMode by remember { mutableStateOf(false) }
     var selectedSongsToRemove by remember { mutableStateOf(setOf<Song>()) }
 
-    // Cancel edit mode when using physical back button
     BackHandler(enabled = isEditMode) {
         isEditMode = false
         selectedSongsToRemove = emptySet()
@@ -395,66 +379,39 @@ fun PlaylistDetailView(
     LazyColumn(modifier = Modifier.fillMaxSize().background(SpotifyBlack)) {
         item {
             Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(240.dp)
+                modifier = Modifier.fillMaxWidth().height(240.dp)
                     .background(Brush.verticalGradient(listOf(Color(0xFF1DB954), Color(0xFF0D5C2E), SpotifyBlack)))
             ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(8.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+                Row(modifier = Modifier.fillMaxWidth().padding(8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     IconButton(onClick = {
                         if (isEditMode) {
                             isEditMode = false
                             selectedSongsToRemove = emptySet()
-                        } else {
-                            onBack()
-                        }
-                    }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = SpotifyWhite, modifier = Modifier.size(24.dp))
-                    }
+                        } else { onBack() }
+                    }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = SpotifyWhite, modifier = Modifier.size(24.dp)) }
 
-                    // ✅ Top Right Actions (Rename/Delete OR Cancel/Delete-Selected)
                     if (isEditMode) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            TextButton(onClick = { isEditMode = false; selectedSongsToRemove = emptySet() }) {
-                                Text("Cancel", color = SpotifyWhite)
-                            }
+                            TextButton(onClick = { isEditMode = false; selectedSongsToRemove = emptySet() }) { Text("Cancel", color = SpotifyWhite) }
                             TextButton(
-                                onClick = {
-                                    onRemoveSongs(selectedSongsToRemove.toList())
-                                    isEditMode = false
-                                    selectedSongsToRemove = emptySet()
-                                },
+                                onClick = { onRemoveSongs(selectedSongsToRemove.toList()); isEditMode = false; selectedSongsToRemove = emptySet() },
                                 enabled = selectedSongsToRemove.isNotEmpty()
-                            ) {
-                                Text("Delete (${selectedSongsToRemove.size})", color = if (selectedSongsToRemove.isNotEmpty()) Color(0xFFFF5555) else SpotifyGray, fontWeight = FontWeight.Bold)
-                            }
+                            ) { Text("Delete (${selectedSongsToRemove.size})", color = if (selectedSongsToRemove.isNotEmpty()) Color(0xFFFF5555) else SpotifyGray, fontWeight = FontWeight.Bold) }
                         }
                     } else if (!isProtected) {
                         Row {
-                            IconButton(onClick = onRenamePlaylist) {
-                                Icon(Icons.Filled.Edit, "Rename", tint = SpotifyWhite, modifier = Modifier.size(24.dp))
-                            }
-                            IconButton(onClick = onDeletePlaylist) {
-                                Icon(Icons.Filled.Delete, "Delete", tint = SpotifyWhite, modifier = Modifier.size(24.dp))
-                            }
+                            IconButton(onClick = onRenamePlaylist) { Icon(Icons.Filled.Edit, "Rename", tint = SpotifyWhite, modifier = Modifier.size(24.dp)) }
+                            IconButton(onClick = onDeletePlaylist) { Icon(Icons.Filled.Delete, "Delete", tint = SpotifyWhite, modifier = Modifier.size(24.dp)) }
                         }
                     }
                 }
 
-                Column(
-                    modifier = Modifier.align(Alignment.BottomStart).padding(horizontal = 24.dp, vertical = 24.dp)
-                ) {
+                Column(modifier = Modifier.align(Alignment.BottomStart).padding(horizontal = 24.dp, vertical = 24.dp)) {
                     Box(
                         modifier = Modifier.size(96.dp).clip(RoundedCornerShape(4.dp))
                             .background(Brush.linearGradient(listOf(Color(0xFF1DB954), Color(0xFF158A3E)))),
                         contentAlignment = Alignment.Center
-                    ) {
-                        Icon(Icons.Filled.LibraryMusic, null, tint = Color.White, modifier = Modifier.size(52.dp))
-                    }
+                    ) { Icon(Icons.Filled.LibraryMusic, null, tint = Color.White, modifier = Modifier.size(52.dp)) }
                     Spacer(Modifier.height(12.dp))
                     Text(playlistName, color = SpotifyWhite, fontWeight = FontWeight.Bold, fontSize = 28.sp)
                     Text("${songs.size} song${if (songs.size != 1) "s" else ""}", color = SpotifyGray, fontSize = 13.sp)
@@ -463,11 +420,7 @@ fun PlaylistDetailView(
         }
 
         item {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
+            Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     if (isProtected) {
                         Icon(Icons.Filled.Lock, null, tint = SpotifyGray, modifier = Modifier.size(16.dp))
@@ -476,36 +429,20 @@ fun PlaylistDetailView(
                     }
                 }
 
-                // ✅ Middle Action Row (Add Songs, EDIT SONGS, Add to Queue, Sort, Shuffle)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     if (!isProtected) {
-                        IconButton(onClick = onAddSong) {
-                            Icon(Icons.Filled.AddCircleOutline, "Add Songs", tint = SpotifyGray)
-                        }
-
-                        // NEW: Edit playlist songs button
-                        IconButton(onClick = {
-                            isEditMode = !isEditMode
-                            if (!isEditMode) selectedSongsToRemove = emptySet()
-                        }) {
+                        IconButton(onClick = onAddSong) { Icon(Icons.Filled.AddCircleOutline, "Add Songs", tint = SpotifyGray) }
+                        IconButton(onClick = { isEditMode = !isEditMode; if (!isEditMode) selectedSongsToRemove = emptySet() }) {
                             Icon(Icons.Filled.Checklist, "Select Songs", tint = if (isEditMode) SpotifyGreen else SpotifyGray)
                         }
                     }
-
-                    IconButton(onClick = onAddToQueue) {
-                        Icon(Icons.AutoMirrored.Filled.PlaylistAdd, "Add to Queue", tint = SpotifyGray)
-                    }
-
-                    SortMenu(sortType = sortType, onSortChange = { sortType = it })
-
+                    IconButton(onClick = onAddToQueue) { Icon(Icons.AutoMirrored.Filled.PlaylistAdd, "Add to Queue", tint = SpotifyGray) }
+                    SortMenu(sortType = sortType, onSortChange = onSortChange)
                     Spacer(Modifier.width(8.dp))
-
                     Box(
                         modifier = Modifier.size(56.dp).clip(RoundedCornerShape(50)).background(SpotifyGreen).clickable { onShufflePlay() },
                         contentAlignment = Alignment.Center
-                    ) {
-                        Icon(Icons.Filled.Shuffle, "Shuffle Play", tint = Color.Black, modifier = Modifier.size(28.dp))
-                    }
+                    ) { Icon(Icons.Filled.Shuffle, "Shuffle Play", tint = Color.Black, modifier = Modifier.size(28.dp)) }
                 }
             }
         }
@@ -515,25 +452,18 @@ fun PlaylistDetailView(
         } else {
             itemsIndexed(displaySongs) { index, song ->
                 val isSelected = selectedSongsToRemove.contains(song)
-
                 PlaylistSongItem(
                     index            = index,
                     song             = song,
                     isCurrentSong    = song.id == currentSong?.id,
                     isFavorite       = favoriteIds.contains(song.id),
                     isProtected      = isProtected,
-                    isEditMode       = isEditMode,    // Passing state down
+                    isEditMode       = isEditMode,
                     isSelected       = isSelected,
                     onClick          = {
                         if (isEditMode) {
-                            selectedSongsToRemove = if (isSelected) {
-                                selectedSongsToRemove - song
-                            } else {
-                                selectedSongsToRemove + song
-                            }
-                        } else {
-                            onSongClick(song)
-                        }
+                            selectedSongsToRemove = if (isSelected) selectedSongsToRemove - song else selectedSongsToRemove + song
+                        } else { onSongClick(song) }
                     },
                     onToggleFavorite = { onToggleFavorite(song) },
                     onRemoveSong     = { onRemoveSong(song) }
@@ -562,38 +492,20 @@ fun PlaylistSongItem(
     var showMenu by remember { mutableStateOf(false) }
 
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .combinedClickable(
-                onClick = { onClick() },
-                onLongClick = { if (!isEditMode) showMenu = true }
-            )
-            .background(
-                if (isCurrentSong && !isEditMode) SpotifySurface
-                else if (isSelected) SpotifySurface2
-                else Color.Transparent
-            )
+        modifier = Modifier.fillMaxWidth().combinedClickable(onClick = { onClick() }, onLongClick = { if (!isEditMode) showMenu = true })
+            .background(if (isCurrentSong && !isEditMode) SpotifySurface else if (isSelected) SpotifySurface2 else Color.Transparent)
             .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // ✅ Switch between Index Number and Checkbox
         if (isEditMode) {
-            Icon(
-                imageVector = if (isSelected) Icons.Filled.CheckCircle else Icons.Outlined.Circle,
-                contentDescription = "Select",
-                tint = if (isSelected) SpotifyGreen else SpotifyGray,
-                modifier = Modifier.size(24.dp)
-            )
+            Icon(imageVector = if (isSelected) Icons.Filled.CheckCircle else Icons.Outlined.Circle, contentDescription = "Select", tint = if (isSelected) SpotifyGreen else SpotifyGray, modifier = Modifier.size(24.dp))
             Spacer(Modifier.width(8.dp))
         } else {
             Text(text = "${index + 1}", color = if (isCurrentSong) SpotifyGreen else SpotifyGray, fontSize = 13.sp, modifier = Modifier.width(24.dp))
             Spacer(Modifier.width(8.dp))
         }
 
-        Box(
-            modifier = Modifier.size(48.dp).clip(RoundedCornerShape(4.dp)).background(SpotifySurface2),
-            contentAlignment = Alignment.Center
-        ) {
+        Box(modifier = Modifier.size(48.dp).clip(RoundedCornerShape(4.dp)).background(SpotifySurface2), contentAlignment = Alignment.Center) {
             Icon(Icons.Filled.MusicNote, null, tint = if (isCurrentSong) SpotifyGreen else SpotifyGray, modifier = Modifier.size(24.dp))
         }
 
@@ -602,23 +514,16 @@ fun PlaylistSongItem(
             Text(song.artist, color = SpotifyGray, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
 
-        // Hide secondary actions when in edit mode
         if (!isEditMode) {
             IconButton(onClick = onToggleFavorite, modifier = Modifier.size(36.dp)) {
-                Icon(
-                    imageVector = if (isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
-                    contentDescription = "Like", tint = if (isFavorite) SpotifyGreen else SpotifyGray, modifier = Modifier.size(18.dp)
-                )
+                Icon(imageVector = if (isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder, contentDescription = "Like", tint = if (isFavorite) SpotifyGreen else SpotifyGray, modifier = Modifier.size(18.dp))
             }
 
             Text(formatDuration(song.duration), color = SpotifyGray, fontSize = 12.sp)
             Spacer(Modifier.width(4.dp))
 
             Box {
-                IconButton(onClick = { showMenu = true }, modifier = Modifier.size(32.dp)) {
-                    Icon(Icons.Filled.MoreVert, "More Options", tint = SpotifyGray, modifier = Modifier.size(20.dp))
-                }
-
+                IconButton(onClick = { showMenu = true }, modifier = Modifier.size(32.dp)) { Icon(Icons.Filled.MoreVert, "More Options", tint = SpotifyGray, modifier = Modifier.size(20.dp)) }
                 DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }, modifier = Modifier.background(SpotifySurface2)) {
                     DropdownMenuItem(text = { Text("Song Info", color = SpotifyWhite) }, onClick = { showMenu = false })
                     if (!isProtected) {
@@ -642,86 +547,34 @@ fun AddSongsScreen(
     var selectedSongs by remember { mutableStateOf(setOf<Song>()) }
 
     Column(modifier = Modifier.fillMaxSize().background(SpotifyBlack)) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 12.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            IconButton(onClick = onDismiss) {
-                Icon(Icons.Filled.Close, "Cancel", tint = SpotifyWhite)
-            }
-            Text(
-                text = "Add to $playlistName",
-                color = SpotifyWhite,
-                fontWeight = FontWeight.Bold,
-                fontSize = 18.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f).padding(horizontal = 8.dp)
-            )
-            TextButton(
-                onClick = { onAddSongs(selectedSongs.toList()) },
-                enabled = selectedSongs.isNotEmpty()
-            ) {
-                Text(
-                    text = if (selectedSongs.isEmpty()) "Add" else "Add (${selectedSongs.size})",
-                    color = if (selectedSongs.isNotEmpty()) SpotifyGreen else SpotifyGray,
-                    fontWeight = FontWeight.Bold
-                )
+        Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onDismiss) { Icon(Icons.Filled.Close, "Cancel", tint = SpotifyWhite) }
+            Text(text = "Add to $playlistName", color = SpotifyWhite, fontWeight = FontWeight.Bold, fontSize = 18.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).padding(horizontal = 8.dp))
+            TextButton(onClick = { onAddSongs(selectedSongs.toList()) }, enabled = selectedSongs.isNotEmpty()) {
+                Text(text = if (selectedSongs.isEmpty()) "Add" else "Add (${selectedSongs.size})", color = if (selectedSongs.isNotEmpty()) SpotifyGreen else SpotifyGray, fontWeight = FontWeight.Bold)
             }
         }
 
         if (availableSongs.isEmpty()) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("All your songs are already in this playlist!", color = SpotifyGray)
-            }
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("All your songs are already in this playlist!", color = SpotifyGray) }
         } else {
             LazyColumn(modifier = Modifier.fillMaxSize()) {
                 items(availableSongs, key = { it.id }) { song ->
                     val isSelected = selectedSongs.contains(song)
 
                     Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable {
-                                selectedSongs = if (isSelected) selectedSongs - song else selectedSongs + song
-                            }
-                            .background(if (isSelected) SpotifySurface2 else Color.Transparent)
-                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                        modifier = Modifier.fillMaxWidth().clickable { selectedSongs = if (isSelected) selectedSongs - song else selectedSongs + song }
+                            .background(if (isSelected) SpotifySurface2 else Color.Transparent).padding(horizontal = 16.dp, vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        AlbumArt(
-                            audioUri = song.uri,
-                            isActive = isSelected,
-                            size = 48.dp,
-                            cornerRadius = 4.dp
-                        )
-
+                        AlbumArt(audioUri = song.uri, isActive = isSelected, size = 48.dp, cornerRadius = 4.dp)
                         Spacer(Modifier.width(12.dp))
-
                         Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = song.title,
-                                color = SpotifyWhite,
-                                fontWeight = FontWeight.SemiBold,
-                                fontSize = 14.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            Text(
-                                text = song.artist,
-                                color = SpotifyGray,
-                                fontSize = 12.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
+                            Text(text = song.title, color = SpotifyWhite, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(text = song.artist, color = SpotifyGray, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
-
-                        if (isSelected) {
-                            Icon(Icons.Filled.CheckCircle, "Selected", tint = SpotifyGreen, modifier = Modifier.size(24.dp))
-                        } else {
-                            Icon(Icons.Outlined.Circle, "Select", tint = SpotifyGray, modifier = Modifier.size(24.dp))
-                        }
+                        if (isSelected) { Icon(Icons.Filled.CheckCircle, "Selected", tint = SpotifyGreen, modifier = Modifier.size(24.dp)) }
+                        else { Icon(Icons.Outlined.Circle, "Select", tint = SpotifyGray, modifier = Modifier.size(24.dp)) }
                     }
                     HorizontalDivider(color = SpotifySurface, thickness = 0.5.dp)
                 }

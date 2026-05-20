@@ -65,7 +65,7 @@ fun AlbumArt(
         // 4. Otherwise, it's local
         else {
             // Coil automatically handles MediaStore audio URIs to extract embedded offline album art
-            imageUrl = audioUri
+            imageUrl = song?.albumArtUri ?: audioUri
         }
     }
 

@@ -10,10 +10,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -38,12 +35,12 @@ fun FavoritesScreen(
     favorites        : List<Song>,
     currentSong      : Song?,
     favoriteIds      : Set<Long>,
+    sortType         : SortType,
+    onSortChange     : (SortType) -> Unit,
     modifier         : Modifier = Modifier,
     onSongClick      : (Song) -> Unit,
     onToggleFavorite : (Song) -> Unit
 ) {
-    var sortType by remember { mutableStateOf(SortType.DEFAULT) }
-
     val displayFavorites = remember(favorites, sortType) {
         when (sortType) {
             SortType.DEFAULT -> favorites
@@ -73,7 +70,6 @@ fun FavoritesScreen(
                 contentAlignment = Alignment.BottomStart
             ) {
                 Column(modifier = Modifier.padding(bottom = 24.dp)) {
-                    // Purple heart icon box (Spotify's exact Liked Songs artwork style)
                     Box(
                         modifier = Modifier
                             .size(96.dp)
@@ -109,11 +105,10 @@ fun FavoritesScreen(
                 verticalAlignment     = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                SortMenu(sortType =sortType,onSortChange={sortType = it})
+                SortMenu(sortType = sortType, onSortChange = onSortChange)
                 IconButton(onClick = {}, modifier = Modifier.size(36.dp)) {
                     Icon(Icons.Filled.MoreVert, null, tint = SpotifyGray)
                 }
-                // Big green shuffle/play circle
                 Box(
                     modifier = Modifier
                         .size(56.dp)
@@ -189,7 +184,6 @@ fun FavoritesScreen(
                         Text(song.artist, color = SpotifyGray, fontSize = 12.sp,
                             maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
-                    // Heart — always green/filled here since this IS the favorites list
                     IconButton(
                         onClick  = { onToggleFavorite(song) },
                         modifier = Modifier.size(36.dp)
@@ -207,7 +201,6 @@ fun FavoritesScreen(
                 HorizontalDivider(color = SpotifySurface, thickness = 0.5.dp)
             }
         }
-
         item { Spacer(Modifier.height(16.dp)) }
     }
 }

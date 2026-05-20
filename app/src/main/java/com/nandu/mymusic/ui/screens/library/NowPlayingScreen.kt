@@ -78,14 +78,17 @@ fun NowPlayingScreen(
     onQueueItemReorder: (Int, Int) -> Unit,
     onAddToPlaylist  : () -> Unit = {},
     onAddToQueue     : () -> Unit = {},
-    onDelete         : () -> Unit = {}
+    onDelete         : () -> Unit = {},
+    onViewAlbum      : () -> Unit = {}, // ✅ NEW
+    onViewArtist     : () -> Unit = {}, // ✅ NEW
+    onDownload       : () -> Unit = {}  // ✅ NEW
 ) {
-    val rawFraction =
-        if (duration > 0) (progress.toFloat() / duration.toFloat()).coerceIn(0f, 1f) else 0f
+    val rawFraction = if (duration > 0) (progress.toFloat() / duration.toFloat()).coerceIn(0f, 1f) else 0f
 
     var showQueueSheet by remember { mutableStateOf(false) }
     var showLyricsView by remember { mutableStateOf(false) }
     var showMenu by remember { mutableStateOf(false) }
+    val isOnline = song.uri.toString().startsWith("http") // ✅ NEW: Check if Online
 
     val coroutineScope = rememberCoroutineScope()
     val offsetY = remember { Animatable(0f) }
@@ -97,75 +100,58 @@ fun NowPlayingScreen(
             .graphicsLayer { translationY = offsetY.value; alpha = (1f - (offsetY.value / 600f)).coerceIn(0f, 1f) }
             .pointerInput(Unit) {
                 detectVerticalDragGestures(
-                    onDragEnd = {
-                        if (offsetY.value > 400f) {
-                            onBack()
-                        } else {
-                            coroutineScope.launch { offsetY.animateTo(0f) }
-                        }
-                    },
-                    onVerticalDrag = { change, dragAmount ->
-                        change.consume()
-                        val newOffset = (offsetY.value + dragAmount).coerceAtLeast(0f)
-                        coroutineScope.launch { offsetY.snapTo(newOffset) }
-                    }
+                    onDragEnd = { if (offsetY.value > 400f) onBack() else coroutineScope.launch { offsetY.animateTo(0f) } },
+                    onVerticalDrag = { change, dragAmount -> change.consume(); val newOffset = (offsetY.value + dragAmount).coerceAtLeast(0f); coroutineScope.launch { offsetY.snapTo(newOffset) } }
                 )
             }
     ) {
-        Column(
-            modifier = Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(horizontal = 24.dp),
-            verticalArrangement = Arrangement.SpaceBetween
-        ) {
+        Column(modifier = Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(horizontal = 24.dp), verticalArrangement = Arrangement.SpaceBetween) {
+
             // ── TOP BAR ────────────────────────────────────────────────
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(top = 16.dp, bottom = 8.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
+            Row(modifier = Modifier.fillMaxWidth().padding(top = 16.dp, bottom = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = onBack) { Icon(Icons.Filled.KeyboardArrowDown, "Collapse", tint = SpotifyWhite, modifier = Modifier.size(32.dp)) }
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text("PLAYING FROM YOUR LIBRARY", color = SpotifyGray, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-                    Text("All Songs", color = SpotifyWhite, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                    Text(song.album ?: "Unknown Album", color = SpotifyWhite, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
                 Box {
                     IconButton(onClick = { showMenu = true }) { Icon(Icons.Filled.MoreVert, "More", tint = SpotifyWhite, modifier = Modifier.size(24.dp)) }
                     DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }, modifier = Modifier.background(SpotifySurface2)) {
+                        // ✅ View Options added here
+                        DropdownMenuItem(text = { Text("View Album", color = SpotifyWhite) }, onClick = { showMenu = false; onViewAlbum() })
+                        DropdownMenuItem(text = { Text("View Artist", color = SpotifyWhite) }, onClick = { showMenu = false; onViewArtist() })
+
                         DropdownMenuItem(text = { Text("Add to Playlist", color = SpotifyWhite) }, onClick = { showMenu = false; onAddToPlaylist() })
                         DropdownMenuItem(text = { Text("Add to Queue", color = SpotifyWhite) }, onClick = { showMenu = false; onAddToQueue() })
-                        DropdownMenuItem(text = { Text("Delete Song", color = Color(0xFFFF5555)) }, onClick = { showMenu = false; onDelete() })
+
+                        // ✅ Conditionally add Download vs Delete
+                        if (isOnline) {
+                            DropdownMenuItem(text = { Text("Download Song", color = SpotifyWhite) }, onClick = { showMenu = false; onDownload() })
+                        } else {
+                            DropdownMenuItem(text = { Text("Delete Song", color = Color(0xFFFF5555)) }, onClick = { showMenu = false; onDelete() })
+                        }
                     }
                 }
             }
 
             // ── DYNAMIC MIDDLE SECTION: ALBUM ART vs LYRICS ────────────────
-            Crossfade(
-                targetState = showLyricsView,
-                animationSpec = tween(400),
-                modifier = Modifier.fillMaxWidth().weight(1f).padding(vertical = 12.dp),
-                label = "LyricsTransition"
-            ) { isLyricsMode ->
+            Crossfade(targetState = showLyricsView, animationSpec = tween(400), modifier = Modifier.fillMaxWidth().weight(1f).padding(vertical = 12.dp), label = "LyricsTransition") { isLyricsMode ->
                 if (isLyricsMode) {
-                    // ✅ COMPACT HEADER + LYRICS VIEW
                     Column(modifier = Modifier.fillMaxSize()) {
                         Row(modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                            // ✅ Passed 'song = song'
                             AlbumArt(song = song, audioUri = song.uri, isActive = true, size = 64.dp, cornerRadius = 8.dp)
                             Spacer(modifier = Modifier.width(16.dp))
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(song.title, color = SpotifyWhite, fontWeight = FontWeight.Bold, fontSize = 20.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 Text(song.artist, color = SpotifyGray, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
-                            IconButton(onClick = onToggleFavorite) {
-                                Icon(imageVector = if (isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder, contentDescription = "Like", tint = if (isFavorite) SpotifyGreen else SpotifyWhite)
-                            }
+                            IconButton(onClick = onToggleFavorite) { Icon(imageVector = if (isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder, contentDescription = "Like", tint = if (isFavorite) SpotifyGreen else SpotifyWhite) }
                         }
                         SyncedLyricsView(lyricsText = lyrics, progress = progress, onSeek = onSeek, modifier = Modifier.fillMaxSize())
                     }
                 } else {
-                    // ✅ STANDARD HUGE ALBUM ART + INFO
                     Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center) {
                         Box(modifier = Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(12.dp)).background(SpotifySurface2), contentAlignment = Alignment.Center) {
-                            // ✅ Passed 'song = song'
                             AlbumArt(song = song, audioUri = song.uri, isActive = true, size = null, cornerRadius = 12.dp)
                         }
                         Spacer(modifier = Modifier.height(32.dp))
@@ -175,9 +161,7 @@ fun NowPlayingScreen(
                                 Spacer(Modifier.height(4.dp))
                                 Text(song.artist, color = SpotifyGray, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
-                            IconButton(onClick = onToggleFavorite) {
-                                Icon(imageVector = if (isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder, contentDescription = "Like", tint = if (isFavorite) SpotifyGreen else SpotifyWhite, modifier = Modifier.size(26.dp))
-                            }
+                            IconButton(onClick = onToggleFavorite) { Icon(imageVector = if (isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder, contentDescription = "Like", tint = if (isFavorite) SpotifyGreen else SpotifyWhite, modifier = Modifier.size(26.dp)) }
                         }
                     }
                 }
@@ -202,9 +186,7 @@ fun NowPlayingScreen(
                                 onDragCancel = { isDragging = false }
                             )
                         }
-                        .pointerInput(duration) {
-                            detectTapGestures { offset -> val tapped = (offset.x / size.width).coerceIn(0f, 1f); dragFraction = tapped; onSeek((tapped * duration).toLong()) }
-                        },
+                        .pointerInput(duration) { detectTapGestures { offset -> val tapped = (offset.x / size.width).coerceIn(0f, 1f); dragFraction = tapped; onSeek((tapped * duration).toLong()) } },
                     contentAlignment = Alignment.CenterStart
                 ) {
                     val trackWidthDp = this.maxWidth
@@ -222,18 +204,14 @@ fun NowPlayingScreen(
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     IconButton(onClick = onToggleShuffle) { Icon(Icons.Filled.Shuffle, "Shuffle", tint = if (shuffleMode) SpotifyGreen else SpotifyGray, modifier = Modifier.size(22.dp)) }
                     IconButton(onClick = onPrevious, modifier = Modifier.size(48.dp)) { Icon(Icons.Filled.SkipPrevious, "Previous", tint = SpotifyWhite, modifier = Modifier.size(38.dp)) }
-                    Box(modifier = Modifier.size(64.dp).clip(CircleShape).background(SpotifyWhite), contentAlignment = Alignment.Center) {
-                        IconButton(onClick = onTogglePlayPause) { Icon(imageVector = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow, contentDescription = "Play/Pause", tint = SpotifyBlack, modifier = Modifier.size(38.dp)) }
-                    }
+                    Box(modifier = Modifier.size(64.dp).clip(CircleShape).background(SpotifyWhite), contentAlignment = Alignment.Center) { IconButton(onClick = onTogglePlayPause) { Icon(imageVector = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow, contentDescription = "Play/Pause", tint = SpotifyBlack, modifier = Modifier.size(38.dp)) } }
                     IconButton(onClick = onNext, modifier = Modifier.size(48.dp)) { Icon(Icons.Filled.SkipNext, "Next", tint = SpotifyWhite, modifier = Modifier.size(38.dp)) }
                     IconButton(onClick = onToggleRepeat) { Icon(imageVector = if (repeatMode == Player.REPEAT_MODE_ONE) Icons.Filled.RepeatOne else Icons.Filled.Repeat, contentDescription = "Repeat", tint = if (repeatMode != Player.REPEAT_MODE_OFF) SpotifyGreen else SpotifyGray, modifier = Modifier.size(22.dp)) }
                 }
 
                 Row(modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     IconButton(onClick = {}) { Icon(Icons.Filled.DevicesOther, "Devices", tint = SpotifyGray, modifier = Modifier.size(22.dp)) }
-                    IconButton(onClick = { showLyricsView = !showLyricsView }) {
-                        Icon(imageVector = Icons.Filled.Lyrics, contentDescription = "Lyrics", tint = if (showLyricsView) SpotifyGreen else SpotifyWhite, modifier = Modifier.size(22.dp))
-                    }
+                    IconButton(onClick = { showLyricsView = !showLyricsView }) { Icon(imageVector = Icons.Filled.Lyrics, contentDescription = "Lyrics", tint = if (showLyricsView) SpotifyGreen else SpotifyWhite, modifier = Modifier.size(22.dp)) }
                     IconButton(onClick = { showQueueSheet = true }) { Icon(Icons.AutoMirrored.Filled.QueueMusic, "Queue", tint = SpotifyWhite, modifier = Modifier.size(22.dp)) }
                 }
             }
@@ -242,12 +220,7 @@ fun NowPlayingScreen(
 
     if (showQueueSheet) {
         val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
-        ModalBottomSheet(
-            onDismissRequest = { showQueueSheet = false },
-            sheetState = sheetState,
-            containerColor = SpotifySurface,
-            dragHandle = { BottomSheetDefaults.DragHandle(color = SpotifyGray) }
-        ) {
+        ModalBottomSheet(onDismissRequest = { showQueueSheet = false }, sheetState = sheetState, containerColor = SpotifySurface, dragHandle = { BottomSheetDefaults.DragHandle(color = SpotifyGray) }) {
             Box(modifier = Modifier.fillMaxWidth().fillMaxHeight(0.9f)) {
                 QueueContent(queue = queue, currentSong = song, onSongClick = onQueueItemClick, onSongRemove = onQueueItemRemove, onSongsRemove = onQueueItemsRemove, onSongReorder = onQueueItemReorder, isFullyExpanded = sheetState.currentValue == SheetValue.Expanded)
             }
@@ -255,6 +228,7 @@ fun NowPlayingScreen(
     }
 }
 
+// ─── Downstream Queueing logic is the same (Skipping SyncedLyricsView/QueueContent implementations for brevity, keep the exact original methods) ─────────
 @Composable
 fun SyncedLyricsView(lyricsText: String?, progress: Long, onSeek: (Long) -> Unit, modifier: Modifier = Modifier) {
     val lyricsLines = remember(lyricsText) { parseLrc(lyricsText) }

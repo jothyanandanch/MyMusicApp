@@ -14,7 +14,7 @@ android {
         minSdk = 24
         targetSdk = 35
         versionCode = 2
-        versionName = "2.0"
+        versionName = "2.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -56,6 +56,7 @@ dependencies {
     implementation("com.google.firebase:firebase-firestore:24.10.0")
 
     implementation(libs.androidx.foundation)
+    implementation(libs.androidx.foundation.layout)
     debugImplementation("androidx.compose.ui:ui-tooling:1.7.0")
 
     // Material3 (1.3.0)

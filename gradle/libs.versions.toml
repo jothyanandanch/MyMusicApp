@@ -16,6 +16,7 @@ uiVersion = "1.11.1"
 googleGmsGoogleServices = "4.4.4"
 firebaseStorage = "22.0.1"
 foundation = "1.11.1"
+foundationLayout = "1.11.2"
 
 [libraries]
 junit = { group = "junit", name = "junit", version.ref = "junit" }
@@ -32,6 +33,7 @@ runtime-livedata = { group = "androidx.compose.runtime", name = "runtime-livedat
 androidx-ui = { group = "androidx.compose.ui", name = "ui", version.ref = "uiVersion" }
 firebase-storage = { group = "com.google.firebase", name = "firebase-storage", version.ref = "firebaseStorage" }
 androidx-foundation = { group = "androidx.compose.foundation", name = "foundation", version.ref = "foundation" }
+androidx-foundation-layout = { group = "androidx.compose.foundation", name = "foundation-layout", version.ref = "foundationLayout" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
