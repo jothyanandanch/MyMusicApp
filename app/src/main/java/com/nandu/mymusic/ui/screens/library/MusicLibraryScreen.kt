@@ -86,7 +86,6 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
     val libraryMode by viewModel.libraryMode.observeAsState(initial = 0)
     val isDataSaverMode by viewModel.dataSaverMode.observeAsState(initial = true)
 
-    // ✅ OBSERVE THE GLOBAL SORT TYPE
     val savedSortTypeStr by viewModel.sortType.observeAsState(initial = "DEFAULT")
     val persistentSortType = remember(savedSortTypeStr) {
         try { SortType.valueOf(savedSortTypeStr) } catch(e: Exception) { SortType.DEFAULT }
@@ -120,13 +119,15 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
     val showNowPlaying by viewModel.isNowPlayingOpen().observeAsState(false)
     val currentLyrics by viewModel.lyrics.observeAsState("Loading...")
 
+    val isSleepTimerActive by viewModel.isSleepTimerActive.observeAsState(false)
+    val sleepTimerRemainingMs by viewModel.sleepTimerRemaining.observeAsState(0L) // ✅ NEW OBSERVER
+
     val tabHistory = remember { mutableStateListOf(0) }
     var selectedTab by remember { mutableIntStateOf(0) }
     var backPressedTime by remember { mutableStateOf(0L) }
     val viewStack = remember { mutableStateListOf<CollectionView>() }
     val context = LocalContext.current
 
-    // ✅ Snackbar state for the "small bottom label" effect
     val snackbarHostState = remember { SnackbarHostState() }
     val coroutineScope = rememberCoroutineScope()
     val showSnackbar: (String) -> Unit = { msg ->
@@ -257,19 +258,18 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
         )
     }
 
-    // ✅ MASTER BOX: Wraps Scaffold, NowPlayingScreen, and SnackbarHost
     Box(modifier = Modifier.fillMaxSize()) {
 
         // LAYER 1: Main Scaffold
         Scaffold(
             containerColor = SpotifyBlack,
             topBar = {
-                if (selectedTab != 3) {
+                if (selectedTab != 3 && viewStack.isEmpty()) {
                     Column(modifier = Modifier.fillMaxWidth().background(SpotifyBlack).statusBarsPadding()) {
                         // --- GREETING ROW ---
                         Row(modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                             Box(modifier = Modifier.size(32.dp).clip(CircleShape).background(SpotifyGreen), contentAlignment = Alignment.Center) {
-                                Text("M", color = SpotifyBlack, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                Text("Hi", color = SpotifyBlack, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                             }
                             Spacer(Modifier.width(12.dp))
                             Text(
@@ -423,10 +423,19 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                             viewModel = viewModel
                         )
                         3 -> FavoritesScreen(
+                            allSongs = currentDisplaySongs,
                             favorites = favorites, currentSong = currentSong, favoriteIds = favoriteIds,
                             sortType = persistentSortType, onSortChange = onSortTypeChange,
                             onSongClick = { song -> viewModel.playSong(song, favorites) },
-                            onToggleFavorite = { song -> viewModel.toggleFavorite(song) }
+                            onToggleFavorite = { song -> viewModel.toggleFavorite(song) },
+                            onAddSongs = {list ->
+                                list.forEach {song -> if (!favoriteIds.contains(song.id)) viewModel.toggleFavorite(song)}
+                                showSnackbar("Added ${list.size} song/songs to Liked Songs")
+                            },
+                            onRemoveSongs = {list ->
+                                list.forEach { song -> if (favoriteIds.contains(song.id)) viewModel.toggleFavorite(song) }
+                                showSnackbar("Removed ${list.size} song/songs from Liked Songs")
+                            }
                         )
                     }
                 }
@@ -436,9 +445,14 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
         // LAYER 2: Now Playing Overlay (drawn on top of Scaffold)
         if (showNowPlaying && currentSong != null) {
             NowPlayingScreen(
-                song = currentSong!!, queue = queue, lyrics = currentLyrics,
-                isPlaying = isPlaying, progress = progress, duration = duration,
-                repeatMode = repeatMode, shuffleMode = shuffleMode,
+                song = currentSong!!,
+                queue = queue,
+                lyrics = currentLyrics,
+                isPlaying = isPlaying,
+                progress = progress,
+                duration = duration,
+                repeatMode = repeatMode,
+                shuffleMode = shuffleMode,
                 isFavorite = favoriteIds.contains(currentSong!!.id),
                 onBack = { viewModel.setNowPlayingOpen(false) },
                 onTogglePlayPause = { viewModel.togglePlayPause() },
@@ -462,9 +476,35 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                     showSnackbar("Song deleted")
                     viewModel.setNowPlayingOpen(false)
                 },
-                onViewAlbum = { handleViewAlbum(currentSong!!.album ?: "Unknown") },
-                onViewArtist = { handleViewArtist(currentSong!!.artist) },
-                onDownload = { downloadSong(context, currentSong!!, showSnackbar) }
+                onViewAlbum = {
+                    viewModel.setNowPlayingOpen(false)
+                    handleViewAlbum(currentSong!!.album ?: "Unknown")
+                },
+                onViewArtist = {
+                    viewModel.setNowPlayingOpen(false)
+                    handleViewArtist(currentSong!!.artist)
+                },
+                onDownload = { downloadSong(context, currentSong!!, showSnackbar) },
+
+                // --- NEW SLEEP TIMER PARAMETERS ---
+                isSleepTimerActive = isSleepTimerActive,
+                sleepTimerRemainingMs = sleepTimerRemainingMs, // ✅ PASSED DOWN
+                onStartSleepTimerTime = { minutes ->
+                    viewModel.startTimeSleepTimer(minutes)
+                    showSnackbar("Sleep timer set for $minutes minutes")
+                },
+                onStartSleepTimerTracks = { tracks ->
+                    viewModel.startTrackSleepTimer(tracks)
+                    showSnackbar("Audio will stop after $tracks songs")
+                },
+                onStartSleepTimerQueue = {
+                    viewModel.startQueueEndSleepTimer()
+                    showSnackbar("Audio will stop at end of queue")
+                },
+                onCancelSleepTimer = {
+                    viewModel.cancelSleepTimer()
+                    showSnackbar("Sleep timer cancelled")
+                }
             )
         }
 
@@ -472,7 +512,7 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
         SnackbarHost(
             hostState = snackbarHostState,
             modifier = Modifier
-                .align(Alignment.BottomCenter) // This now works because it's inside a BoxScope!
+                .align(Alignment.BottomCenter)
                 .navigationBarsPadding()
                 .padding(bottom = if (showNowPlaying && currentSong != null) 16.dp else 140.dp)
         )

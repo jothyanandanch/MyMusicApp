@@ -12,6 +12,7 @@ import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -27,6 +28,7 @@ import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -79,16 +81,23 @@ fun NowPlayingScreen(
     onAddToPlaylist  : () -> Unit = {},
     onAddToQueue     : () -> Unit = {},
     onDelete         : () -> Unit = {},
-    onViewAlbum      : () -> Unit = {}, // ✅ NEW
-    onViewArtist     : () -> Unit = {}, // ✅ NEW
-    onDownload       : () -> Unit = {}  // ✅ NEW
+    onViewAlbum      : () -> Unit = {},
+    onViewArtist     : () -> Unit = {},
+    onDownload       : () -> Unit = {},
+    isSleepTimerActive: Boolean = false,
+    sleepTimerRemainingMs: Long = 0L, // ✅ Added to catch live timer
+    onStartSleepTimerTime: (Int) -> Unit = {},
+    onStartSleepTimerTracks: (Int) -> Unit = {},
+    onStartSleepTimerQueue: () -> Unit = {},
+    onCancelSleepTimer: () -> Unit = {}
 ) {
+    var showSleepTimer by remember { mutableStateOf(false) }
     val rawFraction = if (duration > 0) (progress.toFloat() / duration.toFloat()).coerceIn(0f, 1f) else 0f
 
     var showQueueSheet by remember { mutableStateOf(false) }
     var showLyricsView by remember { mutableStateOf(false) }
     var showMenu by remember { mutableStateOf(false) }
-    val isOnline = song.uri.toString().startsWith("http") // ✅ NEW: Check if Online
+    val isOnline = song.uri.toString().startsWith("http")
 
     val coroutineScope = rememberCoroutineScope()
     val offsetY = remember { Animatable(0f) }
@@ -117,14 +126,12 @@ fun NowPlayingScreen(
                 Box {
                     IconButton(onClick = { showMenu = true }) { Icon(Icons.Filled.MoreVert, "More", tint = SpotifyWhite, modifier = Modifier.size(24.dp)) }
                     DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }, modifier = Modifier.background(SpotifySurface2)) {
-                        // ✅ View Options added here
                         DropdownMenuItem(text = { Text("View Album", color = SpotifyWhite) }, onClick = { showMenu = false; onViewAlbum() })
                         DropdownMenuItem(text = { Text("View Artist", color = SpotifyWhite) }, onClick = { showMenu = false; onViewArtist() })
 
                         DropdownMenuItem(text = { Text("Add to Playlist", color = SpotifyWhite) }, onClick = { showMenu = false; onAddToPlaylist() })
                         DropdownMenuItem(text = { Text("Add to Queue", color = SpotifyWhite) }, onClick = { showMenu = false; onAddToQueue() })
 
-                        // ✅ Conditionally add Download vs Delete
                         if (isOnline) {
                             DropdownMenuItem(text = { Text("Download Song", color = SpotifyWhite) }, onClick = { showMenu = false; onDownload() })
                         } else {
@@ -210,12 +217,32 @@ fun NowPlayingScreen(
                 }
 
                 Row(modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = {}) { Icon(Icons.Filled.DevicesOther, "Devices", tint = SpotifyGray, modifier = Modifier.size(22.dp)) }
+                    IconButton(onClick = { showSleepTimer = true }) {
+                        Icon(
+                            Icons.Filled.Timer,
+                            "Sleep Timer",
+                            tint = if (isSleepTimerActive) SpotifyGreen else SpotifyGray,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
                     IconButton(onClick = { showLyricsView = !showLyricsView }) { Icon(imageVector = Icons.Filled.Lyrics, contentDescription = "Lyrics", tint = if (showLyricsView) SpotifyGreen else SpotifyWhite, modifier = Modifier.size(22.dp)) }
                     IconButton(onClick = { showQueueSheet = true }) { Icon(Icons.AutoMirrored.Filled.QueueMusic, "Queue", tint = SpotifyWhite, modifier = Modifier.size(22.dp)) }
                 }
             }
         }
+    }
+
+    // Render the sleep timer at the bottom of the Box
+    if (showSleepTimer) {
+        SleepTimerSheet(
+            isTimerActive = isSleepTimerActive,
+            sleepTimerRemainingMs = sleepTimerRemainingMs, // ✅ PASSED TO SHEET
+            onStartTimerTime = onStartSleepTimerTime,
+            onStartTimerTracks = onStartSleepTimerTracks,
+            onStartTimerQueue = onStartSleepTimerQueue,
+            onCancelTimer = onCancelSleepTimer,
+            onDismiss = { showSleepTimer = false }
+        )
     }
 
     if (showQueueSheet) {
@@ -228,7 +255,7 @@ fun NowPlayingScreen(
     }
 }
 
-// ─── Downstream Queueing logic is the same (Skipping SyncedLyricsView/QueueContent implementations for brevity, keep the exact original methods) ─────────
+// ─── Downstream Queueing logic and Lyrics ─────────
 @Composable
 fun SyncedLyricsView(lyricsText: String?, progress: Long, onSeek: (Long) -> Unit, modifier: Modifier = Modifier) {
     val lyricsLines = remember(lyricsText) { parseLrc(lyricsText) }
@@ -281,99 +308,192 @@ fun QueueContent(
 
     var isSelectionMode by remember { mutableStateOf(false) }
     var selectedSongs by remember { mutableStateOf(setOf<Song>()) }
+    val allSelectableSongs = remember(history, localUpcoming) { history + localUpcoming }
 
-    LaunchedEffect(upstreamUpcoming) { if (draggedItemIndex == null) localUpcoming = upstreamUpcoming }
-    LaunchedEffect(isFullyExpanded) { if (!isFullyExpanded){ isSelectionMode = false; selectedSongs = emptySet() } }
+    LaunchedEffect(upstreamUpcoming) {
+        if (draggedItemIndex == null) localUpcoming = upstreamUpcoming
+    }
+    LaunchedEffect(isFullyExpanded) {
+        if (!isFullyExpanded) {
+            isSelectionMode = false; selectedSongs = emptySet()
+        }
+    }
 
     Box(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
             state = listState,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).pointerInput(isSelectionMode) {
-                if (isSelectionMode) return@pointerInput
-                detectDragGesturesAfterLongPress(
-                    onDragStart = { offset ->
-                        listState.layoutInfo.visibleItemsInfo.firstOrNull { offset.y.toInt() in it.offset..(it.offset + it.size) }?.let { item ->
-                            val keyStr = item.key as? String
-                            if (keyStr?.startsWith("upcoming_") == true) {
-                                val idx = keyStr.removePrefix("upcoming_").toInt()
-                                draggedItemIndex = idx
-                                initialDraggedIndex = idx
-                                draggedDistance = 0f
-                            }
-                        }
-                    },
-                    onDrag = { change, dragAmount ->
-                        change.consume(); draggedDistance += dragAmount.y
-                        val draggedIdx = draggedItemIndex ?: return@detectDragGesturesAfterLongPress
-                        val itemHeight = listState.layoutInfo.visibleItemsInfo.firstOrNull()?.size ?: 1
-                        if (itemHeight == 0) return@detectDragGesturesAfterLongPress
-                        val targetDelta = (draggedDistance / itemHeight).toInt()
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)
+                .pointerInput(isSelectionMode) {
+                    if (isSelectionMode) return@pointerInput
+                    detectDragGesturesAfterLongPress(
+                        onDragStart = { offset ->
+                            listState.layoutInfo.visibleItemsInfo.firstOrNull { offset.y.toInt() in it.offset..(it.offset + it.size) }
+                                ?.let { item ->
+                                    val keyStr = item.key as? String
+                                    if (keyStr?.startsWith("upcoming_") == true) {
+                                        val idx = keyStr.removePrefix("upcoming_").toInt()
+                                        draggedItemIndex = idx
+                                        initialDraggedIndex = idx
+                                        draggedDistance = 0f
+                                    }
+                                }
+                        },
+                        onDrag = { change, dragAmount ->
+                            change.consume(); draggedDistance += dragAmount.y
+                            val draggedIdx =
+                                draggedItemIndex ?: return@detectDragGesturesAfterLongPress
+                            val itemHeight =
+                                listState.layoutInfo.visibleItemsInfo.firstOrNull()?.size ?: 1
+                            if (itemHeight == 0) return@detectDragGesturesAfterLongPress
+                            val targetDelta = (draggedDistance / itemHeight).toInt()
 
-                        if (targetDelta != 0) {
-                            val targetIdx = (draggedIdx + targetDelta).coerceIn(0, localUpcoming.size - 1)
-                            if (draggedIdx != targetIdx) {
-                                val newList = localUpcoming.toMutableList()
-                                val item = newList.removeAt(draggedIdx)
-                                newList.add(targetIdx, item)
-                                localUpcoming = newList
-                                draggedItemIndex = targetIdx
-                                draggedDistance -= (targetDelta * itemHeight)
+                            if (targetDelta != 0) {
+                                val targetIdx =
+                                    (draggedIdx + targetDelta).coerceIn(0, localUpcoming.size - 1)
+                                if (draggedIdx != targetIdx) {
+                                    val newList = localUpcoming.toMutableList()
+                                    val item = newList.removeAt(draggedIdx)
+                                    newList.add(targetIdx, item)
+                                    localUpcoming = newList
+                                    draggedItemIndex = targetIdx
+                                    draggedDistance -= (targetDelta * itemHeight)
+                                }
                             }
+                        },
+                        onDragEnd = {
+                            if (initialDraggedIndex != null && draggedItemIndex != null && initialDraggedIndex != draggedItemIndex) {
+                                onSongReorder(initialDraggedIndex!!, draggedItemIndex!!)
+                            }
+                            draggedItemIndex = null; initialDraggedIndex = null; draggedDistance = 0f
+                        },
+                        onDragCancel = {
+                            draggedItemIndex = null; initialDraggedIndex = null; draggedDistance = 0f; localUpcoming = upstreamUpcoming
                         }
-                    },
-                    onDragEnd = {
-                        if (initialDraggedIndex != null && draggedItemIndex != null && initialDraggedIndex != draggedItemIndex) {
-                            onSongReorder(initialDraggedIndex!!, draggedItemIndex!!)
-                        }
-                        draggedItemIndex = null; initialDraggedIndex = null; draggedDistance = 0f
-                    },
-                    onDragCancel = { draggedItemIndex = null; initialDraggedIndex = null; draggedDistance = 0f; localUpcoming = upstreamUpcoming }
+                    )
+                }
+        ) {
+            item {
+                Text(
+                    "Now Playing",
+                    color = SpotifyWhite,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 18.sp,
+                    modifier = Modifier.padding(vertical = 12.dp)
                 )
             }
-        ) {
-            item { Text("Now Playing", color = SpotifyWhite, fontWeight = FontWeight.Bold, fontSize = 18.sp, modifier = Modifier.padding(vertical = 12.dp)) }
             item { QueueSongItem(song = currentSong, isPlaying = true, onClick = {}) }
 
             if (localUpcoming.isNotEmpty()) {
                 item {
-                    Row(modifier = Modifier.fillMaxWidth().padding(top = 24.dp, bottom = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                        Text("Next In Queue", color = SpotifyWhite, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(top = 24.dp, bottom = 12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "Next In Queue",
+                            color = SpotifyWhite,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 18.sp
+                        )
                         if (isFullyExpanded) {
-                            Text(text = if (isSelectionMode) "Cancel" else "Select", color = SpotifyGreen, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, modifier = Modifier.clickable { isSelectionMode = !isSelectionMode; if (!isSelectionMode) selectedSongs = emptySet() })
+                            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                                if (isSelectionMode) {
+                                    val allSelected =
+                                        selectedSongs.size == allSelectableSongs.size && allSelectableSongs.isNotEmpty()
+                                    Text(
+                                        text = if (allSelected) "Deselect All" else "Select All",
+                                        color = SpotifyGreen,
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontSize = 14.sp,
+                                        modifier = Modifier.clickable {
+                                            selectedSongs =
+                                                if (allSelected) emptySet() else allSelectableSongs.toSet()
+                                        }
+                                    )
+                                }
+                                Text(
+                                    text = if (isSelectionMode) "Cancel" else "Select",
+                                    color = SpotifyGreen,
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 14.sp,
+                                    modifier = Modifier.clickable {
+                                        isSelectionMode =
+                                            !isSelectionMode; if (!isSelectionMode) selectedSongs = emptySet()
+                                    }
+                                )
+                            }
                         }
                     }
                 }
 
-                itemsIndexed(items = localUpcoming, key = { index, _ -> "upcoming_$index" }) { index, song ->
+                itemsIndexed(
+                    items = localUpcoming,
+                    key = { index, _ -> "upcoming_$index" }) { index, song ->
                     val isDragged = draggedItemIndex == index
-                    val elevation by animateFloatAsState(if (isDragged) 8f else 0f, label = "elevation")
+                    val elevation by animateFloatAsState(
+                        if (isDragged) 8f else 0f,
+                        label = "elevation"
+                    )
                     val offsetY = if (isDragged) draggedDistance else 0f
                     val zIndex = if (isDragged) 1f else 0f
                     val isSelected = selectedSongs.contains(song)
 
-                    Box(modifier = Modifier.fillMaxWidth().zIndex(zIndex).graphicsLayer { translationY = offsetY }.shadow(elevation.dp, RoundedCornerShape(8.dp)).background(if (isDragged || isSelected) SpotifySurface2 else Color.Transparent)) {
+                    Box(
+                        modifier = Modifier.fillMaxWidth().zIndex(zIndex)
+                            .graphicsLayer { translationY = offsetY }
+                            .shadow(elevation.dp, RoundedCornerShape(8.dp))
+                            .background(if (isDragged || isSelected) SpotifySurface2 else Color.Transparent)
+                    ) {
                         if (isSelectionMode) {
-                            QueueSongItem(song = song, isPlaying = false, isSelectionMode = true, isSelected = isSelected, onClick = { selectedSongs = if (isSelected) selectedSongs - song else selectedSongs + song })
+                            QueueSongItem(
+                                song = song,
+                                isPlaying = false,
+                                isSelectionMode = true,
+                                isSelected = isSelected,
+                                onClick = {
+                                    selectedSongs =
+                                        if (isSelected) selectedSongs - song else selectedSongs + song
+                                })
                         } else {
-                            SwipeableQueueItem(song = song, onRemove = { onSongRemove(song) }, onClick = { onSongClick(song) })
+                            SwipeableQueueItem(
+                                song = song,
+                                onRemove = { onSongRemove(song) },
+                                onClick = { onSongClick(song) })
                         }
                     }
                 }
             }
             if (history.isNotEmpty()) {
-                item { Text("Previously Played", color = SpotifyGray, fontWeight = FontWeight.Bold, fontSize = 18.sp, modifier = Modifier.padding(top = 24.dp, bottom = 12.dp)) }
-                itemsIndexed(history) { _, song -> QueueSongItem(song = song, isPlaying = false, isHistory = true, onClick = { onSongClick(song) }) }
-            }
-            item { Spacer(modifier = Modifier.height(80.dp)) }
-        }
+                item {
+                    Text(
+                        "Previously Played",
+                        color = SpotifyGray,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 18.sp,
+                        modifier = Modifier.padding(top = 24.dp, bottom = 12.dp)
+                    )
+                }
+                itemsIndexed(history) { _, song ->
+                    val isSelected = selectedSongs.contains(song)
 
-        if (isSelectionMode && selectedSongs.isNotEmpty()) {
-            Button(
-                onClick = { onSongsRemove(selectedSongs); isSelectionMode = false; selectedSongs = emptySet() },
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE57373)),
-                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 24.dp).fillMaxWidth(0.8f).height(50.dp)
-            ) {
-                Text("Remove ${selectedSongs.size} Songs", color = Color.White, fontWeight = FontWeight.Bold)
+                    if (isSelectionMode) {
+                        QueueSongItem(
+                            song = song, isPlaying = false, isHistory = true,
+                            isSelectionMode = true, isSelected = isSelected,
+                            onClick = {
+                                selectedSongs =
+                                    if (isSelected) selectedSongs - song else selectedSongs + song
+                            }
+                        )
+                    } else {
+                        SwipeableQueueItem(
+                            song = song,
+                            onRemove = { onSongRemove(song) },
+                            onClick = { onSongClick(song) }
+                        )
+                    }
+                }
             }
         }
     }
@@ -405,7 +525,6 @@ fun SwipeableQueueItem(song: Song, onRemove: () -> Unit, onClick: () -> Unit) {
 @Composable
 fun QueueSongItem(song: Song, isPlaying: Boolean, isHistory: Boolean = false, isSelectionMode: Boolean = false, isSelected: Boolean = false, onClick: () -> Unit) {
     Row(modifier = Modifier.fillMaxWidth().clickable { onClick() }.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-        // ✅ Passed 'song = song'
         AlbumArt(song = song, audioUri = song.uri, isActive = isPlaying, size = 48.dp, cornerRadius = 4.dp)
         Spacer(modifier = Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
@@ -418,6 +537,160 @@ fun QueueSongItem(song: Song, isPlaying: Boolean, isHistory: Boolean = false, is
             Icon(Icons.Filled.GraphicEq, contentDescription = "Playing", tint = SpotifyGreen, modifier = Modifier.size(20.dp))
         } else if (!isHistory) {
             Icon(Icons.Filled.DragHandle, contentDescription = "Long press to Reorder", tint = SpotifyGray, modifier = Modifier.size(24.dp))
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
+@Composable
+fun SleepTimerSheet(
+    isTimerActive: Boolean,
+    sleepTimerRemainingMs: Long,
+    onStartTimerTime: (Int) -> Unit,
+    onStartTimerTracks: (Int) -> Unit,
+    onStartTimerQueue: () -> Unit,
+    onCancelTimer: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    // Tab State
+    var selectedTab by remember { mutableStateOf(0) } // 0 = Time, 1 = Tracks
+
+    // Time State (Multiples of 5 mins)
+    val timeOptions = remember { (5..120 step 5).toList() }
+    val listState = rememberLazyListState(initialFirstVisibleItemIndex = 5) // Defaults to 30 mins
+
+    // Track State
+    var trackCount by remember { mutableStateOf("3") }
+    var selectedTrackOption by remember { mutableStateOf("current") } // current, custom, queue
+
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, containerColor = SpotifySurface2) {
+        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 16.dp)) {
+            Text("Sleep Timer", color = SpotifyWhite, fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 16.dp))
+
+            TabRow(selectedTabIndex = selectedTab, containerColor = SpotifySurface2, contentColor = SpotifyGreen) {
+                Tab(selected = selectedTab == 0, onClick = { selectedTab = 0 }, text = { Text("Time", color = if (selectedTab == 0) SpotifyGreen else SpotifyGray) })
+                Tab(selected = selectedTab == 1, onClick = { selectedTab = 1 }, text = { Text("Tracks", color = if (selectedTab == 1) SpotifyGreen else SpotifyGray) })
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // --- TAB CONTENT ---
+            Box(modifier = Modifier.fillMaxWidth().height(180.dp), contentAlignment = Alignment.Center) {
+                if (selectedTab == 0) {
+                    // SCROLLABLE TIME PICKER
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier.fillMaxWidth().height(150.dp),
+                        // ✅ FIX: Huge padding allows the first/last items to easily reach the 75dp dead center point.
+                        contentPadding = PaddingValues(vertical = 80.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        flingBehavior = rememberSnapFlingBehavior(lazyListState = listState)
+                    ) {
+                        items(timeOptions.size) { index ->
+                            // Calculate which item is in the center to highlight it
+                            val isCenter = remember { derivedStateOf {
+                                val layoutInfo = listState.layoutInfo
+                                val visibleItems = layoutInfo.visibleItemsInfo
+                                val centerOffset = layoutInfo.viewportEndOffset / 2
+                                val centerItem = visibleItems.minByOrNull { Math.abs(it.offset + (it.size / 2) - centerOffset) }
+                                centerItem?.index == index
+                            } }
+
+                            val minutes = timeOptions[index]
+                            Text(
+                                text = "$minutes minutes",
+                                color = if (isCenter.value) SpotifyWhite else SpotifyGray,
+                                fontSize = if (isCenter.value) 24.sp else 18.sp,
+                                fontWeight = if (isCenter.value) FontWeight.Bold else FontWeight.Normal,
+                                modifier = Modifier.padding(vertical = 4.dp).clickable { /* tap to snap optional */ }
+                            )
+                        }
+                    }
+                } else {
+                    // TRACK PICKER
+                    Column(
+                        modifier = Modifier.fillMaxSize(),
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Text("Stop audio after:", color = SpotifyGray, fontSize = 14.sp, modifier = Modifier.padding(bottom = 8.dp))
+
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable { selectedTrackOption = "current" }) {
+                            RadioButton(selected = selectedTrackOption == "current", onClick = { selectedTrackOption = "current" }, colors = RadioButtonDefaults.colors(selectedColor = SpotifyGreen, unselectedColor = SpotifyGray))
+                            Text("Current song", color = SpotifyWhite)
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable { selectedTrackOption = "custom" }) {
+                            RadioButton(selected = selectedTrackOption == "custom", onClick = { selectedTrackOption = "custom" }, colors = RadioButtonDefaults.colors(selectedColor = SpotifyGreen, unselectedColor = SpotifyGray))
+                            Text("After", color = SpotifyWhite, modifier = Modifier.padding(end = 8.dp))
+                            OutlinedTextField(
+                                value = trackCount, onValueChange = { trackCount = it.filter { char -> char.isDigit() } },
+                                modifier = Modifier.width(64.dp).height(48.dp), singleLine = true,
+                                colors = OutlinedTextFieldDefaults.colors(focusedTextColor = SpotifyWhite, unfocusedTextColor = SpotifyWhite)
+                            )
+                            Text("songs", color = SpotifyWhite, modifier = Modifier.padding(start = 8.dp))
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable { selectedTrackOption = "queue" }) {
+                            RadioButton(selected = selectedTrackOption == "queue", onClick = { selectedTrackOption = "queue" }, colors = RadioButtonDefaults.colors(selectedColor = SpotifyGreen, unselectedColor = SpotifyGray))
+                            Text("End of queue", color = SpotifyWhite)
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // --- START / CANCEL BUTTON ---
+            Button(
+                onClick = {
+                    if (isTimerActive) {
+                        onCancelTimer()
+                        // ✅ FIX: Removed onDismiss() so you can set a new timer right away
+                    } else {
+                        if (selectedTab == 0) {
+                            val layoutInfo = listState.layoutInfo
+                            val centerOffset = layoutInfo.viewportEndOffset / 2
+                            val centerItemIndex = layoutInfo.visibleItemsInfo.minByOrNull { Math.abs(it.offset + (it.size / 2) - centerOffset) }?.index ?: 5
+                            onStartTimerTime(timeOptions[centerItemIndex])
+                        } else {
+                            when (selectedTrackOption) {
+                                "current" -> onStartTimerTracks(1)
+                                "custom" -> onStartTimerTracks(trackCount.toIntOrNull() ?: 3)
+                                "queue" -> onStartTimerQueue()
+                            }
+                        }
+                        onDismiss() // Close only when actually starting the timer
+                    }
+                },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (isTimerActive) Color(0xFF333333) else SpotifyGreen,
+                    contentColor = if (isTimerActive) Color(0xFFFF5555) else SpotifyBlack
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(50.dp)
+            ) {
+                // ✅ Dynamic Text with Live Countdown
+                val buttonText = if (isTimerActive) {
+                    if (sleepTimerRemainingMs > 0) {
+                        val m = (sleepTimerRemainingMs / 1000) / 60
+                        val s = (sleepTimerRemainingMs / 1000) % 60
+                        String.format(java.util.Locale.getDefault(), "Cancel Timer (%02d:%02d)", m, s)
+                    } else {
+                        "Cancel Sleep Timer"
+                    }
+                } else {
+                    "Start Timer"
+                }
+
+                Text(
+                    text = buttonText,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp
+                )
+            }
+            Spacer(modifier = Modifier.height(32.dp))
         }
     }
 }

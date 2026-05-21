@@ -64,6 +64,12 @@ public class MusicViewModel extends AndroidViewModel {
     private final LocalMusicRepository repository;
     private final OnlineMusicRepository onlineRepository = new OnlineMusicRepository();
     
+    // --- SLEEP TIMER STATE ---
+    private android.os.CountDownTimer sleepTimer;
+    private final MutableLiveData<Boolean> isSleepTimerActive = new MutableLiveData<>(false);
+    private final MutableLiveData<Long> sleepTimerRemainingLiveData = new MutableLiveData<>(0L); // ✅ NEW: Live Countdown
+    private int sleepTrackCounter = -1; // -1 means inactive
+    private boolean stopAtQueueEnd = false;
     // ── Thread Management ────────────────────────────────────────────────
     private final ExecutorService executorService = Executors.newFixedThreadPool(4);
     
@@ -160,6 +166,15 @@ public class MusicViewModel extends AndroidViewModel {
                     
                     @Override
                     public void onMediaItemTransition(MediaItem mediaItem, int reason) {
+                        // --- SLEEP TIMER TRACK COUNTER CHECK ---
+                        // Decrement the counter when the song changes naturally (not when repeating the same song)
+                        if (sleepTrackCounter > 0 && reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO) {
+                            sleepTrackCounter--;
+                            if (sleepTrackCounter == 0) {
+                                triggerSleepTimerAction();
+                                return; // Stop processing further transition logic
+                            }
+                        }
                         if (currentPlaylist == null || currentPlaylist.isEmpty()) return;
                         int idx = exoPlayer.getCurrentMediaItemIndex();
                         if (idx >= 0 && idx < currentPlaylist.size()) {
@@ -174,8 +189,20 @@ public class MusicViewModel extends AndroidViewModel {
                     
                     @Override
                     public void onPlaybackStateChanged(int state) {
-                        if (exoPlayer != null && exoPlayer.getDuration() > 0) durationLiveData.postValue(exoPlayer.getDuration());
+                        if (exoPlayer != null && exoPlayer.getDuration() > 0)
+                            durationLiveData.postValue(exoPlayer.getDuration());
                         if (state == Player.STATE_ENDED) {
+                            isPlayingLiveData.postValue(false);
+                            endOfQueueLiveData.postValue(true);
+                            showEndDialogLiveData.postValue(true);
+                        }
+                        if (state == Player.STATE_ENDED) {
+                            // --- SLEEP TIMER QUEUE END CHECK ---
+                            if (stopAtQueueEnd) {
+                                triggerSleepTimerAction();
+                                return; // Don't show the end dialog, just sleep
+                            }
+                            
                             isPlayingLiveData.postValue(false);
                             endOfQueueLiveData.postValue(true);
                             showEndDialogLiveData.postValue(true);
@@ -877,17 +904,13 @@ public class MusicViewModel extends AndroidViewModel {
         Integer currentMode = libraryModeLiveData.getValue();
         boolean allowOnlineFetch = (currentMode != null && currentMode != 0);
         
-        // Alternatively, if you only want to fetch lyrics for online songs:
-        // boolean allowOnlineFetch = song.getUri().toString().startsWith("http");
-        
-        // Changed to use executorService instead of raw Thread
         executorService.execute(() -> {
             String lyrics = com.nandu.mymusic.utils.LyricsUtils.extractLyrics(
                     getApplication(),
                     song.getUri(),
                     song.getTitle(),
                     song.getArtist(),
-                    allowOnlineFetch // 2. Pass the defined boolean variable here
+                    allowOnlineFetch
             );
             if (lyrics != null) lyricsLiveData.postValue(lyrics);
             else lyricsLiveData.postValue("No lyrics found in audio or online.");
@@ -956,9 +979,64 @@ public class MusicViewModel extends AndroidViewModel {
         });
     }
     
+    // ✅ SLEEP TIMER LOGIC
+    public LiveData<Boolean> getIsSleepTimerActive() { return isSleepTimerActive; }
+    public LiveData<Long> getSleepTimerRemaining() { return sleepTimerRemainingLiveData; } // ✅ Live counter
+    
+    // 1. Time-Based Timer
+    public void startTimeSleepTimer(int minutes) {
+        cancelSleepTimer();
+        isSleepTimerActive.postValue(true);
+        
+        long timeMs = minutes * 60 * 1000L;
+        sleepTimer = new android.os.CountDownTimer(timeMs, 1000) {
+            @Override
+            public void onTick(long millisUntilFinished) {
+                sleepTimerRemainingLiveData.postValue(millisUntilFinished); // Post live time to UI
+            }
+            
+            @Override
+            public void onFinish() {
+                sleepTimerRemainingLiveData.postValue(0L);
+                triggerSleepTimerAction();
+            }
+        }.start();
+    }
+    
+    // 2. Track-Based Timer
+    public void startTrackSleepTimer(int trackCount) {
+        cancelSleepTimer();
+        isSleepTimerActive.postValue(true);
+        sleepTrackCounter = trackCount;
+    }
+    
+    // 3. End of Queue Timer
+    public void startQueueEndSleepTimer() {
+        cancelSleepTimer();
+        isSleepTimerActive.postValue(true);
+        stopAtQueueEnd = true;
+    }
+    
+    public void cancelSleepTimer() {
+        if (sleepTimer != null) {
+            sleepTimer.cancel();
+            sleepTimer = null;
+        }
+        sleepTrackCounter = -1;
+        stopAtQueueEnd = false;
+        isSleepTimerActive.postValue(false);
+        sleepTimerRemainingLiveData.postValue(0L); // Reset time
+    }
+    
+    private void triggerSleepTimerAction() {
+        if (exoPlayer != null && exoPlayer.isPlaying()) {
+            exoPlayer.pause();
+        }
+        cancelSleepTimer();
+    }
+    
     @Override
     protected void onCleared() {
-        // Shutdown the executor service cleanly to prevent memory leaks
         if (executorService != null) {
             executorService.shutdown();
         }
