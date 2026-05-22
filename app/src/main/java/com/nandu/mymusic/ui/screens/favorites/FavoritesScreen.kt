@@ -22,6 +22,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.nandu.mymusic.model.Song
+import com.nandu.mymusic.ui.components.AlbumArt
 import com.nandu.mymusic.ui.screens.library.SpotifyBlack
 import com.nandu.mymusic.ui.screens.library.SpotifyGray
 import com.nandu.mymusic.ui.screens.library.SpotifyGreen
@@ -34,7 +35,7 @@ import com.nandu.mymusic.ui.screens.playlist.SortType
 
 @Composable
 fun FavoritesScreen(
-    allSongs         : List<Song>, // NEW: Needed to see what songs can be added
+    allSongs         : List<Song>, // Needed to see what songs can be added
     favorites        : List<Song>,
     currentSong      : Song?,
     favoriteIds      : Set<Long>,
@@ -43,8 +44,8 @@ fun FavoritesScreen(
     modifier         : Modifier = Modifier,
     onSongClick      : (Song) -> Unit,
     onToggleFavorite : (Song) -> Unit,
-    onAddSongs       : (List<Song>) -> Unit, // NEW: Bulk Add Callback
-    onRemoveSongs    : (List<Song>) -> Unit  // NEW: Bulk Remove Callback
+    onAddSongs       : (List<Song>) -> Unit, // Bulk Add Callback
+    onRemoveSongs    : (List<Song>) -> Unit  // Bulk Remove Callback
 ) {
     // ── State for Menu & Bulk Actions ──
     var showMenu by remember { mutableStateOf(false) }
@@ -268,17 +269,14 @@ fun FavoritesScreen(
                         Spacer(Modifier.width(8.dp))
                     }
 
-                    Box(
-                        modifier = Modifier
-                            .size(48.dp)
-                            .clip(RoundedCornerShape(4.dp))
-                            .background(SpotifySurface2),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(Icons.Filled.MusicNote, null,
-                            tint     = if (song.id == currentSong?.id) SpotifyGreen else SpotifyGray,
-                            modifier = Modifier.size(24.dp))
-                    }
+                    // ✅ Actual artwork loader rendering correctly now
+                    AlbumArt(
+                        song = song,
+                        audioUri = song.uri,
+                        isActive = song.id == currentSong?.id && !isEditMode,
+                        size = 48.dp,
+                        cornerRadius = 4.dp
+                    )
 
                     Column(modifier = Modifier.padding(start = 12.dp).weight(1f)) {
                         Text(

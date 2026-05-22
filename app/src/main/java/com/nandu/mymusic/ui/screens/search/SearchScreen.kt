@@ -8,13 +8,16 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.google.android.material.snackbar.Snackbar
 import com.nandu.mymusic.model.Song
 import com.nandu.mymusic.ui.screens.library.LibraryGroupItem
 import com.nandu.mymusic.ui.screens.library.SongItem
 import com.nandu.mymusic.ui.screens.library.SpotifyWhite
+import com.nandu.mymusic.ui.screens.library.downloadSong
 
 @Composable
 fun SearchScreen(
@@ -22,6 +25,7 @@ fun SearchScreen(
     filteredSongs    : List<Song>,
     currentSong      : Song?,
     favoriteIds      : Set<Long>,
+    showSnackbar: (String) -> Unit,
     onSongClick      : (Song) -> Unit,
     onToggleFavorite : (Song) -> Unit,
     onPlayNext       : (Song) -> Unit,
@@ -29,8 +33,10 @@ fun SearchScreen(
     onAddToPlaylist  : (Song) -> Unit,
     onDelete         : (Song) -> Unit,
     onViewAlbum      : (String) -> Unit,
-    onViewArtist     : (String) -> Unit
+    onViewArtist     : (String) -> Unit,
+    onDownload: (Song) -> Unit
 ) {
+    val context = LocalContext.current
     // Dynamically extract matching albums based on the search query
     val matchingAlbums = remember(filteredSongs, searchQuery) {
         if (searchQuery.isBlank()) emptyList()
@@ -88,6 +94,8 @@ fun SearchScreen(
                     onAddToQueue     = { onAddToQueue(song) },
                     onAddToPlaylist  = { onAddToPlaylist(song) },
                     onDelete         = { onDelete(song) },
+                    onEdit           = {showSnackbar("Edit functionality coming soon!")},
+                    onDownload = { onDownload(song) }  ,
                     onViewAlbum      = { onViewAlbum(song.album ?: "Unknown Album") },
                     onViewArtist     = { onViewArtist(song.artist) }
                 )

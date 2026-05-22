@@ -5,7 +5,6 @@ import android.app.DownloadManager
 import android.content.Context
 import android.net.Uri
 import android.os.Environment
-import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.IntentSenderRequest
@@ -62,19 +61,34 @@ sealed class CollectionView {
     data class Artist(val name: String) : CollectionView()
 }
 
-// ✅ HELPER METHOD to download online songs natively
-fun downloadSong(context: Context, song: Song, showSnackbar: (String) -> Unit) {
+
+// ✅ HELPER METHOD updated to handle High/Low quality downloads
+fun downloadSong(context: Context, song: Song, isHighQuality: Boolean, showSnackbar: (String) -> Unit) {
     try {
-        val request = DownloadManager.Request(Uri.parse(song.uri.toString()))
+        var downloadUrl = song.uri.toString()
+
+        // Cloudinary URL manipulation based on quality choice
+        if (isHighQuality && downloadUrl.contains("/upload/q_auto,f_auto/")) {
+            // Strip out compression for High Quality
+            downloadUrl = downloadUrl.replace("/upload/q_auto,f_auto/", "/upload/")
+        } else if (!isHighQuality && !downloadUrl.contains("q_auto,f_auto") && downloadUrl.contains("/upload/")) {
+            // Enforce compression for Data Saver (Low Quality)
+            downloadUrl = downloadUrl.replace("/upload/", "/upload/q_auto,f_auto/")
+        }
+
+        val request = DownloadManager.Request(Uri.parse(downloadUrl))
             .setTitle(song.title)
             .setDescription("Downloading ${song.title}")
             .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
             .setDestinationInExternalPublicDir(Environment.DIRECTORY_MUSIC, "${song.title}.mp3")
             .setAllowedOverMetered(true)
             .setAllowedOverRoaming(true)
+
         val downloadManager = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
         downloadManager.enqueue(request)
-        showSnackbar("Download started for ${song.title}")
+
+        val qualityText = if (isHighQuality) "High Quality" else "Data Saver"
+        showSnackbar("Downloading $qualityText...")
     } catch (e: Exception) {
         showSnackbar("Failed to start download")
     }
@@ -131,6 +145,7 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
     val snackbarHostState = remember { SnackbarHostState() }
     val coroutineScope = rememberCoroutineScope()
     val showSnackbar: (String) -> Unit = { msg ->
+        snackbarHostState.currentSnackbarData?.dismiss()
         coroutineScope.launch { snackbarHostState.showSnackbar(msg) }
     }
 
@@ -151,7 +166,8 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                 (context as? Activity)?.finishAffinity()
             } else {
                 backPressedTime = currentTime
-                Toast.makeText(context, "Press back again to exit", Toast.LENGTH_SHORT).show()
+                // Replaced the basic Toast with our custom themed Snackbar
+                showSnackbar("Press back again to exit")
             }
         }
     }
@@ -159,6 +175,7 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
     var searchQuery by remember { mutableStateOf("") }
     val playlists by viewModel.customPlaylists.observeAsState(initial = emptyMap())
     var songForPlaylistDialog by remember { mutableStateOf<Song?>(null) }
+    var songToDownload by remember { mutableStateOf<Song?>(null) }
     var showCreatePlaylistDialog by remember { mutableStateOf(false) }
     var newPlaylistName by remember { mutableStateOf("") }
 
@@ -206,6 +223,37 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                 }
             },
             confirmButton = { TextButton(onClick = { songForPlaylistDialog = null }) { Text("Cancel", color = SpotifyGray) } }
+        )
+    }
+
+    // ── The "Download Quality" Dialog ──
+    if (songToDownload != null) {
+        AlertDialog(
+            onDismissRequest = { songToDownload = null },
+            containerColor = SpotifySurface2,
+            title = { Text("Download Quality", color = SpotifyWhite, fontWeight = FontWeight.Bold) },
+            text = { Text("Choose the audio quality for '${songToDownload?.title}'", color = SpotifyGray) },
+            confirmButton = {
+                TextButton(onClick = {
+                    downloadSong(context, songToDownload!!, isHighQuality = true, showSnackbar)
+                    songToDownload = null
+                }) {
+                    Text("High Quality", color = SpotifyGreen, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                Row {
+                    TextButton(onClick = {
+                        downloadSong(context, songToDownload!!, isHighQuality = false, showSnackbar)
+                        songToDownload = null
+                    }) {
+                        Text("Data Saver", color = SpotifyGray)
+                    }
+                    TextButton(onClick = { songToDownload = null }) {
+                        Text("Cancel", color = SpotifyGray)
+                    }
+                }
+            }
         )
     }
 
@@ -380,7 +428,8 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                                 sortType = persistentSortType, onSortChange = onSortTypeChange, showSnackbar = showSnackbar,
                                 onBack = { viewStack.removeAt(viewStack.lastIndex) }, onSongClick = { song -> viewModel.playSong(song, albumSongs) },
                                 onToggleFavorite = { song -> viewModel.toggleFavorite(song) }, onShufflePlay = { viewModel.playShuffled(albumSongs) },
-                                onAddToPlaylist = { songForPlaylistDialog = it }, onViewAlbum = handleViewAlbum, onViewArtist = handleViewArtist, viewModel = viewModel
+                                onAddToPlaylist = { songForPlaylistDialog = it }, onViewAlbum = handleViewAlbum, onViewArtist = handleViewArtist, viewModel = viewModel,
+                                onDownload = {song -> songToDownload =song}
                             )
                         }
                         is CollectionView.Artist -> {
@@ -390,7 +439,8 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                                 sortType = persistentSortType, onSortChange = onSortTypeChange, showSnackbar = showSnackbar,
                                 onBack = { viewStack.removeAt(viewStack.lastIndex) }, onSongClick = { song -> viewModel.playSong(song, artistSongs) },
                                 onToggleFavorite = { song -> viewModel.toggleFavorite(song) }, onShufflePlay = { viewModel.playShuffled(artistSongs) },
-                                onAddToPlaylist = { songForPlaylistDialog = it }, onViewAlbum = handleViewAlbum, onViewArtist = handleViewArtist, viewModel = viewModel
+                                onAddToPlaylist = { songForPlaylistDialog = it }, onViewAlbum = handleViewAlbum, onViewArtist = handleViewArtist, viewModel = viewModel,
+                                onDownload = { song -> songToDownload = song }
                             )
                         }
                     }
@@ -403,17 +453,20 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                             onToggleFavorite = { song -> viewModel.toggleFavorite(song) },
                             onShufflePlay = { viewModel.playAllShuffled(currentDisplaySongs) },
                             onAddToPlaylist = { song -> songForPlaylistDialog = song },
-                            onViewAlbum = handleViewAlbum, onViewArtist = handleViewArtist, viewModel = viewModel
+                            onViewAlbum = handleViewAlbum, onViewArtist = handleViewArtist, viewModel = viewModel,
+                            onDownload = { song -> songToDownload = song }
                         )
                         1 -> SearchScreen(
                             searchQuery = searchQuery, filteredSongs = filteredSongs, currentSong = currentSong, favoriteIds = favoriteIds,
+                            showSnackbar = showSnackbar,
                             onSongClick = { song -> viewModel.playSong(song, filteredSongs) },
                             onToggleFavorite = { song -> viewModel.toggleFavorite(song) },
                             onPlayNext = { song -> viewModel.setPlayNext(song); showSnackbar("Will play next") },
                             onAddToQueue = { song -> viewModel.addToQueue(song); showSnackbar("Added to queue") },
                             onAddToPlaylist = { song -> songForPlaylistDialog = song },
-                            onDelete = { song -> viewModel.deleteSong(song); showSnackbar("Song deleted") },
-                            onViewAlbum = handleViewAlbum, onViewArtist = handleViewArtist
+                            onDelete = { song -> viewModel.deleteSong(song);  },
+                            onViewAlbum = handleViewAlbum, onViewArtist = handleViewArtist,
+                            onDownload = { song -> songToDownload = song }
                         )
                         2 -> PlaylistScreen(
                             songs = currentDisplaySongs, currentSong = currentSong, favoriteIds = favoriteIds,
@@ -473,7 +526,6 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                 },
                 onDelete = {
                     viewModel.deleteSong(currentSong!!)
-                    showSnackbar("Song deleted")
                     viewModel.setNowPlayingOpen(false)
                 },
                 onViewAlbum = {
@@ -484,7 +536,7 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                     viewModel.setNowPlayingOpen(false)
                     handleViewArtist(currentSong!!.artist)
                 },
-                onDownload = { downloadSong(context, currentSong!!, showSnackbar) },
+                onDownload = { songToDownload = currentSong },
 
                 // --- NEW SLEEP TIMER PARAMETERS ---
                 isSleepTimerActive = isSleepTimerActive,
@@ -508,14 +560,48 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
             )
         }
 
-        // LAYER 3: Global Snackbar (drawn on top of everything)
+// LAYER 3: Global Snackbar (drawn on top of everything)
         SnackbarHost(
             hostState = snackbarHostState,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .navigationBarsPadding()
                 .padding(bottom = if (showNowPlaying && currentSong != null) 16.dp else 140.dp)
-        )
+        ) { data ->
+            Snackbar(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                containerColor = SpotifySurface2,  // Forces the deep dark gray background
+                contentColor = SpotifyWhite,       // Forces white text
+                actionContentColor = SpotifyGreen, // ✅ FIXED: Changed from actionColor
+                shape = RoundedCornerShape(8.dp),
+                action = {
+                    // Renders the action button (like "UNDO") if one exists
+                    data.visuals.actionLabel?.let { label ->
+                        TextButton(onClick = { data.performAction() }) {
+                            Text(label, color = SpotifyGreen, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically, // ✅ FIXED: lowercase 'v'
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.CheckCircle,
+                        contentDescription = null,
+                        tint = SpotifyGreen,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Text(
+                        text = data.visuals.message,
+                        color = SpotifyWhite,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 14.sp
+                    )
+                }
+            }
+        }
     }
 }
 // ─── Home Tab (Updated with Persistent Sort) ─────────────────────────────────────────────────────────
@@ -537,8 +623,10 @@ fun HomeTab(
     onAddToPlaylist  : (Song) -> Unit,
     onViewAlbum      : (String) -> Unit,
     onViewArtist     : (String) -> Unit,
-    viewModel        : MusicViewModel
+    viewModel        : MusicViewModel,
+    onDownload: (Song) -> Unit
 ) {
+    var context = LocalContext.current
     var selectedCategory by remember { mutableStateOf("Songs") }
 
     // Recomputed using the persistent sortType
@@ -607,8 +695,9 @@ fun HomeTab(
                         onPlayNext = { viewModel.setPlayNext(song); showSnackbar("Will play next") },
                         onAddToQueue = { viewModel.addToQueue(song); showSnackbar("Added to queue") },
                         onAddToPlaylist = { onAddToPlaylist(song) },
-                        onDelete = { viewModel.deleteSong(song); showSnackbar("Song deleted") },
+                        onDelete = { viewModel.deleteSong(song); },
                         onEdit = { showSnackbar("Edit functionality coming soon!") },
+                        onDownload = { onDownload(song) },
                         onViewAlbum = { onViewAlbum(song.album ?: "Unknown Album") }, onViewArtist = { onViewArtist(song.artist) }
                     )
                 }
@@ -658,8 +747,11 @@ fun CollectionDetailView(
     sortType: SortType, onSortChange: (SortType) -> Unit, showSnackbar: (String) -> Unit,
     onBack: () -> Unit, onSongClick: (Song) -> Unit, onToggleFavorite: (Song) -> Unit,
     onShufflePlay: () -> Unit, onAddToPlaylist: (Song) -> Unit,
-    onViewAlbum: (String) -> Unit, onViewArtist: (String) -> Unit, viewModel: MusicViewModel
+    onViewAlbum: (String) -> Unit, onViewArtist: (String) -> Unit, viewModel: MusicViewModel,
+    onDownload: (Song) -> Unit
 ) {
+    val context =LocalContext.current
+    var selectedCategory by remember { mutableStateOf("Songs") }
     val displaySongs = remember(songs, sortType) {
         when (sortType) {
             SortType.DEFAULT -> songs
@@ -695,8 +787,9 @@ fun CollectionDetailView(
                 onPlayNext = { viewModel.setPlayNext(song); showSnackbar("Will play next") },
                 onAddToQueue = { viewModel.addToQueue(song); showSnackbar("Added to queue") },
                 onAddToPlaylist = { onAddToPlaylist(song) },
-                onDelete = { viewModel.deleteSong(song); showSnackbar("Song deleted") },
+                onDelete = { viewModel.deleteSong(song); },
                 onEdit = { showSnackbar("Edit functionality coming soon!") },
+                onDownload = { onDownload(song) },
                 onViewAlbum = { onViewAlbum(song.album ?: "Unknown Album") }, onViewArtist = { onViewArtist(song.artist) }
             )
         }
@@ -732,6 +825,7 @@ fun SongItem(
     onAddToPlaylist  : () -> Unit = {},
     onDelete         : () -> Unit = {},
     onEdit           : () -> Unit = {},
+    onDownload       : () -> Unit = {},
     onViewAlbum      : () -> Unit = {},
     onViewArtist     : () -> Unit = {}
 ) {
@@ -770,8 +864,10 @@ fun SongItem(
                 DropdownMenuItem(text = { Text("Add to Queue", color = SpotifyWhite) }, onClick = { showMenu = false; onAddToQueue() })
                 DropdownMenuItem(text = { Text("Add to Playlist", color = SpotifyWhite) }, onClick = { showMenu = false; onAddToPlaylist() })
 
-                // ✅ CONDITIONAL: Remove Delete for online songs, Add Edit for offline
-                if (!isOnline) {
+                // ✅ CONDITIONAL: Download for online, Edit/Delete for offline
+                if (isOnline) {
+                    DropdownMenuItem(text = { Text("Download Song", color = SpotifyWhite) }, onClick = { showMenu = false; onDownload() })
+                } else {
                     DropdownMenuItem(text = { Text("Edit Song Info", color = SpotifyWhite) }, onClick = { showMenu = false; onEdit() })
                     DropdownMenuItem(text = { Text("Delete from Device", color = Color(0xFFFF5555)) }, onClick = { showMenu = false; onDelete() })
                 }

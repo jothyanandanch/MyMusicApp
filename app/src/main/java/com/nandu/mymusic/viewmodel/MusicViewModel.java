@@ -167,12 +167,12 @@ public class MusicViewModel extends AndroidViewModel {
                     @Override
                     public void onMediaItemTransition(MediaItem mediaItem, int reason) {
                         // --- SLEEP TIMER TRACK COUNTER CHECK ---
-                        // Decrement the counter when the song changes naturally (not when repeating the same song)
                         if (sleepTrackCounter > 0 && reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO) {
                             sleepTrackCounter--;
                             if (sleepTrackCounter == 0) {
                                 triggerSleepTimerAction();
-                                return; // Stop processing further transition logic
+                                // ✅ FIXED: We removed "return;" here so the ViewModel
+                                // can still update the currentIndex and currentSongLiveData correctly.
                             }
                         }
                         if (currentPlaylist == null || currentPlaylist.isEmpty()) return;
@@ -222,7 +222,7 @@ public class MusicViewModel extends AndroidViewModel {
             @Override
             public void onChange(boolean selfChange) {
                 handler.removeCallbacks(reloadRunnable);
-                handler.postDelayed(reloadRunnable, 30000);
+                handler.postDelayed(reloadRunnable, 1500);
             }
         };
         application.getContentResolver().registerContentObserver(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, true, contentObserver);
@@ -364,12 +364,22 @@ public class MusicViewModel extends AndroidViewModel {
     }
     
     // ── Playback / Queue / Custom Playlists / Deletion logic ───────────────────
-    
+    // 3. Apply shuffle behavior gracefully when starting a specific song
     public void playSong(Song song, List<Song> playlist) {
         if (exoPlayer == null) return;
         currentPlaylist = new ArrayList<>(playlist);
         currentIndex    = currentPlaylist.indexOf(song);
         if (currentIndex < 0) currentIndex = 0;
+        
+        // ✅ FIXED: If shuffle is active, re-shuffle the upcoming songs in the queue
+        if (Boolean.TRUE.equals(shuffleModeLiveData.getValue())) {
+            List<Song> upcoming = new ArrayList<>(currentPlaylist.subList(currentIndex + 1, currentPlaylist.size()));
+            Collections.shuffle(upcoming);
+            for (int i = 0; i < upcoming.size(); i++) {
+                currentPlaylist.set(currentIndex + 1 + i, upcoming.get(i));
+            }
+        }
+        
         updateQueueUI();
         List<MediaItem> items = new ArrayList<>();
         for (Song s : currentPlaylist) items.add(createMediaItem(s));
@@ -451,9 +461,15 @@ public class MusicViewModel extends AndroidViewModel {
     public void removeSongFromUpcoming(Song song) {
         if (currentPlaylist == null || exoPlayer == null) return;
         int index = currentPlaylist.indexOf(song);
-        if (index > currentIndex) {
+        // ✅ FIXED: Allow removal from history (index < currentIndex)
+        if (index >= 0 && index != currentIndex) {
             currentPlaylist.remove(index);
             exoPlayer.removeMediaItem(index);
+            // ✅ Shift the current index back if we removed a song before it
+            if (index < currentIndex) {
+                currentIndex--;
+                persistLastIndex(currentIndex);
+            }
             updateQueueUI();
         }
     }
@@ -463,24 +479,39 @@ public class MusicViewModel extends AndroidViewModel {
         List<Integer> indicesToRemove = new ArrayList<>();
         for (Song song : songsToRemove) {
             int idx = currentPlaylist.indexOf(song);
-            if (idx > currentIndex) indicesToRemove.add(idx);
+            // ✅ FIXED: Allow targeting history songs
+            if (idx >= 0 && idx != currentIndex) indicesToRemove.add(idx);
         }
+        
         Collections.sort(indicesToRemove, Collections.reverseOrder());
         for (int idx : indicesToRemove) {
             currentPlaylist.remove(idx);
             exoPlayer.removeMediaItem(idx);
+            if (idx < currentIndex) {
+                currentIndex--;
+            }
         }
+        persistLastIndex(currentIndex);
         updateQueueUI();
     }
     
-    public void moveSongInUpcoming(int fromLocal, int toLocal) {
+    // ✅ FIXED: Takes absolute indices allowing drags across the entire unified queue
+    public void moveSongInUpcoming(int fromAbsolute, int toAbsolute) {
         if (currentPlaylist == null || exoPlayer == null) return;
-        int absoluteFrom = currentIndex + 1 + fromLocal;
-        int absoluteTo   = currentIndex + 1 + toLocal;
-        if (absoluteFrom >= currentPlaylist.size() || absoluteTo >= currentPlaylist.size()) return;
-        Song song = currentPlaylist.remove(absoluteFrom);
-        currentPlaylist.add(absoluteTo, song);
-        exoPlayer.moveMediaItem(absoluteFrom, absoluteTo);
+        if (fromAbsolute < 0 || fromAbsolute >= currentPlaylist.size() || toAbsolute < 0 || toAbsolute >= currentPlaylist.size()) return;
+        if (fromAbsolute == currentIndex || toAbsolute == currentIndex) return; // Protect Now Playing
+        
+        Song song = currentPlaylist.remove(fromAbsolute);
+        currentPlaylist.add(toAbsolute, song);
+        exoPlayer.moveMediaItem(fromAbsolute, toAbsolute);
+        
+        // Safely adjust currentIndex if we dragged across it
+        if (fromAbsolute < currentIndex && toAbsolute > currentIndex) {
+            currentIndex--;
+        } else if (fromAbsolute > currentIndex && toAbsolute < currentIndex) {
+            currentIndex++;
+        }
+        persistLastIndex(currentIndex);
         updateQueueUI();
     }
     
@@ -1029,7 +1060,7 @@ public class MusicViewModel extends AndroidViewModel {
     }
     
     private void triggerSleepTimerAction() {
-        if (exoPlayer != null && exoPlayer.isPlaying()) {
+        if (exoPlayer != null) {
             exoPlayer.pause();
         }
         cancelSleepTimer();
