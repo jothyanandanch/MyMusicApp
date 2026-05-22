@@ -357,6 +357,14 @@ fun QueueContent(
     // ✅ ADDED: State for the dropdown menu
     var showSelectMenu by remember { mutableStateOf(false) }
 
+    LaunchedEffect(Unit) {
+        if (currentIdx >= 0) {
+            // Scroll to currentIdx - 1 so the "Now Playing" header
+            // and a previous song are visible right above it
+            listState.scrollToItem(maxOf(0, currentIdx - 1))
+        }
+    }
+
     LaunchedEffect(isFullyExpanded) {
         if (!isFullyExpanded) {
             isSelectionMode = false; selectedSongs = emptySet()
