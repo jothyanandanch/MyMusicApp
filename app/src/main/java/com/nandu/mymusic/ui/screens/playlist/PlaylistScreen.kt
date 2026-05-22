@@ -490,7 +490,7 @@ fun PlaylistSongItem(
     onRemoveSong     : () -> Unit
 ) {
     var showMenu by remember { mutableStateOf(false) }
-
+    val isOnline = song.uri.toString().startsWith("http")
     Row(
         modifier = Modifier.fillMaxWidth().combinedClickable(onClick = { onClick() }, onLongClick = { if (!isEditMode) showMenu = true })
             .background(if (isCurrentSong && !isEditMode) SpotifySurface else if (isSelected) SpotifySurface2 else Color.Transparent)
@@ -505,9 +505,15 @@ fun PlaylistSongItem(
             Spacer(Modifier.width(8.dp))
         }
 
-        Box(modifier = Modifier.size(48.dp).clip(RoundedCornerShape(4.dp)).background(SpotifySurface2), contentAlignment = Alignment.Center) {
-            Icon(Icons.Filled.MusicNote, null, tint = if (isCurrentSong) SpotifyGreen else SpotifyGray, modifier = Modifier.size(24.dp))
-        }
+        AlbumArt(
+            song = song,
+            audioUri = song.uri,
+            title = song.title,
+            artist = song.artist,
+            isActive = isCurrentSong && !isEditMode,
+            size = 48.dp,
+            cornerRadius = 4.dp
+        )
 
         Column(modifier = Modifier.padding(start = 12.dp).weight(1f)) {
             Text(song.title, color = if (isCurrentSong && !isEditMode) SpotifyGreen else SpotifyWhite, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -519,7 +525,10 @@ fun PlaylistSongItem(
                 Icon(imageVector = if (isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder, contentDescription = "Like", tint = if (isFavorite) SpotifyGreen else SpotifyGray, modifier = Modifier.size(18.dp))
             }
 
-            Text(formatDuration(song.duration), color = SpotifyGray, fontSize = 12.sp)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (isOnline) Icon(Icons.Filled.Cloud, contentDescription = "Online", tint = SpotifyGreen, modifier = Modifier.size(14.dp).padding(end = 4.dp))
+                Text(formatDuration(song.duration), color = SpotifyGray, fontSize = 12.sp)
+            }
             Spacer(Modifier.width(4.dp))
 
             Box {

@@ -231,7 +231,7 @@ fun FavoritesScreen(
         } else {
             itemsIndexed(displayFavorites) { index, song ->
                 val isSelected = selectedSongsToRemove.contains(song)
-
+                val isOnline = song.uri.toString().startsWith("http")
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -303,6 +303,11 @@ fun FavoritesScreen(
                                 modifier           = Modifier.size(18.dp)
                             )
                         }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            if (isOnline) Icon(Icons.Filled.Cloud, contentDescription = "Online", tint = SpotifyGreen, modifier = Modifier.size(14.dp).padding(end = 4.dp))
+                            Text(com.nandu.mymusic.ui.screens.library.formatDuration(song.duration), color = SpotifyGray, fontSize = 12.sp)
+                        }
+                        Spacer(Modifier.width(4.dp))
                         Icon(Icons.Filled.MoreVert, null,
                             tint = SpotifyGray, modifier = Modifier.size(20.dp))
                     }
