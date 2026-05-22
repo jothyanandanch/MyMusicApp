@@ -31,11 +31,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
 import com.nandu.mymusic.model.Song
 import com.nandu.mymusic.ui.components.AlbumArt
 import com.nandu.mymusic.ui.screens.favorites.FavoritesScreen
@@ -115,6 +117,18 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
             2 -> localSongs + onlineSongs
             else -> localSongs
         }
+    }
+    // At the top of MusicLibraryScreen.kt, get the user
+    val auth = com.google.firebase.auth.FirebaseAuth.getInstance()
+    val userName = auth.currentUser?.displayName?.split(" ")?.get(0) ?: "User"
+    val photoUrl = auth.currentUser?.photoUrl?.toString()
+
+    // Dynamic time greeting
+    val currentHour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+    val timeGreeting = when (currentHour) {
+        in 0..11 -> "Good morning"
+        in 12..16 -> "Good afternoon"
+        else -> "Good evening"
     }
 
     val onlineSearchSongs by viewModel.onlineSearchResults.observeAsState(initial = emptyList<Song>())
@@ -316,13 +330,29 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                     Column(modifier = Modifier.fillMaxWidth().background(SpotifyBlack).statusBarsPadding()) {
                         // --- GREETING ROW ---
                         Row(modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Box(modifier = Modifier.size(32.dp).clip(CircleShape).background(SpotifyGreen), contentAlignment = Alignment.Center) {
-                                Text("Hi", color = SpotifyBlack, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                            }
+                            // 1. Show Google Profile Picture instead of the green "Hi" circle
+                            AsyncImage(
+                                model = photoUrl,
+                                contentDescription = "Profile Picture",
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(CircleShape)
+                                    .background(SpotifySurface2),
+                                contentScale = ContentScale.Crop
+                            )
+
                             Spacer(Modifier.width(12.dp))
+
+                            // 2. Show Dynamic Time and Name
                             Text(
-                                text = when (selectedTab) { 0 -> "Good evening"; 1 -> "Search"; 2 -> "Playlists"; else -> "Liked Songs" },
-                                color = SpotifyWhite, fontWeight = FontWeight.Bold, fontSize = 22.sp
+                                text = if (selectedTab == 0) "$timeGreeting, $userName" else when (selectedTab) {
+                                    1 -> "Search"
+                                    2 -> "Playlists"
+                                    else -> "Liked Songs"
+                                },
+                                color = SpotifyWhite,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 22.sp
                             )
                         }
 

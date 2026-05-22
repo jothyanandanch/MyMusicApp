@@ -46,6 +46,12 @@ dependencies {
     implementation(libs.material)
     implementation(libs.activity.compose)
 
+    // Firebase Authentication
+    implementation("com.google.firebase:firebase-auth")
+
+    // Google Play Services Auth (for Google Sign-In)
+    implementation("com.google.android.gms:play-services-auth:21.2.0")
+
     // ✅ Compose BOM (keeps versions aligned automatically)
     implementation(platform("androidx.compose:compose-bom:2024.04.00"))
     implementation(platform("com.google.firebase:firebase-bom:34.13.0"))
