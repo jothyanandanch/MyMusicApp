@@ -230,6 +230,7 @@ fun FavoritesScreen(
             }
         } else {
             itemsIndexed(displayFavorites) { index, song ->
+                var showSongMenu by remember { mutableStateOf(false) }
                 val isSelected = selectedSongsToRemove.contains(song)
                 val isOnline = song.uri.toString().startsWith("http")
                 Row(
@@ -264,7 +265,7 @@ fun FavoritesScreen(
                             text     = "${index + 1}",
                             color    = if (song.id == currentSong?.id) SpotifyGreen else SpotifyGray,
                             fontSize = 13.sp,
-                            modifier = Modifier.width(24.dp)
+                            modifier = Modifier.requiredWidth(24.dp)
                         )
                         Spacer(Modifier.width(8.dp))
                     }
@@ -308,8 +309,28 @@ fun FavoritesScreen(
                             Text(com.nandu.mymusic.ui.screens.library.formatDuration(song.duration), color = SpotifyGray, fontSize = 12.sp)
                         }
                         Spacer(Modifier.width(4.dp))
-                        Icon(Icons.Filled.MoreVert, null,
-                            tint = SpotifyGray, modifier = Modifier.size(20.dp))
+                        Box {
+                            IconButton(
+                                onClick = { showSongMenu = true },
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Icon(Icons.Filled.MoreVert, "More Options", tint = SpotifyGray, modifier = Modifier.size(20.dp))
+                            }
+
+                            DropdownMenu(
+                                expanded = showSongMenu,
+                                onDismissRequest = { showSongMenu = false },
+                                modifier = Modifier.background(SpotifySurface2)
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("Remove from Liked Songs", color = Color(0xFFFF5555)) },
+                                    onClick = {
+                                        showSongMenu = false
+                                        onToggleFavorite(song)
+                                    }
+                                )
+                            }
+                        }
                     }
                 }
                 HorizontalDivider(color = SpotifySurface, thickness = 0.5.dp)

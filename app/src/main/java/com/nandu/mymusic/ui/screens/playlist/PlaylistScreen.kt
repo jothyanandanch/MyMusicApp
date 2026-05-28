@@ -502,7 +502,7 @@ fun PlaylistSongItem(
             Spacer(Modifier.width(8.dp))
         } else {
             Text(text = "${index + 1}", color = if (isCurrentSong) SpotifyGreen else SpotifyGray, fontSize = 13.sp, modifier = Modifier.width(24.dp))
-            Spacer(Modifier.width(8.dp))
+            Spacer(Modifier.requiredWidth(8.dp))
         }
 
         AlbumArt(
