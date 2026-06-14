@@ -45,7 +45,14 @@ fun FavoritesScreen(
     onSongClick      : (Song) -> Unit,
     onToggleFavorite : (Song) -> Unit,
     onAddSongs       : (List<Song>) -> Unit, // Bulk Add Callback
-    onRemoveSongs    : (List<Song>) -> Unit  // Bulk Remove Callback
+    onRemoveSongs    : (List<Song>) -> Unit,  // Bulk Remove Callback
+    onPlayNext       : (Song) -> Unit,
+    onAddToQueue     : (Song) -> Unit,
+    onAddToPlaylist  : (Song) -> Unit,
+    onViewAlbum      : (String) -> Unit,
+    onViewArtist     : (String) -> Unit,
+    onDownload       : (Song) -> Unit,
+    onEdit           : (Song) -> Unit = {}
 ) {
     // ── State for Menu & Bulk Actions ──
     var showMenu by remember { mutableStateOf(false) }
@@ -323,11 +330,43 @@ fun FavoritesScreen(
                                 modifier = Modifier.background(SpotifySurface2)
                             ) {
                                 DropdownMenuItem(
+                                    text = { Text("View Album", color = SpotifyWhite) },
+                                    onClick = { showSongMenu = false; onViewAlbum(song.album ?: "Unknown Album") }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("View Artist", color = SpotifyWhite) },
+                                    onClick = { showSongMenu = false; onViewArtist(song.artist) }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Play Next", color = SpotifyWhite) },
+                                    onClick = { showSongMenu = false; onPlayNext(song) }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Add to Queue", color = SpotifyWhite) },
+                                    onClick = { showSongMenu = false; onAddToQueue(song) }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Add to Playlist", color = SpotifyWhite) },
+                                    onClick = { showSongMenu = false; onAddToPlaylist(song) }
+                                )
+
+                                // Download/Edit logic based on offline vs online
+                                if (isOnline) {
+                                    DropdownMenuItem(
+                                        text = { Text("Download Song", color = SpotifyWhite) },
+                                        onClick = { showSongMenu = false; onDownload(song) }
+                                    )
+                                } else {
+                                    DropdownMenuItem(
+                                        text = { Text("Edit Song Info", color = SpotifyWhite) },
+                                        onClick = { showSongMenu = false; onEdit(song) }
+                                    )
+                                }
+
+                                // Specific to Liked Songs
+                                DropdownMenuItem(
                                     text = { Text("Remove from Liked Songs", color = Color(0xFFFF5555)) },
-                                    onClick = {
-                                        showSongMenu = false
-                                        onToggleFavorite(song)
-                                    }
+                                    onClick = { showSongMenu = false; onToggleFavorite(song) }
                                 )
                             }
                         }

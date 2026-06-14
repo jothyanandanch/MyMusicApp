@@ -518,7 +518,14 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                             onRemoveSongs = {list ->
                                 list.forEach { song -> if (favoriteIds.contains(song.id)) viewModel.toggleFavorite(song) }
                                 showSnackbar("Removed ${list.size} song/songs from Liked Songs")
-                            }
+                            },
+                            onPlayNext = { song -> viewModel.setPlayNext(song); showSnackbar("Will play next") },
+                            onAddToQueue = { song -> viewModel.addToQueue(song); showSnackbar("Added to queue") },
+                            onAddToPlaylist = { song -> songForPlaylistDialog = song },
+                            onViewAlbum = handleViewAlbum,
+                            onViewArtist = handleViewArtist,
+                            onDownload = { song -> songToDownload = song },
+                            onEdit = { showSnackbar("Edit functionality coming soon!") }
                         )
                     }
                 }
