@@ -41,17 +41,18 @@ public class LocalMusicRepository {
         
         // Check against known recording directories
         for (String excludedPath : EXCLUDED_PATHS) {
-            if (lowerPath.contains(excludedPath.toLowerCase())) {
+            if (lowerPath.contains(excludedPath)) {
                 AppLog.d(AppLog.REPO, "Excluding: " + filePath + " (excluded path)");
                 return true;
             }
         }
         
         // Exclude any file/folder with "recording" in the name
-        if (lowerPath.contains("recording")) {
-            AppLog.d(AppLog.REPO, "Excluding: " + filePath + " (contains 'recording')");
+        if (lowerPath.contains("recording") || lowerPath.contains("ringtone")) {
+            AppLog.d(AppLog.REPO, "Excluding: " + filePath + " (contains 'recording' or 'ringtone')");
             return true;
         }
+
         
         return false;
     }
@@ -66,7 +67,7 @@ public class LocalMusicRepository {
                 MediaStore.Audio.Media.ALBUM,
                 MediaStore.Audio.Media.DURATION,
                 MediaStore.Audio.Media.ALBUM_ID,  // needed for album art
-                MediaStore.Audio.Media.RELATIVE_PATH       // ✅ NEW: Get file path for filtering
+                MediaStore.Audio.Media.RELATIVE_PATH // ✅ NEW: Get file path for filtering
         };
         
         AppLog.d(AppLog.REPO, "Starting scan for music...");
@@ -97,7 +98,8 @@ public class LocalMusicRepository {
                         String album    = cursor.getString(albumCol);
                         long duration   = cursor.getLong(durationCol);
                         long albumId    = cursor.getLong(albumIdCol);
-                        String filePath = cursor.getString(dataCol);  // ✅ NEW: Get file path
+                        String filePath = cursor.getString(dataCol);
+                        
                         
                         // ✅ FILTER: Skip recording files and folders
                         if (shouldExcludePath(filePath)) {
@@ -105,14 +107,13 @@ public class LocalMusicRepository {
                             continue;  // Skip this file
                         }
                         
-                        Uri songUri     = ContentUris.withAppendedId(
+                        Uri songUri = ContentUris.withAppendedId(
                                 MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id);
                         
                         // Album art URI — Coil will handle null gracefully in UI
-                        Uri artUri      = ContentUris.withAppendedId(ALBUM_ART_URI, albumId);
+                        Uri artUri = ContentUris.withAppendedId(ALBUM_ART_URI, albumId);
                         
-                        
-                        Song song = new Song(id, artist, title,album, songUri, duration, artUri);
+                        Song song = new Song(id, artist, title,album, songUri, duration, artUri,"Unknown");
                         AppLog.i(AppLog.REPO, "Found: " + title + " by " + artist);
                         songs.add(song);
                         

@@ -149,6 +149,7 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
 
     val isSleepTimerActive by viewModel.isSleepTimerActive.observeAsState(false)
     val sleepTimerRemainingMs by viewModel.sleepTimerRemaining.observeAsState(0L) // ✅ NEW OBSERVER
+    val sleepTimerTracksRemaining by viewModel.sleepTimerTracksRemaining.observeAsState(-1)
 
     val tabHistory = remember { mutableStateListOf(0) }
     var selectedTab by remember { mutableIntStateOf(0) }
@@ -160,9 +161,40 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
     val coroutineScope = rememberCoroutineScope()
     val showSnackbar: (String) -> Unit = { msg ->
         snackbarHostState.currentSnackbarData?.dismiss()
-        coroutineScope.launch { snackbarHostState.showSnackbar(msg) }
+        coroutineScope.launch {
+            val job = launch { snackbarHostState.showSnackbar(msg) }
+            kotlinx.coroutines.delay(2500) // Reduced timer for standard popups
+            job.cancel()
+        }
     }
-
+    val showActionSnackbar: (String, String, () -> Unit) -> Unit = { msg, actionLabel, action ->
+        snackbarHostState.currentSnackbarData?.dismiss()
+        coroutineScope.launch {
+            val job = launch {
+                val result = snackbarHostState.showSnackbar(
+                    message = msg,
+                    actionLabel = actionLabel,
+                    duration = SnackbarDuration.Indefinite
+                )
+                if (result == SnackbarResult.ActionPerformed) {
+                    action()
+                }
+            }
+            kotlinx.coroutines.delay(3000) // Reduced timer for actionable popups
+            job.cancel()
+        }
+    }
+    val handleToggleFavorite: (Song) -> Unit = { song ->
+        val isAdding = !favoriteIds.contains(song.id)
+        viewModel.toggleFavorite(song)
+        if (isAdding) {
+            showActionSnackbar("Added to Liked Songs", "Play Next") {
+                viewModel.setPlayNext(song)
+            }
+        } else {
+            showSnackbar("Removed from Liked Songs")
+        }
+    }
     val handleViewAlbum: (String) -> Unit = { viewStack.add(CollectionView.Album(it)) }
     val handleViewArtist: (String) -> Unit = { viewStack.add(CollectionView.Artist(it)) }
 
@@ -222,16 +254,36 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                     TextButton(onClick = { showCreatePlaylistDialog = true }) {
                         Text("+ Create New Playlist", color = SpotifyGreen)
                     }
-                    playlists.keys.forEach { playlistName ->
+                    playlists.forEach { (playlistName, songIds) ->
+                        val isAlreadyInPlaylist = songIds.contains(songForPlaylistDialog!!.id)
+
                         TextButton(
                             onClick = {
-                                viewModel.addSongToPlaylist(playlistName, songForPlaylistDialog!!)
-                                showSnackbar("Added to $playlistName")
-                                songForPlaylistDialog = null
+                                if (!isAlreadyInPlaylist) {
+                                    viewModel.addSongToPlaylist(playlistName, songForPlaylistDialog!!)
+                                    showSnackbar("Added to $playlistName")
+                                    songForPlaylistDialog = null
+                                }
                             },
+                            enabled = !isAlreadyInPlaylist,
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Text(playlistName, color = SpotifyWhite, modifier = Modifier.fillMaxWidth())
+                            Column(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalAlignment = Alignment.Start
+                            ) {
+                                Text(
+                                    text = playlistName,
+                                    color = if (isAlreadyInPlaylist) SpotifyGray.copy(alpha = 0.5f) else SpotifyWhite
+                                )
+                                if (isAlreadyInPlaylist) {
+                                    Text(
+                                        text = "Already in playlist",
+                                        color = SpotifyGray.copy(alpha = 0.5f),
+                                        fontSize = 12.sp
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -457,7 +509,9 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                                 title = currentView.name, songs = albumSongs, currentSong = currentSong, favoriteIds = favoriteIds,
                                 sortType = persistentSortType, onSortChange = onSortTypeChange, showSnackbar = showSnackbar,
                                 onBack = { viewStack.removeAt(viewStack.lastIndex) }, onSongClick = { song -> viewModel.playSong(song, albumSongs) },
-                                onToggleFavorite = { song -> viewModel.toggleFavorite(song) }, onShufflePlay = { viewModel.playShuffled(albumSongs) },
+                                onToggleFavorite = { song -> handleToggleFavorite(song) },
+                                onShufflePlay = { viewModel.playShuffled(albumSongs) },
+                                onPlayAll = { if (albumSongs.isNotEmpty()) viewModel.playSong(albumSongs.first(), albumSongs) },
                                 onAddToPlaylist = { songForPlaylistDialog = it }, onViewAlbum = handleViewAlbum, onViewArtist = handleViewArtist, viewModel = viewModel,
                                 onDownload = {song -> songToDownload =song}
                             )
@@ -468,7 +522,22 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                                 title = currentView.name, songs = artistSongs, currentSong = currentSong, favoriteIds = favoriteIds,
                                 sortType = persistentSortType, onSortChange = onSortTypeChange, showSnackbar = showSnackbar,
                                 onBack = { viewStack.removeAt(viewStack.lastIndex) }, onSongClick = { song -> viewModel.playSong(song, artistSongs) },
-                                onToggleFavorite = { song -> viewModel.toggleFavorite(song) }, onShufflePlay = { viewModel.playShuffled(artistSongs) },
+                                onToggleFavorite = { song -> handleToggleFavorite(song) },
+                                onShufflePlay = { viewModel.playShuffled(artistSongs) },
+                                onPlayAll = { if (artistSongs.isNotEmpty()) viewModel.playSong(artistSongs.first(), artistSongs) },
+                                onAddToPlaylist = { songForPlaylistDialog = it }, onViewAlbum = handleViewAlbum, onViewArtist = handleViewArtist, viewModel = viewModel,
+                                onDownload = { song -> songToDownload = song }
+                            )
+                        }
+                        is CollectionView.Artist -> {
+                            val artistSongs = currentDisplaySongs.filter { it.artist == currentView.name }
+                            CollectionDetailView(
+                                title = currentView.name, songs = artistSongs, currentSong = currentSong, favoriteIds = favoriteIds,
+                                sortType = persistentSortType, onSortChange = onSortTypeChange, showSnackbar = showSnackbar,
+                                onBack = { viewStack.removeAt(viewStack.lastIndex) }, onSongClick = { song -> viewModel.playSong(song, artistSongs) },
+                                onToggleFavorite = { song -> handleToggleFavorite(song) },
+                                onShufflePlay = { viewModel.playShuffled(artistSongs) },
+                                onPlayAll = { if (artistSongs.isNotEmpty()) viewModel.playSong(artistSongs.first(), artistSongs) },
                                 onAddToPlaylist = { songForPlaylistDialog = it }, onViewAlbum = handleViewAlbum, onViewArtist = handleViewArtist, viewModel = viewModel,
                                 onDownload = { song -> songToDownload = song }
                             )
@@ -480,7 +549,7 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                             songs = currentDisplaySongs, favorites = favorites, currentSong = currentSong, favoriteIds = favoriteIds,
                             sortType = persistentSortType, onSortChange = onSortTypeChange, showSnackbar = showSnackbar,
                             onSongClick = { song -> viewModel.playSong(song, currentDisplaySongs) },
-                            onToggleFavorite = { song -> viewModel.toggleFavorite(song) },
+                            onToggleFavorite = { song -> handleToggleFavorite(song) },
                             onShufflePlay = { viewModel.playAllShuffled(currentDisplaySongs) },
                             onAddToPlaylist = { song -> songForPlaylistDialog = song },
                             onViewAlbum = handleViewAlbum, onViewArtist = handleViewArtist, viewModel = viewModel,
@@ -490,7 +559,7 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                             searchQuery = searchQuery, filteredSongs = filteredSongs, currentSong = currentSong, favoriteIds = favoriteIds,
                             showSnackbar = showSnackbar,
                             onSongClick = { song -> viewModel.playSong(song, filteredSongs) },
-                            onToggleFavorite = { song -> viewModel.toggleFavorite(song) },
+                            onToggleFavorite = { song -> handleToggleFavorite(song) },
                             onPlayNext = { song -> viewModel.setPlayNext(song); showSnackbar("Will play next") },
                             onAddToQueue = { song -> viewModel.addToQueue(song); showSnackbar("Added to queue") },
                             onAddToPlaylist = { song -> songForPlaylistDialog = song },
@@ -502,7 +571,7 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                             songs = currentDisplaySongs, currentSong = currentSong, favoriteIds = favoriteIds,
                             sortType = persistentSortType, onSortChange = onSortTypeChange, showSnackbar = showSnackbar,
                             onSongClick = { song -> viewModel.playSong(song, currentDisplaySongs) },
-                            onToggleFavorite = { song -> viewModel.toggleFavorite(song) },
+                            onToggleFavorite = { song -> handleToggleFavorite(song) },
                             viewModel = viewModel
                         )
                         3 -> FavoritesScreen(
@@ -510,7 +579,7 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                             favorites = favorites, currentSong = currentSong, favoriteIds = favoriteIds,
                             sortType = persistentSortType, onSortChange = onSortTypeChange,
                             onSongClick = { song -> viewModel.playSong(song, favorites) },
-                            onToggleFavorite = { song -> viewModel.toggleFavorite(song) },
+                            onToggleFavorite = { song -> handleToggleFavorite(song) },
                             onAddSongs = {list ->
                                 list.forEach {song -> if (!favoriteIds.contains(song.id)) viewModel.toggleFavorite(song)}
                                 showSnackbar("Added ${list.size} song/songs to Liked Songs")
@@ -525,6 +594,7 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                             onViewAlbum = handleViewAlbum,
                             onViewArtist = handleViewArtist,
                             onDownload = { song -> songToDownload = song },
+                            onShufflePlay = { viewModel.playShuffled(favorites) },
                             onEdit = { showSnackbar("Edit functionality coming soon!") }
                         )
                     }
@@ -578,6 +648,7 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                 // --- NEW SLEEP TIMER PARAMETERS ---
                 isSleepTimerActive = isSleepTimerActive,
                 sleepTimerRemainingMs = sleepTimerRemainingMs, // ✅ PASSED DOWN
+                sleepTimerTracksRemaining = sleepTimerTracksRemaining,
                 onStartSleepTimerTime = { minutes ->
                     viewModel.startTimeSleepTimer(minutes)
                     showSnackbar("Sleep timer set for $minutes minutes")
@@ -783,7 +854,7 @@ fun CollectionDetailView(
     title: String, songs: List<Song>, currentSong: Song?, favoriteIds: Set<Long>,
     sortType: SortType, onSortChange: (SortType) -> Unit, showSnackbar: (String) -> Unit,
     onBack: () -> Unit, onSongClick: (Song) -> Unit, onToggleFavorite: (Song) -> Unit,
-    onShufflePlay: () -> Unit, onAddToPlaylist: (Song) -> Unit,
+    onShufflePlay: () -> Unit, onPlayAll: () -> Unit, onAddToPlaylist: (Song) -> Unit,
     onViewAlbum: (String) -> Unit, onViewArtist: (String) -> Unit, viewModel: MusicViewModel,
     onDownload: (Song) -> Unit
 ) {
@@ -810,6 +881,10 @@ fun CollectionDetailView(
             Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.End) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     SortMenu(sortType = sortType, onSortChange = onSortChange)
+                    Spacer(Modifier.width(8.dp))
+                    Box(modifier = Modifier.size(56.dp).clip(CircleShape).background(SpotifyGreen).clickable(onClick = onPlayAll), contentAlignment = Alignment.Center) {
+                        Icon(Icons.Filled.PlayArrow, "Play All", tint = SpotifyBlack, modifier = Modifier.size(28.dp))
+                    }
                     Spacer(Modifier.width(8.dp))
                     Box(modifier = Modifier.size(56.dp).clip(CircleShape).background(SpotifyGreen).clickable(onClick = onShufflePlay), contentAlignment = Alignment.Center) {
                         Icon(Icons.Filled.Shuffle, "Shuffle", tint = SpotifyBlack, modifier = Modifier.size(28.dp))

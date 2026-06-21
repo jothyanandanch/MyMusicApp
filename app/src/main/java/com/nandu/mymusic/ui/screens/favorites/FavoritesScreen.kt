@@ -52,6 +52,7 @@ fun FavoritesScreen(
     onViewAlbum      : (String) -> Unit,
     onViewArtist     : (String) -> Unit,
     onDownload       : (Song) -> Unit,
+    onShufflePlay    : () -> Unit = {},
     onEdit           : (Song) -> Unit = {}
 ) {
     // ── State for Menu & Bulk Actions ──
@@ -211,6 +212,20 @@ fun FavoritesScreen(
                         ) {
                             Icon(Icons.Filled.PlayArrow, "Play Liked Songs",
                                 tint = SpotifyBlack, modifier = Modifier.size(32.dp))
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        Box(
+                            modifier = Modifier
+                                .size(56.dp)
+                                .clip(RoundedCornerShape(50))
+                                .background(SpotifyGreen)
+                                .clickable {
+                                    if (favorites.isNotEmpty()) onShufflePlay()
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(Icons.Filled.Shuffle, "Shuffle Liked Songs",
+                                tint = SpotifyBlack, modifier = Modifier.size(28.dp))
                         }
                     }
                 }

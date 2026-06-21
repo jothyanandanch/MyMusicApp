@@ -10,16 +10,18 @@ public class Song {
     private String album;
     private Uri uri;
     private long duration;
-    private Uri albumArtUri; // NEW
+    private Uri albumArtUri;
+    private String language;
     
-    public Song(long id, String artist, String title,String album, Uri uri, long duration, Uri albumArtUri) {
+    public Song(long id, String artist, String title,String album, Uri uri, long duration, Uri albumArtUri,String language) {
         this.id = id;
         this.artist = artist;
         this.album=album;
         this.title = title;
         this.uri = uri;
         this.duration = duration;
-        this.albumArtUri = albumArtUri; // NEW
+        this.albumArtUri = albumArtUri;
+        this.language=language;
     }
     
     public long getId()          { return id; }
@@ -30,6 +32,7 @@ public class Song {
     public long getDuration()    { return duration; }
     public Uri getAlbumArtUri()  { return albumArtUri; } // NEW — can be null
     
+    public  String getLanguage() {return language;}
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;

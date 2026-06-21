@@ -42,6 +42,7 @@ public class OnlineMusicRepository {
 										String audioUrl = (String) songMap.get("audioUrl");
 										String coverUrl = (String) songMap.get("coverUrl");
 										long duration = ((Number) songMap.get("duration")).longValue();
+										String language=songMap.containsKey("language")? (String) songMap.get("language") : "Unknown";
 										
 										Song song = new Song(
 												id,
@@ -50,7 +51,8 @@ public class OnlineMusicRepository {
 												album,
 												Uri.parse(audioUrl),
 												duration,
-												Uri.parse(coverUrl) // ✅ We now have exact cover URLs!
+												Uri.parse(coverUrl),
+												language
 										);
 										allSongs.add(song);
 									} catch (Exception e) {

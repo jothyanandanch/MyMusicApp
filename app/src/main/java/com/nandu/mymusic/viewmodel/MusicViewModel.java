@@ -56,6 +56,7 @@ public class MusicViewModel extends AndroidViewModel {
     private static final String KEY_QUEUE_IDS     = "saved_queue_ids";
     private static final String KEY_DATA_SAVER = "data_saver_mode";
     private static final String KEY_LIBRARY_MODE = "library_mode_state";
+    private static final String KEY_DELETED_IDS = "deleted_song_ids";
     
     // ✅ NEW: Persist Sort Type
     private static final String KEY_SORT_TYPE = "last_sort_type_preference";
@@ -68,6 +69,7 @@ public class MusicViewModel extends AndroidViewModel {
     private android.os.CountDownTimer sleepTimer;
     private final MutableLiveData<Boolean> isSleepTimerActive = new MutableLiveData<>(false);
     private final MutableLiveData<Long> sleepTimerRemainingLiveData = new MutableLiveData<>(0L); // ✅ NEW: Live Countdown
+    private final MutableLiveData<Integer> sleepTimerTracksRemainingLiveData = new MutableLiveData<>(-1);
     private int sleepTrackCounter = -1; // -1 means inactive
     private boolean stopAtQueueEnd = false;
     // ── Thread Management ────────────────────────────────────────────────
@@ -92,6 +94,7 @@ public class MusicViewModel extends AndroidViewModel {
     private final MutableLiveData<Set<Long>> favoriteIdsLiveData = new MutableLiveData<>(new LinkedHashSet<>());
     private final MutableLiveData<Map<String, List<Long>>> customPlaylistsLiveData = new MutableLiveData<>(new LinkedHashMap<>());
     private final MutableLiveData<Integer> libraryModeLiveData;
+    private final Set<Long> deletedSongIds = new LinkedHashSet<>();
     
     private Player exoPlayer;
     private ListenableFuture<MediaController> controllerFuture;
@@ -132,6 +135,14 @@ public class MusicViewModel extends AndroidViewModel {
         isDataSaverModeLiveData = new MutableLiveData<>(prefs.getBoolean(KEY_DATA_SAVER, true));
         libraryModeLiveData = new MutableLiveData<>(prefs.getInt(KEY_LIBRARY_MODE, 0));
         
+        // Load deleted song IDs
+        Set<String> deletedStrs = prefs.getStringSet(KEY_DELETED_IDS, new LinkedHashSet<>());
+        if (deletedStrs != null) {
+            for (String idStr : deletedStrs) {
+                try { deletedSongIds.add(Long.parseLong(idStr)); } catch (NumberFormatException ignored) {}
+            }
+        }
+        
         // ✅ Initialize Sort Type
         String savedSortType = prefs.getString(KEY_SORT_TYPE, "DEFAULT");
         sortTypeLiveData = new MutableLiveData<>(savedSortType);
@@ -169,10 +180,9 @@ public class MusicViewModel extends AndroidViewModel {
                         // --- SLEEP TIMER TRACK COUNTER CHECK ---
                         if (sleepTrackCounter > 0 && reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO) {
                             sleepTrackCounter--;
+                            sleepTimerTracksRemainingLiveData.postValue(sleepTrackCounter);
                             if (sleepTrackCounter == 0) {
                                 triggerSleepTimerAction();
-                                // ✅ FIXED: We removed "return;" here so the ViewModel
-                                // can still update the currentIndex and currentSongLiveData correctly.
                             }
                         }
                         if (currentPlaylist == null || currentPlaylist.isEmpty()) return;
@@ -192,11 +202,18 @@ public class MusicViewModel extends AndroidViewModel {
                         if (exoPlayer != null && exoPlayer.getDuration() > 0)
                             durationLiveData.postValue(exoPlayer.getDuration());
                         if (state == Player.STATE_ENDED) {
-                            isPlayingLiveData.postValue(false);
-                            endOfQueueLiveData.postValue(true);
-                            showEndDialogLiveData.postValue(true);
-                        }
-                        if (state == Player.STATE_ENDED) {
+                            // --- SLEEP TIMER: Handle repeat-one mode ---
+                            // With REPEAT_MODE_ONE, onMediaItemTransition doesn't fire
+                            // when the same song replays, so we decrement here instead.
+                            if (sleepTrackCounter > 0 && exoPlayer.getRepeatMode() == Player.REPEAT_MODE_ONE) {
+                                sleepTrackCounter--;
+                                sleepTimerTracksRemainingLiveData.postValue(sleepTrackCounter);
+                                if (sleepTrackCounter == 0) {
+                                    triggerSleepTimerAction();
+                                    return;
+                                }
+                            }
+                            
                             // --- SLEEP TIMER QUEUE END CHECK ---
                             if (stopAtQueueEnd) {
                                 triggerSleepTimerAction();
@@ -253,6 +270,9 @@ public class MusicViewModel extends AndroidViewModel {
         executorService.execute(() -> {
             getApplication().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                     .edit().putInt(KEY_LIBRARY_MODE, mode).commit();
+            
+            // NEW: Reload the playlists for this specific mode
+            new Handler(Looper.getMainLooper()).post(this::loadPlaylistsFromPrefs);
         });
     }
     
@@ -277,7 +297,73 @@ public class MusicViewModel extends AndroidViewModel {
     
     public void clearDeleteIntent() { deleteIntentSenderLiveData.postValue(null); }
     public void setNowPlayingOpen(boolean open)      { isNowPlayingOpenLiveData.postValue(open); }
+    // Add this new LiveData variable near your other LiveData declarations
+    private static final String KEY_AUTO_PLAYLISTS = "auto_generated_playlists";
+    private static final String KEY_ENABLED_LANGS = "enabled_language_playlists";
+    private final MutableLiveData<Set<String>> autoGeneratedPlaylistsLiveData = new MutableLiveData<>(new LinkedHashSet<>());
     
+    // Add this helper method
+    private String getPlaylistPrefsKey() {
+        Integer mode = libraryModeLiveData.getValue();
+        if (mode == null) mode = 0;
+        return KEY_PLAYLISTS + "_" + mode; // e.g., "custom_playlists_keys_0" for Local
+    }
+    
+    // ✅ NEW: Toggle optional language playlists (Malayalam, Tamil, Hindi)
+    public void toggleLanguagePlaylist(String lang, boolean enable) {
+        Set<String> current = new java.util.HashSet<>(getEnabledLanguages());
+        if (enable) current.add(lang);
+        else current.remove(lang);
+        
+        current.add("Telugu");
+        current.add("English");
+        
+        getApplication().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit().putStringSet(KEY_ENABLED_LANGS, current).apply();
+        
+        if (!enable) {
+            // Delete from the current viewing mode
+            deletePlaylist(lang + " Songs");
+            
+            // ✅ Explicitly wipe the playlist from Local Mode (0) storage
+            SharedPreferences prefs = getApplication().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+            String scopedKey = KEY_PLAYLISTS + "_0";
+            Set<String> localPlaylists = new java.util.HashSet<>(prefs.getStringSet(scopedKey, new java.util.HashSet<>()));
+            if (localPlaylists.remove(lang + " Songs")) {
+                prefs.edit().putStringSet(scopedKey, localPlaylists).remove("playlist_" + lang + " Songs" + scopedKey).apply();
+            }
+            
+            Set<String> autoGeneratedSet = new LinkedHashSet<>(autoGeneratedPlaylistsLiveData.getValue() != null ? autoGeneratedPlaylistsLiveData.getValue() : new LinkedHashSet<>());
+            autoGeneratedSet.remove(lang + " Songs");
+            autoGeneratedPlaylistsLiveData.postValue(autoGeneratedSet);
+            prefs.edit().putStringSet(KEY_AUTO_PLAYLISTS, autoGeneratedSet).apply();
+            
+            // Refresh UI if the user is currently on the Local Library
+            Integer currentMode = libraryModeLiveData.getValue();
+            if (currentMode != null && currentMode == 0) {
+                new Handler(Looper.getMainLooper()).post(this::loadPlaylistsFromPrefs);
+            }
+        } else {
+            generateLanguagePlaylistsFromOnlineMusic();
+            // ✅ Trigger the match immediately if a language is turned back on
+            executorService.execute(() -> {
+                matchAndGenerateLocalPlaylists(songsLiveData.getValue(), allOnlineSongsLiveData.getValue());
+            });
+        }
+    }
+    
+    
+    // ✅ NEW: Get Enabled Languages (Telugu and English are always enabled)
+    public Set<String> getEnabledLanguages() {
+        SharedPreferences prefs = getApplication().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        Set<String> defaultLangs = new java.util.HashSet<>(java.util.Arrays.asList("Telugu", "English"));
+        return prefs.getStringSet(KEY_ENABLED_LANGS, defaultLangs);
+    }
+    
+    // Add a getter for the UI
+    public LiveData<Set<String>> getAutoGeneratedPlaylists() {
+        return autoGeneratedPlaylistsLiveData;
+    }
     // ── Helper Methods ──────────────────────────────────────────────────────
     private MediaItem createMediaItem(Song song) {
         String finalUrl = song.getUri().toString();
@@ -307,6 +393,16 @@ public class MusicViewModel extends AndroidViewModel {
         executorService.execute(() -> {
             getApplication().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                     .edit().putLong(KEY_LAST_POSITION, position).commit();
+        });
+    }
+    
+    private void persistDeletedId(long songId) {
+        deletedSongIds.add(songId);
+        executorService.execute(() -> {
+            Set<String> stringSet = new LinkedHashSet<>();
+            for (Long id : deletedSongIds) stringSet.add(String.valueOf(id));
+            getApplication().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                    .edit().putStringSet(KEY_DELETED_IDS, stringSet).commit();
         });
     }
     
@@ -681,11 +777,19 @@ public class MusicViewModel extends AndroidViewModel {
     // -- Playlists --
     private void loadPlaylistsFromPrefs() {
         SharedPreferences prefs = getApplication().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
-        Set<String> playlistNames = prefs.getStringSet(KEY_PLAYLISTS, new LinkedHashSet<>());
+        
+        // NEW: Load the auto-generated playlist trackers
+        Set<String> autoNames = prefs.getStringSet(KEY_AUTO_PLAYLISTS, new LinkedHashSet<>());
+        autoGeneratedPlaylistsLiveData.postValue(new LinkedHashSet<>(autoNames));
+        
+        // NEW: Use the scoped key based on the current mode
+        String scopedKey = getPlaylistPrefsKey();
+        Set<String> playlistNames = prefs.getStringSet(scopedKey, new LinkedHashSet<>());
         Map<String, List<Long>> playlists = new LinkedHashMap<>();
+        
         if (playlistNames != null) {
             for (String name : playlistNames) {
-                String idsStr = prefs.getString("playlist_" + name, "");
+                String idsStr = prefs.getString("playlist_" + name + scopedKey, ""); // Scope the items too
                 List<Long> ids = new ArrayList<>();
                 if (!idsStr.isEmpty()) {
                     for (String id : idsStr.split(",")) {
@@ -758,23 +862,144 @@ public class MusicViewModel extends AndroidViewModel {
         executorService.execute(() -> {
             SharedPreferences prefs = getApplication().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
             SharedPreferences.Editor editor = prefs.edit();
-            Set<String> oldNames = prefs.getStringSet(KEY_PLAYLISTS, new java.util.HashSet<>());
+            
+            String scopedKey = getPlaylistPrefsKey();
+            Set<String> oldNames = prefs.getStringSet(scopedKey, new java.util.HashSet<>());
+            
             if (oldNames != null) {
-                for (String oldName : oldNames) { editor.remove("playlist_" + oldName); }
+                for (String oldName : oldNames) { editor.remove("playlist_" + oldName + scopedKey); }
             }
-            editor.putStringSet(KEY_PLAYLISTS, new java.util.HashSet<>(playlists.keySet()));
+            
+            editor.putStringSet(scopedKey, new java.util.HashSet<>(playlists.keySet()));
             for (Map.Entry<String, List<Long>> entry : playlists.entrySet()) {
                 StringBuilder sb = new StringBuilder();
                 for (int i = 0; i < entry.getValue().size(); i++) {
                     sb.append(entry.getValue().get(i));
                     if (i < entry.getValue().size() - 1) sb.append(",");
                 }
-                editor.putString("playlist_" + entry.getKey(), sb.toString());
+                editor.putString("playlist_" + entry.getKey() + scopedKey, sb.toString());
             }
-            editor.commit(); // Ensure background writes finish synchronously before releasing lock
+            editor.commit();
         });
     }
     
+    // ✅ NEW: Cross-reference Local and Online songs to generate Local Language Playlists
+    private void matchAndGenerateLocalPlaylists(List<Song> localSongs, List<Song> onlineSongs) {
+        if (localSongs == null || localSongs.isEmpty() || onlineSongs == null || onlineSongs.isEmpty()) return;
+        
+        Set<String> enabledLangs = getEnabledLanguages();
+        enabledLangs.add("Telugu");
+        enabledLangs.add("English");
+        
+        Map<String, List<Long>> localLanguagePlaylists = new LinkedHashMap<>();
+        
+        for (Song localSong : localSongs) {
+            // Clean up titles (remove brackets/parentheses for better matching)
+            String cleanLocal = localSong.getTitle().replaceAll("(?i)\\[.*?\\]|\\(.*?\\)", "").trim().toLowerCase();
+            
+            for (Song onlineSong : onlineSongs) {
+                String lang = onlineSong.getLanguage();
+                if (lang != null && enabledLangs.contains(lang)) {
+                    String cleanOnline = onlineSong.getTitle().replaceAll("(?i)\\[.*?\\]|\\(.*?\\)", "").trim().toLowerCase();
+                    
+                    // Check for a match
+                    boolean isMatch = false;
+                    if (cleanLocal.equalsIgnoreCase(cleanOnline)) {
+                        isMatch = true;
+                    } else if (cleanOnline.length() > 3 && cleanLocal.contains(cleanOnline)) {
+                        isMatch = true;
+                    } else if (cleanLocal.length() > 3 && cleanOnline.contains(cleanLocal)) {
+                        isMatch = true;
+                    }
+                    
+                    if (isMatch) {
+                        String playlistName = lang + " Songs";
+                        if (!localLanguagePlaylists.containsKey(playlistName)) {
+                            localLanguagePlaylists.put(playlistName, new ArrayList<>());
+                        }
+                        if (!localLanguagePlaylists.get(playlistName).contains(localSong.getId())) {
+                            localLanguagePlaylists.get(playlistName).add(localSong.getId());
+                        }
+                        break; // Stop checking once we've found a language for this local song
+                    }
+                }
+            }
+        }
+        
+        if (localLanguagePlaylists.isEmpty()) return;
+        
+        // Force save these playlists specifically to the Local Library (Mode 0)
+        SharedPreferences prefs = getApplication().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        String scopedKey = KEY_PLAYLISTS + "_0";
+        
+        Set<String> existingPlaylists = new java.util.HashSet<>(prefs.getStringSet(scopedKey, new java.util.HashSet<>()));
+        SharedPreferences.Editor editor = prefs.edit();
+        
+        Set<String> autoGeneratedSet = new LinkedHashSet<>(prefs.getStringSet(KEY_AUTO_PLAYLISTS, new LinkedHashSet<>()));
+        
+        for (Map.Entry<String, List<Long>> entry : localLanguagePlaylists.entrySet()) {
+            String pName = entry.getKey();
+            existingPlaylists.add(pName);
+            autoGeneratedSet.add(pName);
+            
+            StringBuilder sb = new StringBuilder();
+            for (int i = 0; i < entry.getValue().size(); i++) {
+                sb.append(entry.getValue().get(i));
+                if (i < entry.getValue().size() - 1) sb.append(",");
+            }
+            editor.putString("playlist_" + pName + scopedKey, sb.toString());
+        }
+        
+        editor.putStringSet(scopedKey, existingPlaylists);
+        editor.putStringSet(KEY_AUTO_PLAYLISTS, autoGeneratedSet);
+        editor.apply();
+        
+        // Refresh LiveData if the user is currently looking at the Local Library
+        Integer currentMode = libraryModeLiveData.getValue();
+        if (currentMode != null && currentMode == 0) {
+            new Handler(Looper.getMainLooper()).post(this::loadPlaylistsFromPrefs);
+        }
+    }
+    // ✅ UPDATED: Generate playlists only for enabled languages
+    public void generateLanguagePlaylistsFromOnlineMusic() {
+        Integer currentMode = libraryModeLiveData.getValue();
+        if (currentMode != null && currentMode == 0) return; // Prevent generating online playlists in Local Mode
+        
+        List<Song> onlineSongs = allOnlineSongsLiveData.getValue();
+        if (onlineSongs == null || onlineSongs.isEmpty()) return;
+        
+        Set<String> enabledLangs = getEnabledLanguages();
+        // Mandatory languages
+        enabledLangs.add("Telugu");
+        enabledLangs.add("English");
+        
+        Map<String, List<Song>> songsByLanguage = new LinkedHashMap<>();
+        for (Song song : onlineSongs) {
+            String lang = song.getLanguage();
+            // Only group languages that the user has enabled (or the mandatory ones)
+            if (lang != null && enabledLangs.contains(lang)) {
+                if (!songsByLanguage.containsKey(lang)) {
+                    songsByLanguage.put(lang, new ArrayList<>());
+                }
+                songsByLanguage.get(lang).add(song);
+            }
+        }
+        
+        Set<String> autoGeneratedSet = new LinkedHashSet<>(autoGeneratedPlaylistsLiveData.getValue() != null ? autoGeneratedPlaylistsLiveData.getValue() : new LinkedHashSet<>());
+        
+        for (Map.Entry<String, List<Song>> entry : songsByLanguage.entrySet()) {
+            String playlistName = entry.getKey() + " Songs";
+            createPlaylist(playlistName);
+            addSongsToPlaylist(playlistName, entry.getValue());
+            autoGeneratedSet.add(playlistName);
+        }
+        
+        autoGeneratedPlaylistsLiveData.postValue(autoGeneratedSet);
+        executorService.execute(() -> {
+            getApplication().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                    .edit().putStringSet(KEY_AUTO_PLAYLISTS, autoGeneratedSet).commit();
+        });
+    }
     public void removeSongFromPlaylist(String playlistName, Song song) {
         Map<String, List<Long>> current = customPlaylistsLiveData.getValue();
         if (current != null && current.containsKey(playlistName)) {
@@ -819,6 +1044,7 @@ public class MusicViewModel extends AndroidViewModel {
             int deletedRows = getApplication().getContentResolver().delete(song.getUri(), null, null);
             if (deletedRows > 0) {
                 AppLog.d(AppLog.PERMISSION, "Song permanently deleted from device storage.");
+                persistDeletedId(song.getId());
                 removeSongFromState(song);
             }
         } catch (SecurityException e) {
@@ -844,6 +1070,7 @@ public class MusicViewModel extends AndroidViewModel {
     
     public void confirmPendingDeletion() {
         if (pendingDeleteSong != null) {
+            persistDeletedId(pendingDeleteSong.getId());
             removeSongFromState(pendingDeleteSong);
             pendingDeleteSong = null;
         }
@@ -906,6 +1133,17 @@ public class MusicViewModel extends AndroidViewModel {
             @Override
             public void onSuccess(List<Song> songs) {
                 allOnlineSongsLiveData.postValue(songs);
+                new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                    generateLanguagePlaylistsFromOnlineMusic();
+                    
+                    // ✅ Trigger the local playlist matching
+                    executorService.execute(() -> {
+                        List<Song> local = songsLiveData.getValue();
+                        if (local != null && !local.isEmpty()) {
+                            matchAndGenerateLocalPlaylists(local, songs);
+                        }
+                    });
+                }, 1000);
             }
             @Override
             public void onError(Exception e) {
@@ -919,11 +1157,26 @@ public class MusicViewModel extends AndroidViewModel {
         // Changed to use executorService instead of raw Thread
         executorService.execute(() -> {
             List<Song> local = repository.fetchLocalSongs();
+            // Filter out songs that were previously deleted but not yet removed from MediaStore
+            if (!deletedSongIds.isEmpty()) {
+                List<Song> filtered = new ArrayList<>();
+                for (Song s : local) {
+                    if (!deletedSongIds.contains(s.getId())) {
+                        filtered.add(s);
+                    }
+                }
+                local = filtered;
+            }
             songsLiveData.postValue(local);
             syncFavoritesWithSongs(local);
             restoreLastSession(local);
             updateQueueUI();
             isLoadingLiveData.postValue(false);
+            // ✅ Trigger the local playlist matching
+            List<Song> online = allOnlineSongsLiveData.getValue();
+            if (online != null && !online.isEmpty()) {
+                matchAndGenerateLocalPlaylists(local, online);
+            }
         });
     }
     
@@ -1013,6 +1266,7 @@ public class MusicViewModel extends AndroidViewModel {
     // ✅ SLEEP TIMER LOGIC
     public LiveData<Boolean> getIsSleepTimerActive() { return isSleepTimerActive; }
     public LiveData<Long> getSleepTimerRemaining() { return sleepTimerRemainingLiveData; } // ✅ Live counter
+    public LiveData<Integer> getSleepTimerTracksRemaining() { return sleepTimerTracksRemainingLiveData; }
     
     // 1. Time-Based Timer
     public void startTimeSleepTimer(int minutes) {
@@ -1039,6 +1293,7 @@ public class MusicViewModel extends AndroidViewModel {
         cancelSleepTimer();
         isSleepTimerActive.postValue(true);
         sleepTrackCounter = trackCount;
+        sleepTimerTracksRemainingLiveData.postValue(trackCount);
     }
     
     // 3. End of Queue Timer
@@ -1057,6 +1312,7 @@ public class MusicViewModel extends AndroidViewModel {
         stopAtQueueEnd = false;
         isSleepTimerActive.postValue(false);
         sleepTimerRemainingLiveData.postValue(0L); // Reset time
+        sleepTimerTracksRemainingLiveData.postValue(-1); // Reset tracks
     }
     
     private void triggerSleepTimerAction() {

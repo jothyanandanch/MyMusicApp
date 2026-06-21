@@ -87,6 +87,7 @@ fun NowPlayingScreen(
     onDownload       : () -> Unit = {},
     isSleepTimerActive: Boolean = false,
     sleepTimerRemainingMs: Long = 0L, // ✅ Added to catch live timer
+    sleepTimerTracksRemaining: Int = -1,
     onStartSleepTimerTime: (Int) -> Unit = {},
     onStartSleepTimerTracks: (Int) -> Unit = {},
     onStartSleepTimerQueue: () -> Unit = {},
@@ -274,6 +275,7 @@ fun NowPlayingScreen(
         SleepTimerSheet(
             isTimerActive = isSleepTimerActive,
             sleepTimerRemainingMs = sleepTimerRemainingMs, // ✅ PASSED TO SHEET
+            sleepTimerTracksRemaining = sleepTimerTracksRemaining,
             onStartTimerTime = onStartSleepTimerTime,
             onStartTimerTracks = onStartSleepTimerTracks,
             onStartTimerQueue = onStartSleepTimerQueue,
@@ -603,6 +605,7 @@ fun QueueSongItem(song: Song, isPlaying: Boolean, isHistory: Boolean = false, is
 fun SleepTimerSheet(
     isTimerActive: Boolean,
     sleepTimerRemainingMs: Long,
+    sleepTimerTracksRemaining: Int = -1,
     onStartTimerTime: (Int) -> Unit,
     onStartTimerTracks: (Int) -> Unit,
     onStartTimerQueue: () -> Unit,
@@ -734,6 +737,8 @@ fun SleepTimerSheet(
                         val m = (sleepTimerRemainingMs / 1000) / 60
                         val s = (sleepTimerRemainingMs / 1000) % 60
                         String.format(LocalLocale.current.platformLocale, "Cancel Timer (%02d:%02d)", m, s)
+                    } else if (sleepTimerTracksRemaining >= 0) {
+                        "Cancel Timer ($sleepTimerTracksRemaining tracks left)"
                     } else {
                         "Cancel Sleep Timer"
                     }
