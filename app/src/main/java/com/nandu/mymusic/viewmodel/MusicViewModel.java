@@ -175,8 +175,10 @@ public class MusicViewModel extends AndroidViewModel {
                         isPlayingLiveData.postValue(isPlaying);
                         if (!isPlaying && exoPlayer != null) persistLastPosition(exoPlayer.getCurrentPosition());
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                            if (isPlaying && !progressHandler.hasCallbacks(progressRunnable)) {
-                                progressHandler.post(progressRunnable);
+                            if (isPlaying) {
+                                if (!progressHandler.hasCallbacks(progressRunnable)) {
+                                    progressHandler.post(progressRunnable);
+                                }
                             } else {
                                 progressHandler.removeCallbacks(progressRunnable);
                             }
@@ -623,7 +625,7 @@ public class MusicViewModel extends AndroidViewModel {
         
         List<MediaItem> items = new ArrayList<>();
         for (Song s : restored) items.add(createMediaItem(s));
-        long savedPos = (prevIdx == curIdx) ? 0L : 0L;
+        long savedPos = 0L;
         exoPlayer.setMediaItems(items, prevIdx, savedPos);
         exoPlayer.prepare();
         exoPlayer.play();
@@ -1599,11 +1601,12 @@ public class MusicViewModel extends AndroidViewModel {
             executorService.shutdown();
         }
         
-        if (exoPlayer != null) persistLastPosition(exoPlayer.getCurrentPosition());
-        super.onCleared();
         getApplication().getContentResolver().unregisterContentObserver(contentObserver);
         handler.removeCallbacks(reloadRunnable);
         progressHandler.removeCallbacks(progressRunnable);
+        
+        if (exoPlayer != null) persistLastPosition(exoPlayer.getCurrentPosition());
+        super.onCleared();
         if (controllerFuture != null) {
             MediaController.releaseFuture(controllerFuture);
             controllerFuture = null;
