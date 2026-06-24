@@ -74,22 +74,24 @@ public class LyricsUtils {
 // Inside LyricsUtils.java
 	private static String fetchOnlineLyrics(String title, String artist) {
 		try {
-			// 1. URL Encode and replace "+" with "%20" to match Python's requests library behavior
 			String encTitle = URLEncoder.encode(title, "UTF-8").replace("+", "%20");
 			String encArtist = URLEncoder.encode(artist, "UTF-8").replace("+", "%20");
 			
-			// LRCLIB API Endpoint
 			String urlString = "https://lrclib.net/api/search?track_name=" + encTitle + "&artist_name=" + encArtist;
+			AppLog.d(AppLog.LYRICS, "Fetching lyrics: " + urlString);
 			
 			URL url = new URL(urlString);
 			HttpURLConnection connection = (HttpURLConnection) url.openConnection();
 			connection.setRequestMethod("GET");
-			// LRCLIB requires a User-Agent header (Python requests sends one automatically)
-			connection.setRequestProperty("User-Agent", "MyMusicApp/1.0");
-			connection.setConnectTimeout(5000);
-			connection.setReadTimeout(5000);
+			connection.setRequestProperty("User-Agent", "MyMusic/2.6 (Android)");
+			connection.setRequestProperty("Accept", "application/json");
+			connection.setConnectTimeout(10000);
+			connection.setReadTimeout(10000);
 			
-			if (connection.getResponseCode() == 200) {
+			int responseCode = connection.getResponseCode();
+			AppLog.d(AppLog.LYRICS, "LRCLIB response code: " + responseCode);
+			
+			if (responseCode == 200) {
 				BufferedReader reader = new BufferedReader(new InputStreamReader(connection.getInputStream()));
 				StringBuilder response = new StringBuilder();
 				String line;
@@ -97,26 +99,27 @@ public class LyricsUtils {
 					response.append(line);
 				}
 				reader.close();
+				AppLog.d(AppLog.LYRICS, "LRCLIB response: " + response.substring(0, Math.min(response.length(), 200)));
 				
 				JSONArray jsonArray = new JSONArray(response.toString());
 				
-				// 2. Loop through ALL results looking for syncedLyrics (Just like the Python script)
 				for (int i = 0; i < jsonArray.length(); i++) {
 					JSONObject result = jsonArray.getJSONObject(i);
 					String syncedLyrics = result.optString("syncedLyrics", null);
 					
 					if (syncedLyrics != null && !syncedLyrics.equals("null") && !syncedLyrics.trim().isEmpty()) {
-						return syncedLyrics; // Found synced lyrics!
+						return syncedLyrics;
 					}
 				}
 				
-				// 3. Fallback: If no synced lyrics are found anywhere, try to get plain lyrics from the first match
 				if (jsonArray.length() > 0) {
 					String plainLyrics = jsonArray.getJSONObject(0).optString("plainLyrics", null);
 					if (plainLyrics != null && !plainLyrics.equals("null") && !plainLyrics.trim().isEmpty()) {
 						return plainLyrics;
 					}
 				}
+			} else {
+				AppLog.e(AppLog.LYRICS, "LRCLIB error " + responseCode + " for: " + title + " by " + artist);
 			}
 		} catch (Exception e) {
 			AppLog.e(AppLog.LYRICS, "Error fetching from LRCLIB: " + e.getMessage());

@@ -142,6 +142,8 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
     val favoriteIds by viewModel.favoriteIds.observeAsState(initial = emptySet())
     val isLoading by viewModel.isLoading.observeAsState(true)
     val queue by viewModel.queue.observeAsState(initial = emptyList())
+    val onlineSongBlocked by viewModel.onlineSongBlocked.observeAsState(false)
+    var showBlockedDialog by remember { mutableStateOf(false) }
 
     val favorites = currentDisplaySongs.filter { song -> favoriteIds.contains(song.id) }
     val showNowPlaying by viewModel.isNowPlayingOpen().observeAsState(false)
@@ -163,7 +165,7 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
         snackbarHostState.currentSnackbarData?.dismiss()
         coroutineScope.launch {
             val job = launch { snackbarHostState.showSnackbar(msg) }
-            kotlinx.coroutines.delay(2500) // Reduced timer for standard popups
+            kotlinx.coroutines.delay(1300)
             job.cancel()
         }
     }
@@ -323,6 +325,25 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
         )
     }
 
+    if (showBlockedDialog && currentSong != null) {
+        AlertDialog(
+            onDismissRequest = { showBlockedDialog = false },
+            containerColor = SpotifySurface2,
+            title = { Text("Online Song", color = SpotifyWhite, fontWeight = FontWeight.Bold) },
+            text = { Text("'${currentSong?.title}' is from your online library. Switch to Online mode to play it, or start a local shuffle instead.", color = SpotifyGray) },
+            confirmButton = {
+                TextButton(onClick = { showBlockedDialog = false; viewModel.switchToOnlineAndPlay() }) {
+                    Text("Switch to Online", color = SpotifyGreen, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showBlockedDialog = false; viewModel.playLocalShuffled() }) {
+                    Text("Play Local Shuffle", color = SpotifyGray)
+                }
+            }
+        )
+    }
+
     if (showCreatePlaylistDialog) {
         AlertDialog(
             onDismissRequest = { showCreatePlaylistDialog = false },
@@ -461,8 +482,8 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                         MiniPlayerBar(
                             song = song, isPlaying = isPlaying, progress = progress, duration = duration,
                             isFavorite = favoriteIds.contains(song.id),
-                            onTogglePlayPause = { viewModel.togglePlayPause() }, onPrevious = { viewModel.playPrevious() }, onNext = { viewModel.playNextFromMiniPlayer() },
-                            onToggleFavorite = { viewModel.toggleFavorite(song) }, onClick = { viewModel.setNowPlayingOpen(true) },
+                            onTogglePlayPause = { if (onlineSongBlocked) showBlockedDialog = true else viewModel.togglePlayPause() }, onPrevious = { viewModel.playPrevious() }, onNext = { viewModel.playNextFromMiniPlayer() },
+                            onToggleFavorite = { viewModel.toggleFavorite(song) }, onClick = { if (onlineSongBlocked) showBlockedDialog = true else viewModel.setNowPlayingOpen(true) },
                         )
                     }
                     SpotifyBottomNav(
@@ -626,6 +647,8 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                 onQueueItemRemove = { removedSong -> viewModel.removeSongFromUpcoming(removedSong) },
                 onQueueItemsRemove = { removedSongs -> viewModel.removeSongsFromUpcoming(removedSongs) },
                 onQueueItemReorder = { from, to -> viewModel.moveSongInUpcoming(from, to) },
+                onClearQueue = { viewModel.clearQueue(); showSnackbar("Queue cleared") },
+                onLoadLyrics = { viewModel.loadLyrics() },
                 onAddToPlaylist = { songForPlaylistDialog = currentSong },
                 onAddToQueue = {
                     viewModel.addToQueue(currentSong!!)

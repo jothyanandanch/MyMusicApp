@@ -33,29 +33,6 @@ public class LocalMusicRepository {
     /**
      * Check if file path should be excluded based on known recording directories
      */
-    private boolean shouldExcludePath(String filePath) {
-        if (filePath == null) return false;
-        
-        // Convert to lowercase for case-insensitive comparison
-        String lowerPath = filePath.toLowerCase();
-        
-        // Check against known recording directories
-        for (String excludedPath : EXCLUDED_PATHS) {
-            if (lowerPath.contains(excludedPath)) {
-                AppLog.d(AppLog.REPO, "Excluding: " + filePath + " (excluded path)");
-                return true;
-            }
-        }
-        
-        // Exclude any file/folder with "recording" in the name
-        if (lowerPath.contains("recording") || lowerPath.contains("ringtone")) {
-            AppLog.d(AppLog.REPO, "Excluding: " + filePath + " (contains 'recording' or 'ringtone')");
-            return true;
-        }
-
-        
-        return false;
-    }
     
     public List<Song> fetchLocalSongs() {
         ArrayList<Song> songs = new ArrayList<>();
@@ -70,18 +47,35 @@ public class LocalMusicRepository {
                 MediaStore.Audio.Media.RELATIVE_PATH // ✅ NEW: Get file path for filtering
         };
         
-        AppLog.d(AppLog.REPO, "Starting scan for music...");
+        String selection=MediaStore.Audio.Media.IS_MUSIC+" !=0 AND "+
+                MediaStore.Audio.Media.RELATIVE_PATH+" NOT LIKE ? AND "+
+                MediaStore.Audio.Media.RELATIVE_PATH+" NOT LIKE ? AND "+
+                MediaStore.Audio.Media.DISPLAY_NAME + " NOT LIKE ? AND " +
+                MediaStore.Audio.Media.DISPLAY_NAME + " NOT LIKE ?";
+        
+        String[] selectionArgs = new String[]{
+                "%recording%",
+                "%ringtone%",
+                "%recording%",
+                "%ringtone%"
+        };
+        
+        AppLog.d(AppLog.REPO, "Starting SQL scan for music...");
         
         Cursor cursor = context.getContentResolver().query(
                 MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
                 projection,
-                MediaStore.Audio.Media.IS_MUSIC + " != 0",
-                null,
+                selection,
+                selectionArgs,
                 MediaStore.Audio.Media.TITLE + " ASC"
         );
         
         if (cursor != null) {
             try {
+                
+                //Even if the cursor doesn't have any data it will return not null because the cursor searched successfully
+                //So if there's nothing to movetofirst and if we used any fetching it will throw an error
+                
                 if (cursor.moveToFirst()) {
                     int idCol       = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media._ID);
                     int titleCol    = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.TITLE);
@@ -98,19 +92,12 @@ public class LocalMusicRepository {
                         String album    = cursor.getString(albumCol);
                         long duration   = cursor.getLong(durationCol);
                         long albumId    = cursor.getLong(albumIdCol);
-                        String filePath = cursor.getString(dataCol);
-                        
-                        
-                        // ✅ FILTER: Skip recording files and folders
-                        if (shouldExcludePath(filePath)) {
-                            AppLog.d(AppLog.REPO, "Skipping recording file: " + title);
-                            continue;  // Skip this file
-                        }
                         
                         Uri songUri = ContentUris.withAppendedId(
                                 MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id);
                         
                         // Album art URI — Coil will handle null gracefully in UI
+                        //Coil is a third party android library used to load images if no image found it will pass the default image
                         Uri artUri = ContentUris.withAppendedId(ALBUM_ART_URI, albumId);
                         
                         Song song = new Song(id, artist, title,album, songUri, duration, artUri,"Unknown");
