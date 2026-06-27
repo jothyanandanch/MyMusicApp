@@ -143,6 +143,7 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
     val isLoading by viewModel.isLoading.observeAsState(true)
     val queue by viewModel.queue.observeAsState(initial = emptyList())
     val onlineSongBlocked by viewModel.onlineSongBlocked.observeAsState(false)
+    val isRefreshingOnline by viewModel.isRefreshingOnline.observeAsState(false)
     var showBlockedDialog by remember { mutableStateOf(false) }
 
     val favorites = currentDisplaySongs.filter { song -> favoriteIds.contains(song.id) }
@@ -425,8 +426,15 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                                 },
                                 color = SpotifyWhite,
                                 fontWeight = FontWeight.Bold,
-                                fontSize = 22.sp
+                                fontSize = 22.sp,
+                                modifier = Modifier.weight(1f)
                             )
+
+                            if (libraryMode != 0) {
+                                IconButton(onClick = { viewModel.refreshOnlineMusic() }) {
+                                    Icon(Icons.Filled.Refresh, "Refresh", tint = SpotifyWhite)
+                                }
+                            }
                         }
 
                         // --- LIBRARY MODE & DATA SAVER TOGGLE ---
@@ -579,7 +587,7 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                         1 -> SearchScreen(
                             searchQuery = searchQuery, filteredSongs = filteredSongs, currentSong = currentSong, favoriteIds = favoriteIds,
                             showSnackbar = showSnackbar,
-                            onSongClick = { song -> viewModel.playSong(song, filteredSongs) },
+                            onSongClick = { song -> viewModel.playSong(song, listOf(song)) },
                             onToggleFavorite = { song -> handleToggleFavorite(song) },
                             onPlayNext = { song -> viewModel.setPlayNext(song); showSnackbar("Will play next") },
                             onAddToQueue = { song -> viewModel.addToQueue(song); showSnackbar("Added to queue") },

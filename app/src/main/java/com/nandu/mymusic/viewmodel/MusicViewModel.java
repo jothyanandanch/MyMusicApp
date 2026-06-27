@@ -79,6 +79,7 @@ public class MusicViewModel extends AndroidViewModel {
     private final MutableLiveData<Boolean> isDataSaverModeLiveData;
     private final MutableLiveData<List<Song>> songsLiveData = new MutableLiveData<>();
     private final MutableLiveData<List<Song>> allOnlineSongsLiveData = new MutableLiveData<>(new ArrayList<>());
+    private final MutableLiveData<Boolean> isRefreshingOnlineLiveData = new MutableLiveData<>(false);
     private final MutableLiveData<Song> currentSongLiveData = new MutableLiveData<>();
     private final MutableLiveData<Boolean> isPlayingLiveData = new MutableLiveData<>(false);
     private final MutableLiveData<Long> progressLiveData = new MutableLiveData<>(0L);
@@ -158,7 +159,13 @@ public class MusicViewModel extends AndroidViewModel {
         repository = new LocalMusicRepository(application);
         loadFavoritesFromPrefs();
         loadPlaylistsFromPrefs();
-        loadOnlineMusic();
+
+        // Load cached online songs instantly, then start real-time listener
+        List<Song> cached = onlineRepository.loadCachedSongs(application);
+        if (!cached.isEmpty()) {
+            allOnlineSongsLiveData.postValue(cached);
+        }
+        loadOnlineMusic(application);
         
         SessionToken sessionToken = new SessionToken(application,
                 new ComponentName(application, com.nandu.mymusic.service.MusicPlaybackService.class));
@@ -244,6 +251,7 @@ public class MusicViewModel extends AndroidViewModel {
                 progressHandler.post(progressRunnable);
                 if (songsLiveData.getValue() != null && !songsLiveData.getValue().isEmpty()) {
                     restoreLastSession(songsLiveData.getValue());
+                    updateQueueUI();
                 }
             } catch (Exception e) {
                 AppLog.e(AppLog.PLAYER, "Failed to connect to MediaSessionService");
@@ -290,8 +298,9 @@ public class MusicViewModel extends AndroidViewModel {
                     persistLastPosition(exoPlayer.getCurrentPosition());
                     exoPlayer.stop();
                 }
-                currentPlaylist = null;
+                currentPlaylist = new ArrayList<>();
                 currentIndex = -1;
+                updateQueueUI();
                 onlineSongBlockedLiveData.setValue(true);
                 return;
             }
@@ -309,6 +318,7 @@ public class MusicViewModel extends AndroidViewModel {
     public LiveData<String> getLyrics() { return lyricsLiveData; }
     public LiveData<Boolean> getIsLoading() { return isLoadingLiveData; }
     public LiveData<List<Song>> getAllOnlineSongs() { return allOnlineSongsLiveData; }
+    public LiveData<Boolean> getIsRefreshingOnline() { return isRefreshingOnlineLiveData; }
     public LiveData<List<Song>> getOnlineSearchResults() { return onlineSearchResults; }
     public LiveData<List<Song>> getQueue() { return queueLiveData; }
     
@@ -1320,15 +1330,15 @@ public class MusicViewModel extends AndroidViewModel {
         onlineSearchResults.postValue(matches);
     }
     
-    private void loadOnlineMusic() {
-        onlineRepository.fetchAllOnlineSongs(new OnlineMusicRepository.OnMusicFetchedListener() {
+    private void loadOnlineMusic(Context context) {
+        // Start real-time listener for live updates
+        onlineRepository.listenForUpdates(context, new OnlineMusicRepository.OnMusicFetchedListener() {
             @Override
             public void onSuccess(List<Song> songs) {
                 allOnlineSongsLiveData.postValue(songs);
                 new Handler(Looper.getMainLooper()).postDelayed(() -> {
                     generateLanguagePlaylistsFromOnlineMusic();
                     
-                    // ✅ Trigger the local playlist matching
                     executorService.execute(() -> {
                         List<Song> local = songsLiveData.getValue();
                         if (local != null && !local.isEmpty()) {
@@ -1336,21 +1346,35 @@ public class MusicViewModel extends AndroidViewModel {
                         }
                     });
 
-                    // Re-attempt session restoration if it failed earlier (online songs now available)
-                    if (currentSongLiveData.getValue() == null) {
-                        executorService.execute(() -> {
-                            List<Song> local = songsLiveData.getValue();
-                            if (local != null && !local.isEmpty()) {
-                                sessionRestoreInProgress.set(false);
-                                restoreLastSession(local);
-                            }
-                        });
-                    }
+                    executorService.execute(() -> {
+                        List<Song> local = songsLiveData.getValue();
+                        if (local != null && !local.isEmpty()) {
+                            sessionRestoreInProgress.set(false);
+                            restoreLastSession(local);
+                            updateQueueUI();
+                        }
+                    });
                 }, 1000);
             }
             @Override
             public void onError(Exception e) {
                 AppLog.e(AppLog.REPO, "Failed to load online music: " + e.getMessage());
+            }
+        });
+    }
+
+    public void refreshOnlineMusic() {
+        isRefreshingOnlineLiveData.postValue(true);
+        onlineRepository.fetchAllOnlineSongs(new OnlineMusicRepository.OnMusicFetchedListener() {
+            @Override
+            public void onSuccess(List<Song> songs) {
+                allOnlineSongsLiveData.postValue(songs);
+                isRefreshingOnlineLiveData.postValue(false);
+            }
+            @Override
+            public void onError(Exception e) {
+                AppLog.e(AppLog.REPO, "Refresh online music failed: " + e.getMessage());
+                isRefreshingOnlineLiveData.postValue(false);
             }
         });
     }
@@ -1420,7 +1444,7 @@ public class MusicViewModel extends AndroidViewModel {
     private void restoreLastSession(List<Song> localSongs) {
         if (localSongs == null || localSongs.isEmpty()) return;
         if (!sessionRestoreInProgress.compareAndSet(false, true)) return;
-        if (currentSongLiveData.getValue() != null) return;
+        if (currentSongLiveData.getValue() != null) { sessionRestoreInProgress.set(false); return; }
 
         List<Song> allSongs = new ArrayList<>(localSongs);
         List<Song> online = allOnlineSongsLiveData.getValue();
@@ -1466,10 +1490,11 @@ public class MusicViewModel extends AndroidViewModel {
             }
         }
         if (resolvedIndex < 0 && lastIndex >= 0 && lastIndex < restoredQueue.size()) resolvedIndex = lastIndex;
-        if (resolvedIndex < 0) return;
+        if (resolvedIndex < 0) { sessionRestoreInProgress.set(false); return; }
         
         currentPlaylist = restoredQueue;
         currentIndex    = resolvedIndex;
+        updateQueueUI();
         
         List<MediaItem> items = new ArrayList<>();
         for (Song s : currentPlaylist) items.add(createMediaItem(s));
@@ -1491,6 +1516,7 @@ public class MusicViewModel extends AndroidViewModel {
             exoPlayer.setRepeatMode(savedRepeat);
             progressLiveData.setValue(savedPosition);
         });
+        sessionRestoreInProgress.set(false);
     }
     
     // ✅ SLEEP TIMER LOGIC
@@ -1597,6 +1623,7 @@ public class MusicViewModel extends AndroidViewModel {
     
     @Override
     protected void onCleared() {
+        onlineRepository.stopListening();
         if (executorService != null) {
             executorService.shutdown();
         }
