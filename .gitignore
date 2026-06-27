@@ -14,3 +14,8 @@
 .cxx
 local.properties
 app/google-services.json
+.claude/
+.mimocode/
+AGENTS.md
+CLAUDE.md
+app/AGENTS.md
