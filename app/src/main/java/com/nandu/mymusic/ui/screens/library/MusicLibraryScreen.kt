@@ -24,6 +24,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.PlaylistPlay
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.runtime.livedata.observeAsState
 import androidx.compose.ui.Alignment
@@ -63,18 +64,13 @@ sealed class CollectionView {
     data class Artist(val name: String) : CollectionView()
 }
 
-
-// ✅ HELPER METHOD updated to handle High/Low quality downloads
 fun downloadSong(context: Context, song: Song, isHighQuality: Boolean, showSnackbar: (String) -> Unit) {
     try {
         var downloadUrl = song.uri.toString()
 
-        // Cloudinary URL manipulation based on quality choice
         if (isHighQuality && downloadUrl.contains("/upload/q_auto,f_auto/")) {
-            // Strip out compression for High Quality
             downloadUrl = downloadUrl.replace("/upload/q_auto,f_auto/", "/upload/")
         } else if (!isHighQuality && !downloadUrl.contains("q_auto,f_auto") && downloadUrl.contains("/upload/")) {
-            // Enforce compression for Data Saver (Low Quality)
             downloadUrl = downloadUrl.replace("/upload/", "/upload/q_auto,f_auto/")
         }
 
@@ -111,19 +107,28 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
     val localSongs by viewModel.getSongs().observeAsState(initial = emptyList())
     val onlineSongs by viewModel.allOnlineSongs.observeAsState(initial = emptyList())
 
-    val currentDisplaySongs = remember(libraryMode, localSongs, onlineSongs) {
+    var hybridLocalOnly by remember { mutableStateOf(false) }
+    var hybridOnlineOnly  by remember { mutableStateOf(false) }
+
+    LaunchedEffect(libraryMode) {
+        if (libraryMode != 2) {
+            hybridLocalOnly = false
+            hybridOnlineOnly = false
+        }
+    }
+
+    val currentDisplaySongs = remember(libraryMode, localSongs, onlineSongs, hybridLocalOnly,hybridOnlineOnly) {
         when (libraryMode) {
             1 -> onlineSongs
-            2 -> localSongs + onlineSongs
+            2 -> if (hybridLocalOnly) localSongs else  if (hybridOnlineOnly) onlineSongs else localSongs + onlineSongs
             else -> localSongs
         }
     }
-    // At the top of MusicLibraryScreen.kt, get the user
+
     val auth = com.google.firebase.auth.FirebaseAuth.getInstance()
     val userName = auth.currentUser?.displayName?.split(" ")?.get(0) ?: "User"
     val photoUrl = auth.currentUser?.photoUrl?.toString()
 
-    // Dynamic time greeting
     val currentHour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
     val timeGreeting = when (currentHour) {
         in 0..11 -> "Good morning"
@@ -145,13 +150,20 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
     val onlineSongBlocked by viewModel.onlineSongBlocked.observeAsState(false)
     val isRefreshingOnline by viewModel.isRefreshingOnline.observeAsState(false)
     var showBlockedDialog by remember { mutableStateOf(false) }
-
+    // ✨ NEW: Automatically trigger the dialog the moment the song gets blocked
+    LaunchedEffect(onlineSongBlocked) {
+        if (onlineSongBlocked) {
+            showBlockedDialog = true
+        } else {
+            showBlockedDialog = false
+        }
+    }
     val favorites = currentDisplaySongs.filter { song -> favoriteIds.contains(song.id) }
     val showNowPlaying by viewModel.isNowPlayingOpen().observeAsState(false)
     val currentLyrics by viewModel.lyrics.observeAsState("Loading...")
 
     val isSleepTimerActive by viewModel.isSleepTimerActive.observeAsState(false)
-    val sleepTimerRemainingMs by viewModel.sleepTimerRemaining.observeAsState(0L) // ✅ NEW OBSERVER
+    val sleepTimerRemainingMs by viewModel.sleepTimerRemaining.observeAsState(0L)
     val sleepTimerTracksRemaining by viewModel.sleepTimerTracksRemaining.observeAsState(-1)
 
     val tabHistory = remember { mutableStateListOf(0) }
@@ -183,7 +195,7 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                     action()
                 }
             }
-            kotlinx.coroutines.delay(3000) // Reduced timer for actionable popups
+            kotlinx.coroutines.delay(3000)
             job.cancel()
         }
     }
@@ -215,7 +227,6 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                 (context as? Activity)?.finishAffinity()
             } else {
                 backPressedTime = currentTime
-                // Replaced the basic Toast with our custom themed Snackbar
                 showSnackbar("Press back again to exit")
             }
         }
@@ -295,7 +306,6 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
         )
     }
 
-    // ── The "Download Quality" Dialog ──
     if (songToDownload != null) {
         AlertDialog(
             onDismissRequest = { songToDownload = null },
@@ -396,15 +406,12 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
 
     Box(modifier = Modifier.fillMaxSize()) {
 
-        // LAYER 1: Main Scaffold
         Scaffold(
             containerColor = SpotifyBlack,
             topBar = {
                 if (selectedTab != 3 && viewStack.isEmpty()) {
                     Column(modifier = Modifier.fillMaxWidth().background(SpotifyBlack).statusBarsPadding()) {
-                        // --- GREETING ROW ---
                         Row(modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                            // 1. Show Google Profile Picture instead of the green "Hi" circle
                             AsyncImage(
                                 model = photoUrl,
                                 contentDescription = "Profile Picture",
@@ -417,7 +424,6 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
 
                             Spacer(Modifier.width(12.dp))
 
-                            // 2. Show Dynamic Time and Name
                             Text(
                                 text = if (selectedTab == 0) "$timeGreeting, $userName" else when (selectedTab) {
                                     1 -> "Search"
@@ -429,15 +435,8 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                                 fontSize = 22.sp,
                                 modifier = Modifier.weight(1f)
                             )
-
-                            if (libraryMode != 0) {
-                                IconButton(onClick = { viewModel.refreshOnlineMusic() }) {
-                                    Icon(Icons.Filled.Refresh, "Refresh", tint = SpotifyWhite)
-                                }
-                            }
                         }
 
-                        // --- LIBRARY MODE & DATA SAVER TOGGLE ---
                         Row(
                             modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 8.dp),
                             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween
@@ -469,7 +468,55 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                             }
                         }
 
-                        // --- SEARCH BAR ---
+                        if (libraryMode == 2) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                // Local Only toggle
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(50))
+                                        .background(if (hybridLocalOnly) SpotifyGreen else SpotifySurface2)
+                                        .clickable {
+                                            hybridLocalOnly = !hybridLocalOnly
+                                            if (hybridLocalOnly) hybridOnlineOnly =
+                                                false // ensure exclusivity
+                                        }
+                                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = "Local Only",
+                                        color = if (hybridLocalOnly) SpotifyBlack else SpotifyGray,
+                                        fontWeight = if (hybridLocalOnly) FontWeight.Bold else FontWeight.Normal,
+                                        fontSize = 12.sp
+                                    )
+                                }
+
+                                // Cloud Only toggle
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(50))
+                                        .background(if (hybridOnlineOnly) SpotifyGreen else SpotifySurface2)
+                                        .clickable {
+                                            hybridOnlineOnly = !hybridOnlineOnly
+                                            if (hybridOnlineOnly) hybridLocalOnly =
+                                                false // ensure exclusivity
+                                        }
+                                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = "Cloud Only",
+                                        color = if (hybridOnlineOnly) SpotifyBlack else SpotifyGray,
+                                        fontWeight = if (hybridOnlineOnly) FontWeight.Bold else FontWeight.Normal,
+                                        fontSize = 12.sp
+                                    )
+                                }
+                            }
+                            }
+
                         if (selectedTab == 1) {
                             OutlinedTextField(
                                 value = searchQuery,
@@ -490,8 +537,11 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                         MiniPlayerBar(
                             song = song, isPlaying = isPlaying, progress = progress, duration = duration,
                             isFavorite = favoriteIds.contains(song.id),
-                            onTogglePlayPause = { if (onlineSongBlocked) showBlockedDialog = true else viewModel.togglePlayPause() }, onPrevious = { viewModel.playPrevious() }, onNext = { viewModel.playNextFromMiniPlayer() },
-                            onToggleFavorite = { viewModel.toggleFavorite(song) }, onClick = { if (onlineSongBlocked) showBlockedDialog = true else viewModel.setNowPlayingOpen(true) },
+                            onTogglePlayPause = { if (onlineSongBlocked) showBlockedDialog = true else viewModel.togglePlayPause() },
+                            onPrevious = { if (onlineSongBlocked) showBlockedDialog = true else viewModel.playPrevious() },
+                            onNext = { if (onlineSongBlocked) showBlockedDialog = true else viewModel.playNextFromMiniPlayer() },
+                            onToggleFavorite = { viewModel.toggleFavorite(song) },
+                            onClick = { if (onlineSongBlocked) showBlockedDialog = true else viewModel.setNowPlayingOpen(true) },
                         )
                     }
                     SpotifyBottomNav(
@@ -507,8 +557,16 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                 when (libraryMode) {
                     1 -> onlineSearchSongs
                     2 -> {
-                        val localMatches = localSongs.filter { it.title.lowercase().contains(searchLower) || it.artist.lowercase().contains(searchLower) || (it.album != null && it.album.lowercase().contains(searchLower)) }
-                        (localMatches + onlineSearchSongs).distinctBy { it.id }
+                        if (hybridLocalOnly) {
+                            localSongs.filter { it.title.lowercase().contains(searchLower) || it.artist.lowercase().contains(searchLower) || (it.album != null && it.album.lowercase().contains(searchLower)) }
+                        }
+                        else if (hybridOnlineOnly){
+                            onlineSongs.filter{it.title.lowercase().contains(searchLower) || it.artist.lowercase().contains(searchLower) || (it.album!=null && it.album.lowercase().contains(searchLower))}
+                        }
+                        else {
+                            val localMatches = localSongs.filter { it.title.lowercase().contains(searchLower) || it.artist.lowercase().contains(searchLower) || (it.album != null && it.album.lowercase().contains(searchLower)) }
+                            (localMatches + onlineSearchSongs).distinctBy { it.id }
+                        }
                     }
                     else -> {
                         localSongs.filter { it.title.lowercase().contains(searchLower) || it.artist.lowercase().contains(searchLower) || (it.album != null && it.album.lowercase().contains(searchLower)) }
@@ -516,7 +574,11 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                 }
             }
 
-            Box(modifier = Modifier.fillMaxSize().padding(paddingValues)) {
+            PullToRefreshBox(
+                isRefreshing = isRefreshingOnline,
+                onRefresh = { viewModel.refreshOnlineMusic() },
+                modifier = Modifier.fillMaxSize().padding(paddingValues)
+            ) {
                 if (isLoading && libraryMode == 0) {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = SpotifyGreen) }
                 } else if (currentDisplaySongs.isEmpty() && selectedTab == 0) {
@@ -543,19 +605,6 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                                 onPlayAll = { if (albumSongs.isNotEmpty()) viewModel.playSong(albumSongs.first(), albumSongs) },
                                 onAddToPlaylist = { songForPlaylistDialog = it }, onViewAlbum = handleViewAlbum, onViewArtist = handleViewArtist, viewModel = viewModel,
                                 onDownload = {song -> songToDownload =song}
-                            )
-                        }
-                        is CollectionView.Artist -> {
-                            val artistSongs = currentDisplaySongs.filter { it.artist == currentView.name }
-                            CollectionDetailView(
-                                title = currentView.name, songs = artistSongs, currentSong = currentSong, favoriteIds = favoriteIds,
-                                sortType = persistentSortType, onSortChange = onSortTypeChange, showSnackbar = showSnackbar,
-                                onBack = { viewStack.removeAt(viewStack.lastIndex) }, onSongClick = { song -> viewModel.playSong(song, artistSongs) },
-                                onToggleFavorite = { song -> handleToggleFavorite(song) },
-                                onShufflePlay = { viewModel.playShuffled(artistSongs) },
-                                onPlayAll = { if (artistSongs.isNotEmpty()) viewModel.playSong(artistSongs.first(), artistSongs) },
-                                onAddToPlaylist = { songForPlaylistDialog = it }, onViewAlbum = handleViewAlbum, onViewArtist = handleViewArtist, viewModel = viewModel,
-                                onDownload = { song -> songToDownload = song }
                             )
                         }
                         is CollectionView.Artist -> {
@@ -631,7 +680,6 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
             }
         }
 
-        // LAYER 2: Now Playing Overlay (drawn on top of Scaffold)
         if (showNowPlaying && currentSong != null) {
             NowPlayingScreen(
                 song = currentSong!!,
@@ -644,10 +692,10 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                 shuffleMode = shuffleMode,
                 isFavorite = favoriteIds.contains(currentSong!!.id),
                 onBack = { viewModel.setNowPlayingOpen(false) },
-                onTogglePlayPause = { viewModel.togglePlayPause() },
-                onNext = { viewModel.playNextFromFullPlayer() },
-                onPrevious = { viewModel.playPrevious() },
-                onSeek = { viewModel.seekTo(it) },
+                onTogglePlayPause = { if (onlineSongBlocked) showBlockedDialog = true else viewModel.togglePlayPause() },
+                onNext = { if (onlineSongBlocked) showBlockedDialog = true else viewModel.playNextFromFullPlayer() },
+                onPrevious = { if (onlineSongBlocked) showBlockedDialog = true else viewModel.playPrevious() },
+                onSeek = { if (onlineSongBlocked) showBlockedDialog = true else viewModel.seekTo(it) },
                 onToggleRepeat = { viewModel.toggleRepeat() },
                 onToggleShuffle = { viewModel.toggleShuffle() },
                 onToggleFavorite = { viewModel.toggleFavorite(currentSong!!) },
@@ -675,10 +723,8 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                     handleViewArtist(currentSong!!.artist)
                 },
                 onDownload = { songToDownload = currentSong },
-
-                // --- NEW SLEEP TIMER PARAMETERS ---
                 isSleepTimerActive = isSleepTimerActive,
-                sleepTimerRemainingMs = sleepTimerRemainingMs, // ✅ PASSED DOWN
+                sleepTimerRemainingMs = sleepTimerRemainingMs,
                 sleepTimerTracksRemaining = sleepTimerTracksRemaining,
                 onStartSleepTimerTime = { minutes ->
                     viewModel.startTimeSleepTimer(minutes)
@@ -699,7 +745,6 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
             )
         }
 
-// LAYER 3: Global Snackbar (drawn on top of everything)
         SnackbarHost(
             hostState = snackbarHostState,
             modifier = Modifier
@@ -709,12 +754,11 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
         ) { data ->
             Snackbar(
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                containerColor = SpotifySurface2,  // Forces the deep dark gray background
-                contentColor = SpotifyWhite,       // Forces white text
-                actionContentColor = SpotifyGreen, // ✅ FIXED: Changed from actionColor
+                containerColor = SpotifySurface2,
+                contentColor = SpotifyWhite,
+                actionContentColor = SpotifyGreen,
                 shape = RoundedCornerShape(8.dp),
                 action = {
-                    // Renders the action button (like "UNDO") if one exists
                     data.visuals.actionLabel?.let { label ->
                         TextButton(onClick = { data.performAction() }) {
                             Text(label, color = SpotifyGreen, fontWeight = FontWeight.Bold)
@@ -723,7 +767,7 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                 }
             ) {
                 Row(
-                    verticalAlignment = Alignment.CenterVertically, // ✅ FIXED: lowercase 'v'
+                    verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     Icon(
@@ -743,7 +787,7 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
         }
     }
 }
-// ─── Home Tab (Updated with Persistent Sort) ─────────────────────────────────────────────────────────
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun HomeTab(
@@ -768,7 +812,6 @@ fun HomeTab(
     var context = LocalContext.current
     var selectedCategory by remember { mutableStateOf("Songs") }
 
-    // Recomputed using the persistent sortType
     val displaySongs = remember(songs, sortType) {
         when (sortType) {
             SortType.DEFAULT -> songs
@@ -857,7 +900,6 @@ fun HomeTab(
     }
 }
 
-// ─── Shared Composable Details ──────────────────────────────────
 @Composable
 fun CategoryChip(text: String, isSelected: Boolean, onClick: () -> Unit) {
     Box(
@@ -1007,7 +1049,6 @@ fun SongItem(
                 DropdownMenuItem(text = { Text("Add to Queue", color = SpotifyWhite) }, onClick = { showMenu = false; onAddToQueue() })
                 DropdownMenuItem(text = { Text("Add to Playlist", color = SpotifyWhite) }, onClick = { showMenu = false; onAddToPlaylist() })
 
-                // ✅ CONDITIONAL: Download for online, Edit/Delete for offline
                 if (isOnline) {
                     DropdownMenuItem(text = { Text("Download Song", color = SpotifyWhite) }, onClick = { showMenu = false; onDownload() })
                 } else {

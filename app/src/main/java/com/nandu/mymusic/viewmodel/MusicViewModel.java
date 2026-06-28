@@ -160,12 +160,17 @@ public class MusicViewModel extends AndroidViewModel {
         loadFavoritesFromPrefs();
         loadPlaylistsFromPrefs();
 
-        // Load cached online songs instantly, then start real-time listener
+        // Cache-first: load from cache, then fetch from Firestore if missing/expired
         List<Song> cached = onlineRepository.loadCachedSongs(application);
         if (!cached.isEmpty()) {
             allOnlineSongsLiveData.postValue(cached);
         }
-        loadOnlineMusic(application);
+        if (cached.isEmpty() || onlineRepository.isCacheExpired(application)) {
+            AppLog.d(AppLog.REPO, "Cache missing or expired — fetching from Firestore");
+            fetchOnlineSongsAndCache(application);
+        } else {
+            AppLog.d(AppLog.REPO, "Cache is fresh — skipping Firestore fetch");
+        }
         
         SessionToken sessionToken = new SessionToken(application,
                 new ComponentName(application, com.nandu.mymusic.service.MusicPlaybackService.class));
@@ -289,27 +294,51 @@ public class MusicViewModel extends AndroidViewModel {
     
     public LiveData<Integer> getLibraryMode() { return libraryModeLiveData; }
     public void setLibraryMode(int mode) {
+        boolean wasBlocked = Boolean.TRUE.equals(onlineSongBlockedLiveData.getValue());
         libraryModeLiveData.setValue(mode);
         
         if (mode == 0 && currentSongLiveData.getValue() != null) {
             String scheme = currentSongLiveData.getValue().getUri().getScheme();
-            if ("http".equals(scheme) || "https".equals(scheme)) {
+            boolean isOnlineSong = "http".equals(scheme) || "https".equals(scheme);
+            
+            if (isOnlineSong) {
                 if (exoPlayer != null) {
                     persistLastPosition(exoPlayer.getCurrentPosition());
-                    exoPlayer.stop();
+                    // 🐛 FIX: Unconditionally pause. Removes the isPlaying() check
+                    // so it doesn't accidentally resume if it was buffering during the switch.
+                    exoPlayer.pause();
                 }
-                currentPlaylist = new ArrayList<>();
-                currentIndex = -1;
-                updateQueueUI();
+                isPlayingLiveData.setValue(false);
                 onlineSongBlockedLiveData.setValue(true);
-                return;
+            } else {
+                onlineSongBlockedLiveData.setValue(false);
             }
+            
+            // Save blocked state for the background service
+            executorService.execute(() -> {
+                boolean isBlocked = Boolean.TRUE.equals(onlineSongBlockedLiveData.getValue());
+                getApplication().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                        .edit()
+                        .putInt(KEY_LIBRARY_MODE, mode)
+                        .putBoolean("is_online_blocked", isBlocked)
+                        .apply();
+            });
+            return;
         }
+        
         onlineSongBlockedLiveData.setValue(false);
         
+        if (wasBlocked && mode != 0 && exoPlayer != null) {
+            exoPlayer.play(); // Auto-play when switching back to Online!
+        }
+        
         executorService.execute(() -> {
+            boolean isBlocked = Boolean.TRUE.equals(onlineSongBlockedLiveData.getValue());
             getApplication().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                    .edit().putInt(KEY_LIBRARY_MODE, mode).commit();
+                    .edit()
+                    .putInt(KEY_LIBRARY_MODE, mode)
+                    .putBoolean("is_online_blocked", isBlocked)
+                    .apply();
             
             new Handler(Looper.getMainLooper()).post(this::loadPlaylistsFromPrefs);
         });
@@ -540,6 +569,9 @@ public class MusicViewModel extends AndroidViewModel {
     }
     
     public void togglePlayPause() {
+        // 🐛 FIX: Prevent hardware media buttons/headset clicks from bypassing the block
+        if (Boolean.TRUE.equals(onlineSongBlockedLiveData.getValue())) return;
+        
         if (exoPlayer == null) return;
         if (exoPlayer.isPlaying()) exoPlayer.pause();
         else exoPlayer.play();
@@ -1330,15 +1362,15 @@ public class MusicViewModel extends AndroidViewModel {
         onlineSearchResults.postValue(matches);
     }
     
-    private void loadOnlineMusic(Context context) {
-        // Start real-time listener for live updates
-        onlineRepository.listenForUpdates(context, new OnlineMusicRepository.OnMusicFetchedListener() {
+    private void fetchOnlineSongsAndCache(Context context) {
+        onlineRepository.fetchAllOnlineSongs(new OnlineMusicRepository.OnMusicFetchedListener() {
             @Override
             public void onSuccess(List<Song> songs) {
                 allOnlineSongsLiveData.postValue(songs);
+                onlineRepository.saveCache(context, songs);
                 new Handler(Looper.getMainLooper()).postDelayed(() -> {
                     generateLanguagePlaylistsFromOnlineMusic();
-                    
+
                     executorService.execute(() -> {
                         List<Song> local = songsLiveData.getValue();
                         if (local != null && !local.isEmpty()) {
@@ -1358,25 +1390,37 @@ public class MusicViewModel extends AndroidViewModel {
             }
             @Override
             public void onError(Exception e) {
-                AppLog.e(AppLog.REPO, "Failed to load online music: " + e.getMessage());
+                AppLog.e(AppLog.REPO, "Failed to fetch online songs: " + e.getMessage());
             }
         });
     }
 
     public void refreshOnlineMusic() {
         isRefreshingOnlineLiveData.postValue(true);
-        onlineRepository.fetchAllOnlineSongs(new OnlineMusicRepository.OnMusicFetchedListener() {
-            @Override
-            public void onSuccess(List<Song> songs) {
-                allOnlineSongsLiveData.postValue(songs);
+        new Handler(Looper.getMainLooper()).postDelayed(() -> {
+            if (Boolean.TRUE.equals(isRefreshingOnlineLiveData.getValue())) {
+                AppLog.e(AppLog.REPO, "Refresh timed out — resetting indicator");
                 isRefreshingOnlineLiveData.postValue(false);
             }
-            @Override
-            public void onError(Exception e) {
-                AppLog.e(AppLog.REPO, "Refresh online music failed: " + e.getMessage());
-                isRefreshingOnlineLiveData.postValue(false);
-            }
-        });
+        }, 10_000);
+        try {
+            onlineRepository.fetchAllOnlineSongs(new OnlineMusicRepository.OnMusicFetchedListener() {
+                @Override
+                public void onSuccess(List<Song> songs) {
+                    allOnlineSongsLiveData.postValue(songs);
+                    onlineRepository.saveCache(getApplication(), songs);
+                    isRefreshingOnlineLiveData.postValue(false);
+                }
+                @Override
+                public void onError(Exception e) {
+                    AppLog.e(AppLog.REPO, "Refresh online music failed: " + e.getMessage());
+                    isRefreshingOnlineLiveData.postValue(false);
+                }
+            });
+        } catch (Exception e) {
+            AppLog.e(AppLog.REPO, "refreshOnlineMusic exception: " + e.getMessage());
+            isRefreshingOnlineLiveData.postValue(false);
+        }
     }
     
     public void loadLocalMusic() {
@@ -1623,7 +1667,6 @@ public class MusicViewModel extends AndroidViewModel {
     
     @Override
     protected void onCleared() {
-        onlineRepository.stopListening();
         if (executorService != null) {
             executorService.shutdown();
         }

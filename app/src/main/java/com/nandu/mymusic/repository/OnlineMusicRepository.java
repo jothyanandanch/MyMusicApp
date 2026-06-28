@@ -5,7 +5,6 @@ import android.content.SharedPreferences;
 import android.net.Uri;
 import com.google.firebase.firestore.FirebaseFirestore;
 import com.google.firebase.firestore.DocumentSnapshot;
-import com.google.firebase.firestore.ListenerRegistration;
 import com.nandu.mymusic.model.Song;
 import com.nandu.mymusic.utils.AppLog;
 import org.json.JSONArray;
@@ -17,9 +16,10 @@ import java.util.Map;
 public class OnlineMusicRepository {
 	private static final String PREFS_NAME = "MyMusicPrefs";
 	private static final String KEY_ONLINE_CACHE = "online_songs_cache";
+	private static final String KEY_ONLINE_CACHE_TIMESTAMP = "online_songs_cache_timestamp";
+	private static final long CACHE_TTL_MS = 24 * 60 * 60 * 1000L; // 24 hours
 
 	private final FirebaseFirestore db = FirebaseFirestore.getInstance();
-	private ListenerRegistration snapshotListener;
 
 	public interface OnMusicFetchedListener {
 		void onSuccess(List<Song> songs);
@@ -28,42 +28,26 @@ public class OnlineMusicRepository {
 
 	public void fetchAllOnlineSongs(OnMusicFetchedListener listener) {
 		AppLog.d(AppLog.REPO, "Fetching online library from Firestore...");
-
-		db.collection("online_library").document("metadata")
-				.get()
-				.addOnCompleteListener(task -> {
-					if (task.isSuccessful()) {
-						DocumentSnapshot document = task.getResult();
-						List<Song> allSongs = parseSongsFromDocument(document);
-						listener.onSuccess(allSongs);
-					} else {
-						listener.onError(task.getException());
-					}
-				});
-	}
-
-	public void listenForUpdates(Context context, OnMusicFetchedListener listener) {
-		if (snapshotListener != null) return;
-
-		AppLog.d(AppLog.REPO, "Starting Firestore snapshot listener...");
-		snapshotListener = db.collection("online_library").document("metadata")
-				.addSnapshotListener((documentSnapshot, e) -> {
-					if (e != null) {
-						AppLog.e(AppLog.REPO, "Snapshot listener error: " + e.getMessage());
-						return;
-					}
-					if (documentSnapshot != null && documentSnapshot.exists()) {
-						List<Song> songs = parseSongsFromDocument(documentSnapshot);
-						saveCache(context, songs);
-						listener.onSuccess(songs);
-					}
-				});
-	}
-
-	public void stopListening() {
-		if (snapshotListener != null) {
-			snapshotListener.remove();
-			snapshotListener = null;
+		try {
+			db.collection("online_library").document("metadata")
+					.get()
+					.addOnCompleteListener(task -> {
+						if (task.isSuccessful()) {
+							DocumentSnapshot document = task.getResult();
+							AppLog.d(AppLog.REPO, "Firestore fetch: exists=" + document.exists()
+									+ ", hasData=" + (document.getData() != null));
+							List<Song> allSongs = parseSongsFromDocument(document);
+							AppLog.d(AppLog.REPO, "Parsed " + allSongs.size() + " songs from Firestore");
+							listener.onSuccess(allSongs);
+						} else {
+							Exception ex = task.getException();
+							AppLog.e(AppLog.REPO, "Firestore fetch failed: " + (ex != null ? ex.getMessage() : "unknown"));
+							listener.onError(ex != null ? ex : new Exception("Firestore fetch failed"));
+						}
+					});
+		} catch (Exception e) {
+			AppLog.e(AppLog.REPO, "Firestore not available: " + e.getMessage());
+			listener.onError(e);
 		}
 	}
 
@@ -94,7 +78,17 @@ public class OnlineMusicRepository {
 		return songs;
 	}
 
-	private void saveCache(Context context, List<Song> songs) {
+	public boolean isCacheExpired(Context context) {
+		SharedPreferences prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+		long cachedTimestamp = prefs.getLong(KEY_ONLINE_CACHE_TIMESTAMP, 0);
+		if (cachedTimestamp == 0) return true;
+		long ageMs = System.currentTimeMillis() - cachedTimestamp;
+		boolean expired = ageMs > CACHE_TTL_MS;
+		AppLog.d(AppLog.REPO, "Cache age: " + (ageMs / 3600000) + "h, expired=" + expired);
+		return expired;
+	}
+
+	public void saveCache(Context context, List<Song> songs) {
 		try {
 			JSONArray arr = new JSONArray();
 			for (Song s : songs) {
@@ -110,7 +104,11 @@ public class OnlineMusicRepository {
 				arr.put(obj);
 			}
 			SharedPreferences prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
-			prefs.edit().putString(KEY_ONLINE_CACHE, arr.toString()).apply();
+			prefs.edit()
+					.putString(KEY_ONLINE_CACHE, arr.toString())
+					.putLong(KEY_ONLINE_CACHE_TIMESTAMP, System.currentTimeMillis())
+					.apply();
+			AppLog.d(AppLog.REPO, "Cache saved: " + songs.size() + " songs, timestamp=" + System.currentTimeMillis());
 		} catch (Exception e) {
 			AppLog.e(AppLog.REPO, "Error saving cache: " + e.getMessage());
 		}

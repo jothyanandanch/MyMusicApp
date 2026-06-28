@@ -1,9 +1,11 @@
 package com.nandu.mymusic.service
 
 import android.app.PendingIntent
+import android.content.Context
 import android.content.Intent
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
+import androidx.media3.common.ForwardingPlayer
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.database.StandaloneDatabaseProvider
 import androidx.media3.datasource.DefaultDataSource
@@ -41,15 +43,14 @@ class MusicPlaybackService : MediaSessionService() {
         }
 
         // 2. Build the Caching Data Source
-        // This tells ExoPlayer to check the local cache BEFORE asking Cloudinary for data
         val upstreamFactory = DefaultDataSource.Factory(this)
         val cacheDataSourceFactory = CacheDataSource.Factory()
             .setCache(downloadCache!!)
             .setUpstreamDataSourceFactory(upstreamFactory)
             .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
 
-        // 3. Build ExoPlayer and INJECT the caching factory
-        val player = ExoPlayer.Builder(this)
+        // 3. Build ExoPlayer
+        val exoPlayer = ExoPlayer.Builder(this)
             .setAudioAttributes(
                 AudioAttributes.Builder()
                     .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
@@ -58,8 +59,24 @@ class MusicPlaybackService : MediaSessionService() {
                 true // handleAudioFocus
             )
             .setHandleAudioBecomingNoisy(true) // pauses on headphone unplug
-            .setMediaSourceFactory(DefaultMediaSourceFactory(this).setDataSourceFactory(cacheDataSourceFactory)) // ✅ CACHE INJECTED HERE
+            .setMediaSourceFactory(DefaultMediaSourceFactory(this).setDataSourceFactory(cacheDataSourceFactory))
             .build()
+
+        // ✨ NEW: Wrap ExoPlayer in a ForwardingPlayer to intercept hardware commands
+        val forwardingPlayer = object : ForwardingPlayer(exoPlayer) {
+            override fun play() {
+                val prefs = getSharedPreferences("MyMusicPrefs", Context.MODE_PRIVATE)
+                val isBlocked = prefs.getBoolean("is_online_blocked", false)
+
+                // If playback is blocked, drop the command (do nothing)
+                if (isBlocked) {
+                    return
+                }
+
+                // Otherwise, let the player start playing
+                super.play()
+            }
+        }
 
         // PendingIntent reopens MainActivity when user taps the notification
         val sessionActivityPendingIntent = PendingIntent.getActivity(
@@ -69,7 +86,8 @@ class MusicPlaybackService : MediaSessionService() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
-        mediaSession = MediaSession.Builder(this, player)
+        // 4. Build MediaSession and pass the ForwardingPlayer instead of the raw ExoPlayer
+        mediaSession = MediaSession.Builder(this, forwardingPlayer)
             .setSessionActivity(sessionActivityPendingIntent)
             .build()
     }
