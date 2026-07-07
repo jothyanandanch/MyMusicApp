@@ -677,6 +677,13 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                                 sortType = persistentSortType, onSortChange = onSortTypeChange, showSnackbar = showSnackbar,
                                 onSongClick = { song -> viewModel.playSong(song, currentDisplaySongs) },
                                 onToggleFavorite = { song -> handleToggleFavorite(song) },
+                                onPlayNext = { song -> viewModel.setPlayNext(song); showSnackbar("Will play next") },
+                                onAddToQueue = { song -> viewModel.addToQueue(song); showSnackbar("Added to queue") },
+                                onAddToPlaylist = { song -> songForPlaylistDialog = song },
+                                onViewAlbum = handleViewAlbum,
+                                onViewArtist = handleViewArtist,
+                                onDownload = { song -> songToDownload = song },
+                                onEdit = { showSnackbar("Edit functionality coming soon!") },
                                 viewModel = viewModel
                             )
                         }

@@ -96,7 +96,8 @@ public class MusicViewModel extends AndroidViewModel {
     private String previousCachedLyrics = null;
     private long previousCachedLyricsSongId = -1;
     private final MutableLiveData<Boolean> onlineSongBlockedLiveData = new MutableLiveData<>(false);
-    
+    private boolean wasPlayingBeforeBlock = false;
+
     private final Map<Long, Song> favoritesMap = new LinkedHashMap<>();
     private final MutableLiveData<Set<Long>> favoriteIdsLiveData = new MutableLiveData<>(new LinkedHashSet<>());
     private final MutableLiveData<Map<String, List<Long>>> customPlaylistsLiveData = new MutableLiveData<>(new LinkedHashMap<>());
@@ -296,16 +297,15 @@ public class MusicViewModel extends AndroidViewModel {
     public void setLibraryMode(int mode) {
         boolean wasBlocked = Boolean.TRUE.equals(onlineSongBlockedLiveData.getValue());
         libraryModeLiveData.setValue(mode);
-        
+
         if (mode == 0 && currentSongLiveData.getValue() != null) {
             String scheme = currentSongLiveData.getValue().getUri().getScheme();
             boolean isOnlineSong = "http".equals(scheme) || "https".equals(scheme);
-            
+
             if (isOnlineSong) {
+                wasPlayingBeforeBlock = exoPlayer != null && exoPlayer.isPlaying();
                 if (exoPlayer != null) {
                     persistLastPosition(exoPlayer.getCurrentPosition());
-                    // 🐛 FIX: Unconditionally pause. Removes the isPlaying() check
-                    // so it doesn't accidentally resume if it was buffering during the switch.
                     exoPlayer.pause();
                 }
                 isPlayingLiveData.setValue(false);
@@ -313,8 +313,7 @@ public class MusicViewModel extends AndroidViewModel {
             } else {
                 onlineSongBlockedLiveData.setValue(false);
             }
-            
-            // Save blocked state for the background service
+
             executorService.execute(() -> {
                 boolean isBlocked = Boolean.TRUE.equals(onlineSongBlockedLiveData.getValue());
                 getApplication().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -323,15 +322,17 @@ public class MusicViewModel extends AndroidViewModel {
                         .putBoolean("is_online_blocked", isBlocked)
                         .apply();
             });
+            new Handler(Looper.getMainLooper()).post(this::loadPlaylistsFromPrefs);
             return;
         }
-        
+
         onlineSongBlockedLiveData.setValue(false);
-        
-        if (wasBlocked && mode != 0 && exoPlayer != null) {
-            exoPlayer.play(); // Auto-play when switching back to Online!
+
+        if (wasBlocked && wasPlayingBeforeBlock && mode != 0 && exoPlayer != null) {
+            exoPlayer.play();
         }
-        
+        wasPlayingBeforeBlock = false;
+
         executorService.execute(() -> {
             boolean isBlocked = Boolean.TRUE.equals(onlineSongBlockedLiveData.getValue());
             getApplication().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -339,7 +340,7 @@ public class MusicViewModel extends AndroidViewModel {
                     .putInt(KEY_LIBRARY_MODE, mode)
                     .putBoolean("is_online_blocked", isBlocked)
                     .apply();
-            
+
             new Handler(Looper.getMainLooper()).post(this::loadPlaylistsFromPrefs);
         });
     }

@@ -90,6 +90,13 @@ fun PlaylistScreen(
     modifier         : Modifier = Modifier,
     onSongClick      : (Song) -> Unit,
     onToggleFavorite : (Song) -> Unit,
+    onPlayNext       : (Song) -> Unit,
+    onAddToQueue     : (Song) -> Unit,
+    onAddToPlaylist  : (Song) -> Unit,
+    onViewAlbum      : (String) -> Unit,
+    onViewArtist     : (String) -> Unit,
+    onDownload       : (Song) -> Unit,
+    onEdit           : (Song) -> Unit = {},
     viewModel        : MusicViewModel
 ) {
     val customPlaylists by viewModel.customPlaylists.observeAsState(initial = emptyMap())
@@ -286,10 +293,17 @@ fun PlaylistScreen(
             onBack           = { showLocalDetail = false },
             onSongClick      = onSongClick,
             onToggleFavorite = onToggleFavorite,
+            onPlayNext       = onPlayNext,
+            onAddToQueue     = onAddToQueue,
+            onAddToPlaylist  = onAddToPlaylist,
+            onViewAlbum      = onViewAlbum,
+            onViewArtist     = onViewArtist,
+            onDownload       = onDownload,
+            onEdit           = onEdit,
             onShufflePlay    = { viewModel.playAllShuffled(songs) },
             onPlayAll        = { if (songs.isNotEmpty()) viewModel.playSong(songs.first(), songs) },
             onAddSong        = { },
-            onAddToQueue     = {
+            onAddAllToQueue  = {
                 if (songs.isNotEmpty()) {
                     viewModel.addListToQueue(songs)
                     showSnackbar("Added ${songs.size} songs to queue")
@@ -323,10 +337,17 @@ fun PlaylistScreen(
             onBack           = { selectedCustomPlaylist = null },
             onSongClick      = { song -> viewModel.playSong(song, pSongs) },
             onToggleFavorite = onToggleFavorite,
+            onPlayNext       = onPlayNext,
+            onAddToQueue     = onAddToQueue,
+            onAddToPlaylist  = onAddToPlaylist,
+            onViewAlbum      = onViewAlbum,
+            onViewArtist     = onViewArtist,
+            onDownload       = onDownload,
+            onEdit           = onEdit,
             onShufflePlay    = { viewModel.playShuffled(pSongs) },
             onPlayAll        = { if (pSongs.isNotEmpty()) viewModel.playSong(pSongs.first(), pSongs) },
             onAddSong        = { playlistToAddSongsTo = pName },
-            onAddToQueue     = {
+            onAddAllToQueue  = {
                 if (pSongs.isNotEmpty()) {
                     viewModel.addListToQueue(pSongs)
                     showSnackbar("Added ${pSongs.size} songs to queue")
@@ -443,10 +464,17 @@ fun PlaylistDetailView(
     onBack           : () -> Unit,
     onSongClick      : (Song) -> Unit,
     onToggleFavorite : (Song) -> Unit,
+    onPlayNext       : (Song) -> Unit,
+    onAddToQueue     : (Song) -> Unit,
+    onAddToPlaylist  : (Song) -> Unit,
+    onViewAlbum      : (String) -> Unit,
+    onViewArtist     : (String) -> Unit,
+    onDownload       : (Song) -> Unit,
+    onEdit           : (Song) -> Unit = {},
     onShufflePlay    : () -> Unit,
     onPlayAll        : () -> Unit,
     onAddSong        : () -> Unit,
-    onAddToQueue     : () -> Unit,
+    onAddAllToQueue  : () -> Unit,
     onRemoveSong     : (Song) -> Unit,
     onRemoveSongs    : (List<Song>) -> Unit,
     onDeletePlaylist : () -> Unit,
@@ -530,7 +558,7 @@ fun PlaylistDetailView(
                             Icon(Icons.Filled.Checklist, "Select Songs", tint = if (isEditMode) SpotifyGreen else SpotifyGray)
                         }
                     }
-                    IconButton(onClick = onAddToQueue) { Icon(Icons.AutoMirrored.Filled.PlaylistAdd, "Add to Queue", tint = SpotifyGray) }
+                    IconButton(onClick = onAddAllToQueue) { Icon(Icons.AutoMirrored.Filled.PlaylistAdd, "Add to Queue", tint = SpotifyGray) }
                     SortMenu(sortType = sortType, onSortChange = onSortChange)
                     Spacer(Modifier.width(8.dp))
                     Box(
@@ -565,7 +593,14 @@ fun PlaylistDetailView(
                         } else { onSongClick(song) }
                     },
                     onToggleFavorite = { onToggleFavorite(song) },
-                    onRemoveSong     = { onRemoveSong(song) }
+                    onRemoveSong     = { onRemoveSong(song) },
+                    onPlayNext       = { onPlayNext(song) },
+                    onAddToQueue     = { onAddToQueue(song) },
+                    onAddToPlaylist  = { onAddToPlaylist(song) },
+                    onViewAlbum      = { onViewAlbum(song.album ?: "Unknown Album") },
+                    onViewArtist     = { onViewArtist(song.artist) },
+                    onDownload       = { onDownload(song) },
+                    onEdit           = { onEdit(song) }
                 )
             }
         }
@@ -586,7 +621,14 @@ fun PlaylistSongItem(
     isSelected       : Boolean = false,
     onClick          : () -> Unit,
     onToggleFavorite : () -> Unit,
-    onRemoveSong     : () -> Unit
+    onRemoveSong     : () -> Unit,
+    onPlayNext       : () -> Unit,
+    onAddToQueue     : () -> Unit,
+    onAddToPlaylist  : () -> Unit,
+    onViewAlbum      : () -> Unit,
+    onViewArtist     : () -> Unit,
+    onDownload       : () -> Unit,
+    onEdit           : () -> Unit = {}
 ) {
     var showMenu by remember { mutableStateOf(false) }
     val isOnline = song.uri.toString().startsWith("http")
@@ -633,7 +675,16 @@ fun PlaylistSongItem(
             Box {
                 IconButton(onClick = { showMenu = true }, modifier = Modifier.size(32.dp)) { Icon(Icons.Filled.MoreVert, "More Options", tint = SpotifyGray, modifier = Modifier.size(20.dp)) }
                 DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }, modifier = Modifier.background(SpotifySurface2)) {
-                    DropdownMenuItem(text = { Text("Song Info", color = SpotifyWhite) }, onClick = { showMenu = false })
+                    DropdownMenuItem(text = { Text("View Album", color = SpotifyWhite) }, onClick = { showMenu = false; onViewAlbum() })
+                    DropdownMenuItem(text = { Text("View Artist", color = SpotifyWhite) }, onClick = { showMenu = false; onViewArtist() })
+                    DropdownMenuItem(text = { Text("Play Next", color = SpotifyWhite) }, onClick = { showMenu = false; onPlayNext() })
+                    DropdownMenuItem(text = { Text("Add to Queue", color = SpotifyWhite) }, onClick = { showMenu = false; onAddToQueue() })
+                    DropdownMenuItem(text = { Text("Add to Playlist", color = SpotifyWhite) }, onClick = { showMenu = false; onAddToPlaylist() })
+                    if (isOnline) {
+                        DropdownMenuItem(text = { Text("Download Song", color = SpotifyWhite) }, onClick = { showMenu = false; onDownload() })
+                    } else {
+                        DropdownMenuItem(text = { Text("Edit Song Info", color = SpotifyWhite) }, onClick = { showMenu = false; onEdit() })
+                    }
                     if (!isProtected) {
                         DropdownMenuItem(text = { Text("Remove from Playlist", color = Color(0xFFFF5555)) }, onClick = { showMenu = false; onRemoveSong() })
                     }
