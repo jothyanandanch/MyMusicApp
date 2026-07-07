@@ -255,7 +255,11 @@ public class MusicViewModel extends AndroidViewModel {
                     }
                 });
                 progressHandler.post(progressRunnable);
-                if (songsLiveData.getValue() != null && !songsLiveData.getValue().isEmpty()) {
+                // If the player already has media loaded (e.g. reopening from notification),
+                // sync UI from the live player state instead of restoring from stale prefs.
+                if (exoPlayer.getCurrentMediaItem() != null) {
+                    syncUiFromPlayer();
+                } else if (songsLiveData.getValue() != null && !songsLiveData.getValue().isEmpty()) {
                     restoreLastSession(songsLiveData.getValue());
                     updateQueueUI();
                 }
@@ -824,9 +828,8 @@ public class MusicViewModel extends AndroidViewModel {
         currentPlaylist.removeIf(s -> s.getId() == song.getId());
         int insertIndex = currentIndex + 1;
         currentPlaylist.add(insertIndex, song);
-        exoPlayer.setMediaItems(buildMediaItems(), currentIndex, exoPlayer.getCurrentPosition());
-        exoPlayer.prepare();
-        exoPlayer.play();
+        // Use addMediaItem to insert without rebuilding the playlist — avoids rebuffering/pause
+        exoPlayer.addMediaItem(insertIndex, createMediaItem(song));
         updateQueueUI();
     }
     
@@ -1582,7 +1585,57 @@ public class MusicViewModel extends AndroidViewModel {
             else lyricsLiveData.postValue("No lyrics found.");
         });
     }
-    
+
+    /**
+     * Sync ViewModel UI state from the live ExoPlayer state.
+     * Used when reconnecting to an already-playing service (e.g. opening from notification)
+     * to avoid overwriting the player with stale SharedPreferences data.
+     */
+    private void syncUiFromPlayer() {
+        if (exoPlayer == null || exoPlayer.getCurrentMediaItem() == null) return;
+
+        List<Song> allSongs = new ArrayList<>();
+        List<Song> local = songsLiveData.getValue();
+        if (local != null) allSongs.addAll(local);
+        List<Song> online = allOnlineSongsLiveData.getValue();
+        if (online != null) {
+            Set<Long> localIds = new LinkedHashSet<>();
+            for (Song s : local != null ? local : new ArrayList<Song>()) localIds.add(s.getId());
+            for (Song s : online) {
+                if (!localIds.contains(s.getId())) allSongs.add(s);
+            }
+        }
+
+        // Rebuild currentPlaylist from ExoPlayer's media items
+        List<Song> restoredQueue = new ArrayList<>();
+        int resolvedIndex = -1;
+        for (int i = 0; i < exoPlayer.getMediaItemCount(); i++) {
+            MediaItem item = exoPlayer.getMediaItemAt(i);
+            if (item == null) continue;
+            long id = Long.parseLong(item.mediaId);
+            for (Song s : allSongs) {
+                if (s.getId() == id) {
+                    restoredQueue.add(s);
+                    if (i == exoPlayer.getCurrentMediaItemIndex()) {
+                        resolvedIndex = restoredQueue.size() - 1;
+                    }
+                    break;
+                }
+            }
+        }
+
+        if (restoredQueue.isEmpty() || resolvedIndex < 0) return;
+
+        currentPlaylist = restoredQueue;
+        currentIndex = resolvedIndex;
+        currentSongLiveData.postValue(currentPlaylist.get(currentIndex));
+        progressLiveData.postValue(exoPlayer.getCurrentPosition());
+        isPlayingLiveData.postValue(exoPlayer.isPlaying());
+        shuffleModeLiveData.setValue(exoPlayer.getShuffleModeEnabled());
+        repeatModeLiveData.setValue(exoPlayer.getRepeatMode());
+        updateQueueUI();
+    }
+
     private void restoreLastSession(List<Song> localSongs) {
         if (localSongs == null || localSongs.isEmpty()) return;
         if (!sessionRestoreInProgress.compareAndSet(false, true)) return;
