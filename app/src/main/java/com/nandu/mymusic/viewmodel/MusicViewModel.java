@@ -95,6 +95,7 @@ public class MusicViewModel extends AndroidViewModel {
     private long cachedLyricsSongId = -1;
     private String previousCachedLyrics = null;
     private long previousCachedLyricsSongId = -1;
+    private volatile int lyricsFetchGeneration = 0;
     private final MutableLiveData<Boolean> onlineSongBlockedLiveData = new MutableLiveData<>(false);
     private boolean wasPlayingBeforeBlock = false;
 
@@ -118,16 +119,23 @@ public class MusicViewModel extends AndroidViewModel {
     
     // ── Progress polling ────────────────────────────────────────────
     private final Handler progressHandler = new Handler(Looper.getMainLooper());
+    private int progressTicks = 0;
     private final Runnable progressRunnable = new Runnable() {
         @Override public void run() {
             if (exoPlayer != null) {
                 progressLiveData.postValue(exoPlayer.getCurrentPosition());
                 long dur = exoPlayer.getDuration();
                 durationLiveData.postValue(dur > 0 ? dur : 0L);
-                
+
                 progressHandler.removeCallbacks(progressRunnable);
                 if (exoPlayer.isPlaying()) {
-                    progressHandler.postDelayed(this, 200);
+                    // 16ms interval for smooth 60fps progress updates
+                    progressHandler.postDelayed(this, 16);
+                    // Persist position every ~5 seconds (312 ticks × 16ms ≈ 5s)
+                    if (++progressTicks >= 312) {
+                        progressTicks = 0;
+                        persistLastPosition(exoPlayer.getCurrentPosition());
+                    }
                 }
             }
         }
@@ -186,7 +194,10 @@ public class MusicViewModel extends AndroidViewModel {
                     @Override
                     public void onIsPlayingChanged(boolean isPlaying) {
                         isPlayingLiveData.postValue(isPlaying);
-                        if (!isPlaying && exoPlayer != null) persistLastPosition(exoPlayer.getCurrentPosition());
+                        if (!isPlaying && exoPlayer != null) {
+                            persistLastPosition(exoPlayer.getCurrentPosition());
+                            progressTicks = 0;
+                        }
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                             if (isPlaying) {
                                 if (!progressHandler.hasCallbacks(progressRunnable)) {
@@ -220,6 +231,7 @@ public class MusicViewModel extends AndroidViewModel {
                             previousCachedLyricsSongId = cachedLyricsSongId;
                             cachedLyrics = null;
                             cachedLyricsSongId = -1;
+                            lyricsFetchGeneration++;
                             fetchLyricsForCurrentSong(song);
                             if (exoPlayer.getDuration() > 0) durationLiveData.postValue(exoPlayer.getDuration());
                         }
@@ -455,18 +467,19 @@ public class MusicViewModel extends AndroidViewModel {
     }
     
     private void updateQueueUI() {
-        if (currentPlaylist != null) {
-            queueLiveData.postValue(new ArrayList<>(currentPlaylist));
-            StringBuilder sb = new StringBuilder();
-            for (int i = 0; i < currentPlaylist.size(); i++) {
-                sb.append(currentPlaylist.get(i).getId());
-                if (i < currentPlaylist.size() - 1) sb.append(",");
-            }
-            executorService.execute(() -> {
-                getApplication().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                        .edit().putString(KEY_QUEUE_IDS, sb.toString()).commit();
-            });
+        final List<Song> snapshot;
+        synchronized (this) {
+            if (currentPlaylist == null) return;
+            snapshot = new ArrayList<>(currentPlaylist);
         }
+        queueLiveData.postValue(snapshot);
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < snapshot.size(); i++) {
+            sb.append(snapshot.get(i).getId());
+            if (i < snapshot.size() - 1) sb.append(",");
+        }
+        getApplication().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit().putString(KEY_QUEUE_IDS, sb.toString()).commit();
     }
     
     private void persistLastPosition(long position) {
@@ -602,10 +615,13 @@ public class MusicViewModel extends AndroidViewModel {
     
     private void advanceToNext() {
         if (exoPlayer == null || currentPlaylist == null || currentPlaylist.isEmpty()) return;
+        // Always use ExoPlayer's actual index as source of truth for rapid clicks
+        currentIndex = exoPlayer.getCurrentMediaItemIndex();
         int nextIndex = currentIndex + 1;
         if (nextIndex >= currentPlaylist.size()) {
             if (exoPlayer.getRepeatMode() == Player.REPEAT_MODE_ALL) nextIndex = 0;
             else {
+                exoPlayer.pause();
                 isPlayingLiveData.postValue(false);
                 endOfQueueLiveData.postValue(true);
                 showEndDialogLiveData.postValue(true);
@@ -633,6 +649,8 @@ public class MusicViewModel extends AndroidViewModel {
             progressLiveData.postValue(0L);
             return;
         }
+        // Always use ExoPlayer's actual index as source of truth for rapid clicks
+        currentIndex = exoPlayer.getCurrentMediaItemIndex();
         int prevIndex = currentIndex - 1;
         if (prevIndex < 0) prevIndex = 0;
         Song prev = currentPlaylist.get(prevIndex);
@@ -670,7 +688,7 @@ public class MusicViewModel extends AndroidViewModel {
             } catch (NumberFormatException ignored) {}
         }
         if (restored.isEmpty()) return;
-        
+
         Song current = currentSongLiveData.getValue();
         int curIdx = 0;
         if (current != null) {
@@ -680,11 +698,13 @@ public class MusicViewModel extends AndroidViewModel {
         }
         int prevIdx = curIdx - 1;
         if (prevIdx < 0) prevIdx = 0;
-        
-        currentPlaylist = restored;
-        currentIndex = prevIdx;
+
+        synchronized (this) {
+            currentPlaylist = restored;
+            currentIndex = prevIdx;
+        }
         onlineSongBlockedLiveData.setValue(false);
-        
+
         List<MediaItem> items = new ArrayList<>();
         for (Song s : restored) items.add(createMediaItem(s));
         long savedPos = 0L;
@@ -696,12 +716,12 @@ public class MusicViewModel extends AndroidViewModel {
         updateQueueUI();
         persistLastIndex(prevIdx);
     }
-    
+
     private void restoreFromCacheAndPlayNext() {
         SharedPreferences prefs = getApplication().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
         String queueStr = prefs.getString(KEY_QUEUE_IDS, "");
         if (queueStr.isEmpty()) return;
-        
+
         List<Song> allSongs = new ArrayList<>();
         List<Song> local = songsLiveData.getValue();
         if (local != null) allSongs.addAll(local);
@@ -712,7 +732,7 @@ public class MusicViewModel extends AndroidViewModel {
             for (Song s : online) { if (!ids.contains(s.getId())) allSongs.add(s); }
         }
         if (allSongs.isEmpty()) return;
-        
+
         Map<Long, Song> songMap = new LinkedHashMap<>();
         for (Song s : allSongs) songMap.put(s.getId(), s);
         List<Song> restored = new ArrayList<>();
@@ -723,7 +743,7 @@ public class MusicViewModel extends AndroidViewModel {
             } catch (NumberFormatException ignored) {}
         }
         if (restored.isEmpty()) return;
-        
+
         Song current = currentSongLiveData.getValue();
         int curIdx = 0;
         if (current != null) {
@@ -733,9 +753,11 @@ public class MusicViewModel extends AndroidViewModel {
         }
         int nextIdx = curIdx + 1;
         if (nextIdx >= restored.size()) return;
-        
-        currentPlaylist = restored;
-        currentIndex = nextIdx;
+
+        synchronized (this) {
+            currentPlaylist = restored;
+            currentIndex = nextIdx;
+        }
         onlineSongBlockedLiveData.setValue(false);
         
         List<MediaItem> items = new ArrayList<>();
@@ -1475,7 +1497,6 @@ public class MusicViewModel extends AndroidViewModel {
                     executorService.execute(() -> {
                         List<Song> local = songsLiveData.getValue();
                         if (local != null && !local.isEmpty()) {
-                            sessionRestoreInProgress.set(false);
                             restoreLastSession(local);
                             updateQueueUI();
                         }
@@ -1543,6 +1564,13 @@ public class MusicViewModel extends AndroidViewModel {
             syncFavoritesWithSongs(local);
             restoreLastSession(local);
             updateQueueUI();
+            // If the service survived but syncUiFromPlayer ran before songs loaded,
+            // the queue was never synced. Retry now that songsLiveData is populated.
+            if (currentSongLiveData.getValue() == null
+                    && exoPlayer != null
+                    && exoPlayer.getCurrentMediaItem() != null) {
+                new Handler(Looper.getMainLooper()).post(this::syncUiFromPlayer);
+            }
             isLoadingLiveData.postValue(false);
             // ✅ Trigger the local playlist matching
             List<Song> online = allOnlineSongsLiveData.getValue();
@@ -1560,10 +1588,12 @@ public class MusicViewModel extends AndroidViewModel {
             return;
         }
         lyricsLiveData.postValue("Loading...");
+        final int generation = lyricsFetchGeneration;
         executorService.execute(() -> {
             String lyrics = com.nandu.mymusic.utils.LyricsUtils.extractLyrics(
                     getApplication(), song.getUri(), song.getTitle(), song.getArtist(), true
             );
+            if (generation != lyricsFetchGeneration) return;
             cachedLyrics = lyrics;
             cachedLyricsSongId = song.getId();
             if (lyrics != null) lyricsLiveData.postValue(lyrics);
@@ -1575,10 +1605,12 @@ public class MusicViewModel extends AndroidViewModel {
         lyricsLiveData.postValue("Loading...");
         Integer currentMode = libraryModeLiveData.getValue();
         boolean allowOnlineFetch = (currentMode != null && currentMode != 0);
+        final int generation = lyricsFetchGeneration;
         executorService.execute(() -> {
             String lyrics = com.nandu.mymusic.utils.LyricsUtils.extractLyrics(
                     getApplication(), song.getUri(), song.getTitle(), song.getArtist(), allowOnlineFetch
             );
+            if (generation != lyricsFetchGeneration) return;
             cachedLyrics = lyrics;
             cachedLyricsSongId = song.getId();
             if (lyrics != null) lyricsLiveData.postValue(lyrics);
@@ -1640,6 +1672,7 @@ public class MusicViewModel extends AndroidViewModel {
         if (localSongs == null || localSongs.isEmpty()) return;
         if (!sessionRestoreInProgress.compareAndSet(false, true)) return;
         if (currentSongLiveData.getValue() != null) { sessionRestoreInProgress.set(false); return; }
+        if (exoPlayer != null && exoPlayer.getCurrentMediaItem() != null) { sessionRestoreInProgress.set(false); return; }
 
         List<Song> allSongs = new ArrayList<>(localSongs);
         List<Song> online = allOnlineSongsLiveData.getValue();
@@ -1675,7 +1708,23 @@ public class MusicViewModel extends AndroidViewModel {
             }
         }
         
-        if (restoredQueue.isEmpty()) restoredQueue = new ArrayList<>(localSongs);
+        if (restoredQueue.isEmpty()) {
+            // Don't fall back to the entire local library — just restore the single song
+            // that was playing. Find it by lastUri from the combined song list.
+            if (lastUri != null) {
+                for (Song s : allSongs) {
+                    if (s.getUri().toString().equals(lastUri)) {
+                        restoredQueue.add(s);
+                        break;
+                    }
+                }
+            }
+            // If still empty (song not found), bail out
+            if (restoredQueue.isEmpty()) {
+                sessionRestoreInProgress.set(false);
+                return;
+            }
+        }
         
         if (lastUri != null) {
             for (int i = 0; i < restoredQueue.size(); i++) {
@@ -1686,17 +1735,22 @@ public class MusicViewModel extends AndroidViewModel {
         }
         if (resolvedIndex < 0 && lastIndex >= 0 && lastIndex < restoredQueue.size()) resolvedIndex = lastIndex;
         if (resolvedIndex < 0) { sessionRestoreInProgress.set(false); return; }
-        
-        currentPlaylist = restoredQueue;
-        currentIndex    = resolvedIndex;
+
+        synchronized (this) {
+            currentPlaylist = restoredQueue;
+            currentIndex    = resolvedIndex;
+        }
         updateQueueUI();
-        
+
         List<MediaItem> items = new ArrayList<>();
         for (Song s : currentPlaylist) items.add(createMediaItem(s));
         
         final int finalIndex = resolvedIndex;
         new Handler(Looper.getMainLooper()).post(() -> {
-            if (exoPlayer == null) return;
+            if (exoPlayer == null) {
+                sessionRestoreInProgress.set(false);
+                return;
+            }
             exoPlayer.setMediaItems(items, finalIndex, savedPosition);
             exoPlayer.prepare();
             new Handler(Looper.getMainLooper()).postDelayed(() -> {
@@ -1710,8 +1764,11 @@ public class MusicViewModel extends AndroidViewModel {
             repeatModeLiveData.setValue(savedRepeat);
             exoPlayer.setRepeatMode(savedRepeat);
             progressLiveData.setValue(savedPosition);
+            // Start progress polling so the bar updates when user plays
+            progressHandler.removeCallbacks(progressRunnable);
+            progressHandler.post(progressRunnable);
+            sessionRestoreInProgress.set(false);
         });
-        sessionRestoreInProgress.set(false);
     }
     
     // ✅ SLEEP TIMER LOGIC

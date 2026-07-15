@@ -34,6 +34,7 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -1053,6 +1054,7 @@ fun SongItem(
 ) {
     var showMenu by remember { mutableStateOf(false) }
     val isOnline = song.uri.toString().startsWith("http")
+    val focusManager = LocalFocusManager.current
 
     Row(
         modifier = Modifier.fillMaxWidth().combinedClickable(onClick = onSongClick)
@@ -1080,16 +1082,16 @@ fun SongItem(
         Box {
             IconButton(onClick = { showMenu = true }, modifier = Modifier.size(32.dp)) { Icon(Icons.Filled.MoreVert, "More options", tint = SpotifyGray, modifier = Modifier.size(20.dp)) }
             DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }, modifier = Modifier.background(SpotifySurface2)) {
-                DropdownMenuItem(text = { Text("View Album", color = SpotifyWhite) }, onClick = { showMenu = false; onViewAlbum() })
-                DropdownMenuItem(text = { Text("View Artist", color = SpotifyWhite) }, onClick = { showMenu = false; onViewArtist() })
-                DropdownMenuItem(text = { Text("Play Next", color = SpotifyWhite) }, onClick = { showMenu = false; onPlayNext() })
-                DropdownMenuItem(text = { Text("Add to Queue", color = SpotifyWhite) }, onClick = { showMenu = false; onAddToQueue() })
+                DropdownMenuItem(text = { Text("View Album", color = SpotifyWhite) }, onClick = { showMenu = false; focusManager.clearFocus(); onViewAlbum() })
+                DropdownMenuItem(text = { Text("View Artist", color = SpotifyWhite) }, onClick = { showMenu = false; focusManager.clearFocus(); onViewArtist() })
+                DropdownMenuItem(text = { Text("Play Next", color = SpotifyWhite) }, onClick = { showMenu = false; focusManager.clearFocus(); onPlayNext() })
+                DropdownMenuItem(text = { Text("Add to Queue", color = SpotifyWhite) }, onClick = { showMenu = false; focusManager.clearFocus(); onAddToQueue() })
 
                 if (isOnline) {
-                    DropdownMenuItem(text = { Text("Download Song", color = SpotifyWhite) }, onClick = { showMenu = false; onDownload() })
+                    DropdownMenuItem(text = { Text("Download Song", color = SpotifyWhite) }, onClick = { showMenu = false; focusManager.clearFocus(); onDownload() })
                 } else {
-                    DropdownMenuItem(text = { Text("Edit Song Info", color = SpotifyWhite) }, onClick = { showMenu = false; onEdit() })
-                    DropdownMenuItem(text = { Text("Delete from Device", color = Color(0xFFFF5555)) }, onClick = { showMenu = false; onDelete() })
+                    DropdownMenuItem(text = { Text("Edit Song Info", color = SpotifyWhite) }, onClick = { showMenu = false; focusManager.clearFocus(); onEdit() })
+                    DropdownMenuItem(text = { Text("Delete from Device", color = Color(0xFFFF5555)) }, onClick = { showMenu = false; focusManager.clearFocus(); onDelete() })
                 }
             }
         }
