@@ -1086,6 +1086,7 @@ fun SongItem(
                 DropdownMenuItem(text = { Text("View Artist", color = SpotifyWhite) }, onClick = { showMenu = false; focusManager.clearFocus(); onViewArtist() })
                 DropdownMenuItem(text = { Text("Play Next", color = SpotifyWhite) }, onClick = { showMenu = false; focusManager.clearFocus(); onPlayNext() })
                 DropdownMenuItem(text = { Text("Add to Queue", color = SpotifyWhite) }, onClick = { showMenu = false; focusManager.clearFocus(); onAddToQueue() })
+                DropdownMenuItem(text = { Text("Add to Playlist", color = SpotifyWhite) }, onClick = { showMenu = false; focusManager.clearFocus(); onAddToPlaylist() })
 
                 if (isOnline) {
                     DropdownMenuItem(text = { Text("Download Song", color = SpotifyWhite) }, onClick = { showMenu = false; focusManager.clearFocus(); onDownload() })
