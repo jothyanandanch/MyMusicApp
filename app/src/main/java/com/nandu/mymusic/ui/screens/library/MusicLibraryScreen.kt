@@ -43,6 +43,7 @@ import coil.compose.AsyncImage
 import com.nandu.mymusic.model.Song
 import com.nandu.mymusic.ui.components.AlbumArt
 import com.nandu.mymusic.ui.screens.favorites.FavoritesScreen
+import com.nandu.mymusic.ui.theme.AppColors
 import com.nandu.mymusic.ui.screens.playlist.PlaylistScreen
 import com.nandu.mymusic.ui.screens.playlist.SortMenu
 import com.nandu.mymusic.ui.screens.playlist.SortType
@@ -53,13 +54,13 @@ import java.util.Locale
 import java.util.concurrent.TimeUnit
 import androidx.compose.runtime.key
 
-val SpotifyBlack     = Color(0xFF121212)
-val SpotifySurface   = Color(0xFF1E1E1E)
-val SpotifySurface2  = Color(0xFF282828)
-val SpotifyGreen     = Color(0xFF1DB954)
-val SpotifyWhite     = Color(0xFFFFFFFF)
-val SpotifyGray      = Color(0xFFB3B3B3)
-val SpotifyLightGray = Color(0xFF535353)
+val SpotifyBlack     = AppColors.Black
+val SpotifySurface   = AppColors.Surface
+val SpotifySurface2  = AppColors.Surface2
+val SpotifyGreen     = AppColors.Green
+val SpotifyWhite     = AppColors.White
+val SpotifyGray      = AppColors.Gray
+val SpotifyLightGray = AppColors.LightGray
 
 fun splitArtists(artistString: String): List<String> {
     if (artistString.isBlank()) return listOf("Unknown Artist")

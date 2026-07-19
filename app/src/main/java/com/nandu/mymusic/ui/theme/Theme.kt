@@ -6,15 +6,24 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 
 private val SpotifyColorScheme = darkColorScheme(
-    primary        = Color(0xFF1DB954),   // Spotify Green
-    onPrimary      = Color(0xFF000000),
-    background     = Color(0xFF121212),   // Spotify Black
-    onBackground   = Color(0xFFFFFFFF),
-    surface        = Color(0xFF1E1E1E),   // Spotify Surface
-    onSurface      = Color(0xFFFFFFFF),
-    onSurfaceVariant = Color(0xFFB3B3B3), // Spotify Gray
-    secondary      = Color(0xFFB3B3B3),
-    onSecondary    = Color(0xFF000000),
+    primary             = AppColors.Green,
+    onPrimary           = AppColors.Black,
+    primaryContainer    = AppColors.Green,
+    onPrimaryContainer  = AppColors.Black,
+    secondary           = AppColors.Gray,
+    onSecondary         = AppColors.Black,
+    secondaryContainer  = AppColors.Surface2,
+    onSecondaryContainer = AppColors.White,
+    background          = AppColors.Black,
+    onBackground        = AppColors.White,
+    surface             = AppColors.Surface,
+    onSurface           = AppColors.White,
+    surfaceVariant      = AppColors.Surface2,
+    onSurfaceVariant    = AppColors.Gray,
+    error               = Color(0xFFFF5555),
+    onError             = AppColors.White,
+    outline             = AppColors.LightGray,
+    outlineVariant      = AppColors.LightGray,
 )
 
 @Composable
