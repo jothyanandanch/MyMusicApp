@@ -18,6 +18,8 @@ import com.nandu.mymusic.ui.screens.library.LibraryGroupItem
 import com.nandu.mymusic.ui.screens.library.SongItem
 import com.nandu.mymusic.ui.screens.library.SpotifyWhite
 import com.nandu.mymusic.ui.screens.library.downloadSong
+import com.nandu.mymusic.ui.screens.library.splitArtists
+import java.util.LinkedHashMap
 
 @Composable
 fun SearchScreen(
@@ -37,6 +39,24 @@ fun SearchScreen(
     onDownload: (Song) -> Unit
 ) {
     val context = LocalContext.current
+
+    // Dynamically extract matching artists based on the search query
+    val matchingArtists = remember(filteredSongs, searchQuery) {
+        if (searchQuery.isBlank()) emptyList()
+        else {
+            val queryLower = searchQuery.lowercase()
+            val artistMap = LinkedHashMap<String, MutableList<Song>>()
+            for (song in filteredSongs) {
+                for (artist in splitArtists(song.artist)) {
+                    if (artist.lowercase().contains(queryLower)) {
+                        artistMap.getOrPut(artist) { mutableListOf() }.add(song)
+                    }
+                }
+            }
+            artistMap.entries.toList()
+        }
+    }
+
     // Dynamically extract matching albums based on the search query
     val matchingAlbums = remember(filteredSongs, searchQuery) {
         if (searchQuery.isBlank()) emptyList()
@@ -66,13 +86,37 @@ fun SearchScreen(
                     subtitle = "Album • ${firstSong?.artist ?: "Unknown Artist"}",
                     audioUri = firstSong?.uri,
                     song = firstSong,
-                    onClick = { onViewAlbum(albumName) }, // Takes the user to the Album View!
+                    onClick = { onViewAlbum(albumName) },
                     isCircular = false
                 )
             }
         }
 
-        // 2. SHOW MATCHING SONGS BELOW
+        // 2. SHOW MATCHING ARTISTS
+        if (matchingArtists.isNotEmpty()) {
+            item {
+                Text(
+                    text = "Artists",
+                    color = SpotifyWhite,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 18.sp,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
+                )
+            }
+            items(matchingArtists) { (artistName, artistSongs) ->
+                val firstSong = artistSongs.firstOrNull()
+                LibraryGroupItem(
+                    title = artistName,
+                    subtitle = "Artist • ${artistSongs.size} songs",
+                    audioUri = firstSong?.uri,
+                    song = firstSong,
+                    onClick = { onViewArtist(artistName) },
+                    isCircular = true
+                )
+            }
+        }
+
+        // 3. SHOW MATCHING SONGS BELOW
         if (filteredSongs.isNotEmpty()) {
             item {
                 Text(

@@ -61,6 +61,14 @@ val SpotifyWhite     = Color(0xFFFFFFFF)
 val SpotifyGray      = Color(0xFFB3B3B3)
 val SpotifyLightGray = Color(0xFF535353)
 
+fun splitArtists(artistString: String): List<String> {
+    if (artistString.isBlank()) return listOf("Unknown Artist")
+    val parts = artistString.split(
+        Regex(",\\s*|\\s*&\\s*|\\s+and\\s+|\\s+feat\\.?\\s+|\\s+ft\\.?\\s+|\\s+featuring\\s+|\\s+x\\s+", RegexOption.IGNORE_CASE)
+    )
+    return parts.map { it.trim() }.filter { it.isNotEmpty() }.ifEmpty { listOf(artistString.trim()) }
+}
+
 sealed class CollectionView {
     data class Album(val name: String) : CollectionView()
     data class Artist(val name: String) : CollectionView()
@@ -631,7 +639,14 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                             )
                         }
                         is CollectionView.Artist -> {
-                            val artistSongs = currentDisplaySongs.filter { it.artist == currentView.name }
+                            val searchNames = splitArtists(currentView.name)
+                            val artistSongs = currentDisplaySongs.filter { song ->
+                                splitArtists(song.artist).any { songArtist ->
+                                    searchNames.any { searchName ->
+                                        songArtist.equals(searchName, ignoreCase = true)
+                                    }
+                                }
+                            }
                             CollectionDetailView(
                                 title = currentView.name, songs = artistSongs, currentSong = currentSong, favoriteIds = favoriteIds,
                                 sortType = persistentSortType, onSortChange = onSortTypeChange, showSnackbar = showSnackbar,
@@ -870,7 +885,13 @@ fun HomeTab(
     }
 
     val displayArtists = remember(songs, sortType) {
-        val artists = songs.groupBy { it.artist }.entries.toList()
+        val artistMap = LinkedHashMap<String, MutableList<Song>>()
+        for (song in songs) {
+            for (artist in splitArtists(song.artist)) {
+                artistMap.getOrPut(artist) { mutableListOf() }.add(song)
+            }
+        }
+        val artists = artistMap.entries.toList()
         when (sortType) {
             SortType.DEFAULT -> artists
             SortType.TITLE_AZ, SortType.ARTIST -> artists.sortedBy { it.key.lowercase() }
