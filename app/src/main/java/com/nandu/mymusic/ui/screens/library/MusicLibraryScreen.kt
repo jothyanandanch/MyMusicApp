@@ -1114,7 +1114,7 @@ fun SongItem(
                     DropdownMenuItem(text = { Text("Download Song", color = SpotifyWhite) }, onClick = { showMenu = false; focusManager.clearFocus(); onDownload() })
                 } else {
                     DropdownMenuItem(text = { Text("Edit Song Info", color = SpotifyWhite) }, onClick = { showMenu = false; focusManager.clearFocus(); onEdit() })
-                    DropdownMenuItem(text = { Text("Delete from Device", color = Color(0xFFFF5555)) }, onClick = { showMenu = false; focusManager.clearFocus(); onDelete() })
+                    DropdownMenuItem(text = { Text("Delete from Device", color = AppColors.Error) }, onClick = { showMenu = false; focusManager.clearFocus(); onDelete() })
                 }
             }
         }
@@ -1137,7 +1137,16 @@ fun MiniPlayerBar(
 ) {
     val fraction = if (duration > 0) (progress.toFloat() / duration.toFloat()).coerceIn(0f, 1f) else 0f
     Column(modifier = Modifier.fillMaxWidth().background(SpotifySurface2).clickable { onClick() }) {
-        Box(modifier = Modifier.fillMaxWidth().height(2.dp).background(SpotifyLightGray)) { Box(modifier = Modifier.fillMaxWidth(fraction).height(2.dp).background(SpotifyGreen)) }
+        com.nandu.mymusic.ui.components.SquigglyProgressLine(
+            progressFraction = fraction,
+            modifier = Modifier.fillMaxWidth().height(6.dp),
+            activeColor = SpotifyGreen,
+            inactiveColor = SpotifyLightGray,
+            isAnimating = isPlaying,
+            amplitudeDp = 1.5.dp,
+            wavelengthDp = 12.dp,
+            strokeWidthDp = 2.dp
+        )
         Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
             AlbumArt(song = song, audioUri = song.uri, title = song.title, artist = song.artist, isActive = true, size = 40.dp, cornerRadius = 4.dp)
             Column(modifier = Modifier.weight(1f).padding(horizontal = 10.dp)) {
@@ -1147,7 +1156,13 @@ fun MiniPlayerBar(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = onToggleFavorite, modifier = Modifier.size(36.dp)) { Icon(imageVector = if (isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder, contentDescription = null, tint = if (isFavorite) SpotifyGreen else SpotifyWhite, modifier = Modifier.size(20.dp)) }
                 IconButton(onClick = onPrevious, modifier = Modifier.size(36.dp)) { Icon(Icons.Filled.SkipPrevious, null, tint = SpotifyWhite, modifier = Modifier.size(24.dp)) }
-                IconButton(onClick = onTogglePlayPause, modifier = Modifier.size(40.dp)) { Icon(imageVector = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow, contentDescription = null, tint = SpotifyWhite, modifier = Modifier.size(28.dp)) }
+                Box(
+                    modifier = Modifier.size(40.dp)
+                        .clip(com.nandu.mymusic.ui.theme.ScallopedShape(petals = 9, amplitude = 0.12f))
+                        .background(SpotifyWhite)
+                        .clickable(onClick = onTogglePlayPause),
+                    contentAlignment = Alignment.Center
+                ) { Icon(imageVector = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow, contentDescription = null, tint = SpotifyBlack, modifier = Modifier.size(22.dp)) }
                 IconButton(onClick = onNext, modifier = Modifier.size(36.dp)) { Icon(Icons.Filled.SkipNext, null, tint = SpotifyWhite, modifier = Modifier.size(24.dp)) }
             }
         }

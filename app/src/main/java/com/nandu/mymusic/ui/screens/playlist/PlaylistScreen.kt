@@ -37,6 +37,7 @@ import com.nandu.mymusic.ui.screens.library.SpotifySurface
 import com.nandu.mymusic.ui.screens.library.SpotifySurface2
 import com.nandu.mymusic.ui.screens.library.SpotifyWhite
 import com.nandu.mymusic.ui.screens.library.formatDuration
+import com.nandu.mymusic.ui.theme.AppColors
 import com.nandu.mymusic.viewmodel.MusicViewModel
 import androidx.compose.material.icons.filled.Settings
 
@@ -225,7 +226,7 @@ fun PlaylistScreen(
                     if (selectedCustomPlaylist == playlistToDelete) selectedCustomPlaylist = null
                     showSnackbar("Playlist deleted")
                     playlistToDelete = null
-                }) { Text("Delete", color = Color(0xFFFF5555), fontWeight = FontWeight.Bold) }
+                }) { Text("Delete", color = AppColors.Error, fontWeight = FontWeight.Bold) }
             },
             dismissButton = { TextButton(onClick = { playlistToDelete = null }) { Text("Cancel", color = SpotifyGray) } }
         )
@@ -439,7 +440,7 @@ fun PlaylistCard(
     ) {
         Box(
             modifier = Modifier.size(64.dp).clip(RoundedCornerShape(6.dp))
-                .background(Brush.linearGradient(listOf(Color(0xFF1DB954), Color(0xFF158A3E)))),
+                .background(Brush.linearGradient(listOf(AppColors.HeroLight, AppColors.HeroDeep))),
             contentAlignment = Alignment.Center
         ) { Icon(Icons.Filled.LibraryMusic, null, tint = Color.White, modifier = Modifier.size(32.dp)) }
         Column(modifier = Modifier.padding(start = 16.dp).weight(1f)) {
@@ -447,7 +448,7 @@ fun PlaylistCard(
             Text("$songCount song${if (songCount != 1) "s" else ""} ${if (isProtected) "· Device" else "· Custom"}", color = SpotifyGray, fontSize = 12.sp)
         }
     }
-    HorizontalDivider(color = Color(0xFF1E1E1E), thickness = 0.5.dp)
+    HorizontalDivider(color = SpotifySurface, thickness = 0.5.dp)
 }
 
 // ─── General Playlist Detail View ─────────────────────────────────────
@@ -502,7 +503,7 @@ fun PlaylistDetailView(
         item {
             Box(
                 modifier = Modifier.fillMaxWidth().height(240.dp)
-                    .background(Brush.verticalGradient(listOf(Color(0xFF1DB954), Color(0xFF0D5C2E), SpotifyBlack)))
+                    .background(Brush.verticalGradient(listOf(AppColors.HeroLight, AppColors.HeroDeep, SpotifyBlack)))
             ) {
                 Row(modifier = Modifier.fillMaxWidth().padding(8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     IconButton(onClick = {
@@ -518,7 +519,7 @@ fun PlaylistDetailView(
                             TextButton(
                                 onClick = { onRemoveSongs(selectedSongsToRemove.toList()); isEditMode = false; selectedSongsToRemove = emptySet() },
                                 enabled = selectedSongsToRemove.isNotEmpty()
-                            ) { Text("Delete (${selectedSongsToRemove.size})", color = if (selectedSongsToRemove.isNotEmpty()) Color(0xFFFF5555) else SpotifyGray, fontWeight = FontWeight.Bold) }
+                            ) { Text("Delete (${selectedSongsToRemove.size})", color = if (selectedSongsToRemove.isNotEmpty()) AppColors.Error else SpotifyGray, fontWeight = FontWeight.Bold) }
                         }
                     } else if (!isProtected) {
                         Row {
@@ -531,7 +532,7 @@ fun PlaylistDetailView(
                 Column(modifier = Modifier.align(Alignment.BottomStart).padding(horizontal = 24.dp, vertical = 24.dp)) {
                     Box(
                         modifier = Modifier.size(96.dp).clip(RoundedCornerShape(4.dp))
-                            .background(Brush.linearGradient(listOf(Color(0xFF1DB954), Color(0xFF158A3E)))),
+                            .background(Brush.linearGradient(listOf(AppColors.HeroLight, AppColors.HeroDeep))),
                         contentAlignment = Alignment.Center
                     ) { Icon(Icons.Filled.LibraryMusic, null, tint = Color.White, modifier = Modifier.size(52.dp)) }
                     Spacer(Modifier.height(12.dp))
@@ -686,7 +687,7 @@ fun PlaylistSongItem(
                         DropdownMenuItem(text = { Text("Edit Song Info", color = SpotifyWhite) }, onClick = { showMenu = false; onEdit() })
                     }
                     if (!isProtected) {
-                        DropdownMenuItem(text = { Text("Remove from Playlist", color = Color(0xFFFF5555)) }, onClick = { showMenu = false; onRemoveSong() })
+                        DropdownMenuItem(text = { Text("Remove from Playlist", color = AppColors.Error) }, onClick = { showMenu = false; onRemoveSong() })
                     }
                 }
             }

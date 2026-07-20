@@ -29,6 +29,7 @@ import com.nandu.mymusic.ui.screens.library.SpotifyGreen
 import com.nandu.mymusic.ui.screens.library.SpotifySurface
 import com.nandu.mymusic.ui.screens.library.SpotifySurface2
 import com.nandu.mymusic.ui.screens.library.SpotifyWhite
+import com.nandu.mymusic.ui.theme.AppColors
 import com.nandu.mymusic.ui.screens.playlist.AddSongsScreen
 import com.nandu.mymusic.ui.screens.playlist.SortMenu
 import com.nandu.mymusic.ui.screens.playlist.SortType
@@ -112,7 +113,7 @@ fun FavoritesScreen(
                     .height(220.dp)
                     .background(
                         Brush.verticalGradient(
-                            listOf(Color(0xFF4B2D8C), Color(0xFF1A1A2E), SpotifyBlack)
+                            listOf(AppColors.HeroLight, AppColors.HeroDeep, SpotifyBlack)
                         )
                     )
                     .padding(horizontal = 24.dp),
@@ -123,7 +124,7 @@ fun FavoritesScreen(
                         modifier = Modifier
                             .size(96.dp)
                             .background(
-                                Brush.linearGradient(listOf(Color(0xFF7B5EA7), Color(0xFF4B2D8C))),
+                                Brush.linearGradient(listOf(AppColors.HeroLight, AppColors.HeroDeep)),
                                 RoundedCornerShape(4.dp)
                             ),
                         contentAlignment = Alignment.Center
@@ -170,7 +171,7 @@ fun FavoritesScreen(
                         ) {
                             Text(
                                 text = "Remove (${selectedSongsToRemove.size})",
-                                color = if (selectedSongsToRemove.isNotEmpty()) Color(0xFFFF5555) else SpotifyGray,
+                                color = if (selectedSongsToRemove.isNotEmpty()) AppColors.Error else SpotifyGray,
                                 fontWeight = FontWeight.Bold
                             )
                         }
@@ -380,7 +381,7 @@ fun FavoritesScreen(
 
                                 // Specific to Liked Songs
                                 DropdownMenuItem(
-                                    text = { Text("Remove from Liked Songs", color = Color(0xFFFF5555)) },
+                                    text = { Text("Remove from Liked Songs", color = AppColors.Error) },
                                     onClick = { showSongMenu = false; onToggleFavorite(song) }
                                 )
                             }

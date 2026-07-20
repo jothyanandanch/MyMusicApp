@@ -21,6 +21,7 @@ import androidx.lifecycle.AndroidViewModel;
 import androidx.lifecycle.LiveData;
 import androidx.lifecycle.MutableLiveData;
 import androidx.media3.common.MediaItem;
+import androidx.media3.common.MediaMetadata;
 import androidx.media3.common.Player;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.session.MediaController;
@@ -457,7 +458,17 @@ public class MusicViewModel extends AndroidViewModel {
         if (!dataSaver && finalUrl.contains("/upload/q_auto,f_auto/")) {
             finalUrl = finalUrl.replace("/upload/q_auto,f_auto/", "/upload/");
         }
-        return new MediaItem.Builder().setUri(Uri.parse(finalUrl)).setMediaId(String.valueOf(song.getId())).build();
+        MediaMetadata.Builder metadataBuilder = new MediaMetadata.Builder()
+                .setTitle(song.getTitle())
+                .setArtist(song.getArtist())
+                .setDisplayTitle(song.getTitle());
+        if (song.getAlbum() != null) metadataBuilder.setAlbumTitle(song.getAlbum());
+        if (song.getAlbumArtUri() != null) metadataBuilder.setArtworkUri(song.getAlbumArtUri());
+        return new MediaItem.Builder()
+                .setUri(Uri.parse(finalUrl))
+                .setMediaId(String.valueOf(song.getId()))
+                .setMediaMetadata(metadataBuilder.build())
+                .build();
     }
     
     private List<MediaItem> buildMediaItems() {

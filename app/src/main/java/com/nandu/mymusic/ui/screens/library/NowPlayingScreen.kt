@@ -56,6 +56,9 @@ import com.nandu.mymusic.ui.components.AlbumArt
 import com.nandu.mymusic.utils.parseLrc
 import kotlinx.coroutines.launch
 import androidx.compose.ui.platform.LocalLocale
+import com.nandu.mymusic.ui.components.SquigglyProgressLine
+import com.nandu.mymusic.ui.theme.AppColors
+import com.nandu.mymusic.ui.theme.ScallopedShape
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -111,7 +114,7 @@ fun NowPlayingScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Brush.verticalGradient(listOf(Color(0xFF3D6B4F), SpotifyBlack), startY = 0f, endY = 1800f))
+            .background(Brush.verticalGradient(listOf(AppColors.GradientTop, AppColors.GradientMid, SpotifyBlack), startY = 0f, endY = 1800f))
             .graphicsLayer { translationY = offsetY.value; alpha = (1f - (offsetY.value / 600f)).coerceIn(0f, 1f) }
             .pointerInput(Unit) {
                 detectVerticalDragGestures(
@@ -175,7 +178,7 @@ fun NowPlayingScreen(
                             DropdownMenuItem(text = {
                                 Text(
                                     "Delete Song",
-                                    color = Color(0xFFFF5555)
+                                    color = AppColors.Error
                                 )
                             }, onClick = { showMenu = false; onDelete() })
                         }
@@ -191,7 +194,7 @@ fun NowPlayingScreen(
                             AlbumArt(song = song, audioUri = song.uri, isActive = true, size = 64.dp, cornerRadius = 8.dp)
                             Spacer(modifier = Modifier.width(16.dp))
                             Column(modifier = Modifier.weight(1f)) {
-                                Text(song.title, color = SpotifyWhite, fontWeight = FontWeight.Bold, fontSize = 20.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(song.title, color = SpotifyGreen, fontWeight = FontWeight.Bold, fontSize = 20.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 Text(song.artist, color = SpotifyGray, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
                             IconButton(onClick = onToggleFavorite) { Icon(imageVector = if (isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder, contentDescription = "Like", tint = if (isFavorite) SpotifyGreen else SpotifyWhite) }
@@ -206,7 +209,7 @@ fun NowPlayingScreen(
                         Spacer(modifier = Modifier.height(32.dp))
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                             Column(modifier = Modifier.weight(1f)) {
-                                Text(song.title, color = SpotifyWhite, fontWeight = FontWeight.Bold, fontSize = 22.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(song.title, color = SpotifyGreen, fontWeight = FontWeight.Bold, fontSize = 22.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 Spacer(Modifier.height(4.dp))
                                 Text(song.artist, color = SpotifyGray, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
@@ -239,8 +242,14 @@ fun NowPlayingScreen(
                     contentAlignment = Alignment.CenterStart
                 ) {
                     val trackWidthDp = this.maxWidth
-                    Box(modifier = Modifier.fillMaxWidth().height(if (isDragging) 5.dp else 4.dp).align(Alignment.Center).clip(RoundedCornerShape(50)).background(SpotifyLightGray))
-                    Box(modifier = Modifier.fillMaxWidth(animatedFraction).height(if (isDragging) 5.dp else 4.dp).align(Alignment.CenterStart).clip(RoundedCornerShape(50)).background(SpotifyGreen))
+                    SquigglyProgressLine(
+                        progressFraction = animatedFraction,
+                        modifier = Modifier.fillMaxWidth().height(16.dp).align(Alignment.Center),
+                        activeColor = SpotifyGreen,
+                        inactiveColor = SpotifyLightGray,
+                        isAnimating = isPlaying && !isDragging,
+                        strokeWidthDp = if (isDragging) 5.dp else 4.dp
+                    )
                     Box(modifier = Modifier.size(14.dp).align(Alignment.CenterStart).offset(x = (trackWidthDp * animatedFraction) - 7.dp).scale(thumbScale).clip(CircleShape).background(SpotifyWhite).shadow(elevation = 3.dp, shape = CircleShape))
                 }
 
@@ -252,9 +261,21 @@ fun NowPlayingScreen(
 
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     IconButton(onClick = onToggleShuffle) { Icon(Icons.Filled.Shuffle, "Shuffle", tint = if (shuffleMode) SpotifyGreen else SpotifyGray, modifier = Modifier.size(22.dp)) }
-                    IconButton(onClick = onPrevious, modifier = Modifier.size(48.dp)) { Icon(Icons.Filled.SkipPrevious, "Previous", tint = SpotifyWhite, modifier = Modifier.size(38.dp)) }
-                    Box(modifier = Modifier.size(64.dp).clip(CircleShape).background(SpotifyWhite), contentAlignment = Alignment.Center) { IconButton(onClick = onTogglePlayPause) { Icon(imageVector = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow, contentDescription = "Play/Pause", tint = SpotifyBlack, modifier = Modifier.size(38.dp)) } }
-                    IconButton(onClick = onNext, modifier = Modifier.size(48.dp)) { Icon(Icons.Filled.SkipNext, "Next", tint = SpotifyWhite, modifier = Modifier.size(38.dp)) }
+                    Box(
+                        modifier = Modifier.size(56.dp).clip(ScallopedShape(petals = 10, amplitude = 0.10f)).background(SpotifyWhite)
+                            .clickable(onClick = onPrevious),
+                        contentAlignment = Alignment.Center
+                    ) { Icon(Icons.Filled.SkipPrevious, "Previous", tint = SpotifyBlack, modifier = Modifier.size(28.dp)) }
+                    Box(
+                        modifier = Modifier.size(76.dp).clip(ScallopedShape(petals = 9, amplitude = 0.12f)).background(SpotifyWhite)
+                            .clickable(onClick = onTogglePlayPause),
+                        contentAlignment = Alignment.Center
+                    ) { Icon(imageVector = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow, contentDescription = "Play/Pause", tint = SpotifyBlack, modifier = Modifier.size(36.dp)) }
+                    Box(
+                        modifier = Modifier.size(56.dp).clip(ScallopedShape(petals = 10, amplitude = 0.10f, rotationDegrees = 18f)).background(SpotifyWhite)
+                            .clickable(onClick = onNext),
+                        contentAlignment = Alignment.Center
+                    ) { Icon(Icons.Filled.SkipNext, "Next", tint = SpotifyBlack, modifier = Modifier.size(28.dp)) }
                     IconButton(onClick = onToggleRepeat) { Icon(imageVector = if (repeatMode == Player.REPEAT_MODE_ONE) Icons.Filled.RepeatOne else Icons.Filled.Repeat, contentDescription = "Repeat", tint = if (repeatMode != Player.REPEAT_MODE_OFF) SpotifyGreen else SpotifyGray, modifier = Modifier.size(22.dp)) }
                 }
 
@@ -523,7 +544,7 @@ fun QueueContent(
                                         if (selectedSongs.isNotEmpty()) {
                                             Text(
                                                 text = "Remove",
-                                                color = Color(0xFFFF5555), fontWeight = FontWeight.SemiBold, fontSize = 14.sp,
+                                                color = AppColors.Error, fontWeight = FontWeight.SemiBold, fontSize = 14.sp,
                                                 modifier = Modifier.clickable {
                                                     onSongsRemove(selectedSongs)
                                                     selectedSongs = emptySet()
@@ -535,7 +556,7 @@ fun QueueContent(
                                     if (!isSelectionMode) {
                                         Text(
                                             text = "Clear",
-                                            color = Color(0xFFFF5555), fontWeight = FontWeight.SemiBold, fontSize = 14.sp,
+                                            color = AppColors.Error, fontWeight = FontWeight.SemiBold, fontSize = 14.sp,
                                             modifier = Modifier.clickable { onClearQueue() }
                                         )
                                     }
@@ -597,7 +618,7 @@ fun SwipeableQueueItem(song: Song, onRemove: () -> Unit, onClick: () -> Unit) {
     SwipeToDismissBox(
         state = dismissState, enableDismissFromStartToEnd = false,
         backgroundContent = {
-            val color by animateColorAsState(targetValue = if (dismissState.targetValue == SwipeToDismissBoxValue.EndToStart) Color(0xFFE57373).copy(alpha = 0.8f) else Color.Transparent, label = "swipeColor")
+            val color by animateColorAsState(targetValue = if (dismissState.targetValue == SwipeToDismissBoxValue.EndToStart) AppColors.SwipeDelete.copy(alpha = 0.8f) else Color.Transparent, label = "swipeColor")
             Box(modifier = Modifier.fillMaxSize().background(color, RoundedCornerShape(8.dp)).padding(end = 16.dp), contentAlignment = Alignment.CenterEnd) {
                 if (dismissState.targetValue == SwipeToDismissBoxValue.EndToStart) Icon(Icons.Filled.Delete, contentDescription = "Remove", tint = Color.White)
             }
@@ -750,8 +771,8 @@ fun SleepTimerSheet(
                     }
                 },
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = if (isTimerActive) Color(0xFF333333) else SpotifyGreen,
-                    contentColor = if (isTimerActive) Color(0xFFFF5555) else SpotifyBlack
+                    containerColor = if (isTimerActive) SpotifySurface2 else SpotifyGreen,
+                    contentColor = if (isTimerActive) AppColors.Error else SpotifyBlack
                 ),
                 modifier = Modifier
                     .fillMaxWidth()

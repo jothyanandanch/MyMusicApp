@@ -3,7 +3,6 @@ package com.nandu.mymusic.ui.theme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.graphics.Color
 
 private val SpotifyColorScheme = darkColorScheme(
     primary             = AppColors.Green,
@@ -20,7 +19,7 @@ private val SpotifyColorScheme = darkColorScheme(
     onSurface           = AppColors.White,
     surfaceVariant      = AppColors.Surface2,
     onSurfaceVariant    = AppColors.Gray,
-    error               = Color(0xFFFF5555),
+    error               = AppColors.Error,
     onError             = AppColors.White,
     outline             = AppColors.LightGray,
     outlineVariant      = AppColors.LightGray,
