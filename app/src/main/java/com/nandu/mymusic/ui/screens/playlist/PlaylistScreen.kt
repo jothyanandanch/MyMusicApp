@@ -659,11 +659,22 @@ fun PlaylistDetailView(
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     if (!isProtected) {
-                        IconButton(onClick = onAddSong) { Icon(Icons.Filled.AddCircleOutline, "Add Songs", tint = SpotifyGray) }
-                        IconButton(onClick = { isEditMode = !isEditMode; if (!isEditMode) selectedSongsToRemove = emptySet() }) {
-                            Icon(Icons.Filled.Checklist, "Select Songs", tint = if (isEditMode) SpotifyGreen else SpotifyGray)
+                        var showMoreMenu by remember { mutableStateOf(false) }
+                        Box {
+                            IconButton(onClick = { showMoreMenu = true }) { Icon(Icons.Filled.MoreVert, "More options", tint = SpotifyGray) }
+                            DropdownMenu(expanded = showMoreMenu, onDismissRequest = { showMoreMenu = false }, modifier = Modifier.background(SpotifySurface2)) {
+                                DropdownMenuItem(text = { Text("Add Songs", color = SpotifyWhite) }, onClick = { showMoreMenu = false; onAddSong() })
+                                DropdownMenuItem(
+                                    text = { Text(if (isEditMode) "Done Selecting" else "Select Songs", color = SpotifyWhite) },
+                                    onClick = {
+                                        showMoreMenu = false
+                                        isEditMode = !isEditMode
+                                        if (!isEditMode) selectedSongsToRemove = emptySet()
+                                    }
+                                )
+                                DropdownMenuItem(text = { Text("Export Playlist", color = SpotifyWhite) }, onClick = { showMoreMenu = false; onExportPlaylist() })
+                            }
                         }
-                        IconButton(onClick = onExportPlaylist) { Icon(Icons.Filled.FileDownload, "Export Playlist", tint = SpotifyGray) }
                     }
                     IconButton(onClick = onAddAllToQueue) { Icon(Icons.AutoMirrored.Filled.PlaylistAdd, "Add to Queue", tint = SpotifyGray) }
                     SortMenu(sortType = sortType, onSortChange = onSortChange)
