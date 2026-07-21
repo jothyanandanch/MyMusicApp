@@ -33,6 +33,7 @@ fun SearchScreen(
     onPlayNext       : (Song) -> Unit,
     onAddToQueue     : (Song) -> Unit,
     onAddToPlaylist  : (Song) -> Unit,
+    onAddSongsToPlaylist: (List<Song>) -> Unit = {},
     onDelete         : (Song) -> Unit,
     onViewAlbum      : (String) -> Unit,
     onViewArtist     : (String) -> Unit,
@@ -87,7 +88,9 @@ fun SearchScreen(
                     audioUri = firstSong?.uri,
                     song = firstSong,
                     onClick = { onViewAlbum(albumName) },
-                    isCircular = false
+                    isCircular = false,
+                    songs = albumSongs,
+                    onAddToPlaylist = onAddSongsToPlaylist
                 )
             }
         }
@@ -111,7 +114,9 @@ fun SearchScreen(
                     audioUri = firstSong?.uri,
                     song = firstSong,
                     onClick = { onViewArtist(artistName) },
-                    isCircular = true
+                    isCircular = true,
+                    songs = artistSongs,
+                    onAddToPlaylist = onAddSongsToPlaylist
                 )
             }
         }

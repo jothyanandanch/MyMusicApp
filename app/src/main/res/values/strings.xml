@@ -1,3 +1,6 @@
 <resources>
     <string name="app_name">My Music</string>
+    <!-- Overrides Media3's default media-notification channel name (shown in
+         Android's notification settings for this app), matching the new brand. -->
+    <string name="default_notification_channel_name">MyMusic Playback</string>
 </resources>

@@ -1,6 +1,8 @@
 package com.nandu.mymusic.ui.screens.playlist
 
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -24,6 +26,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -40,9 +43,57 @@ import com.nandu.mymusic.ui.screens.library.formatDuration
 import com.nandu.mymusic.ui.theme.AppColors
 import com.nandu.mymusic.viewmodel.MusicViewModel
 import androidx.compose.material.icons.filled.Settings
+import org.json.JSONArray
+import org.json.JSONObject
 
 // ─── Sort Component ───────────────────────────────────────────────────
 enum class SortType { DEFAULT, TITLE_AZ, TITLE_ZA, ARTIST }
+
+// ─── Playlist Export / Import (JSON) ──────────────────────────────────
+// Exported by title/artist/album rather than device song IDs, so a playlist
+// can be moved between devices or restored after a reinstall.
+private data class ImportedSongEntry(val title: String, val artist: String, val album: String?)
+private data class ImportedPlaylist(val name: String, val entries: List<ImportedSongEntry>)
+
+private fun buildPlaylistExportJson(name: String, songs: List<Song>): String {
+    val root = JSONObject()
+    root.put("format", "mymusic-playlist")
+    root.put("version", 1)
+    root.put("name", name)
+    val arr = JSONArray()
+    songs.forEach { song ->
+        val obj = JSONObject()
+        obj.put("title", song.title)
+        obj.put("artist", song.artist)
+        obj.put("album", song.album ?: JSONObject.NULL)
+        obj.put("durationMs", song.duration)
+        arr.put(obj)
+    }
+    root.put("songs", arr)
+    return root.toString(2)
+}
+
+private fun parsePlaylistImportJson(text: String): ImportedPlaylist? {
+    return try {
+        val root = JSONObject(text)
+        val name = root.optString("name", "Imported Playlist")
+        val arr = root.optJSONArray("songs") ?: JSONArray()
+        val entries = mutableListOf<ImportedSongEntry>()
+        for (i in 0 until arr.length()) {
+            val obj = arr.getJSONObject(i)
+            entries.add(
+                ImportedSongEntry(
+                    title = obj.optString("title", ""),
+                    artist = obj.optString("artist", ""),
+                    album = if (obj.isNull("album")) null else obj.optString("album")
+                )
+            )
+        }
+        ImportedPlaylist(name, entries)
+    } catch (e: Exception) {
+        null
+    }
+}
 
 @Composable
 fun SortMenu(
@@ -125,6 +176,54 @@ fun PlaylistScreen(
     // ✅ NEW: Settings Dialog State for Language Playlists
     var showLanguageSettings by remember { mutableStateOf(false) }
     val optionalLangs = listOf("Hindi", "Tamil", "Malayalam")
+
+    // Export / Import state
+    val context = LocalContext.current
+    var playlistToExport by remember { mutableStateOf<Pair<String, List<Song>>?>(null) }
+    val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        val pending = playlistToExport
+        if (uri != null && pending != null) {
+            val (exportName, exportSongs) = pending
+            try {
+                context.contentResolver.openOutputStream(uri)?.use { out ->
+                    out.write(buildPlaylistExportJson(exportName, exportSongs).toByteArray())
+                }
+                showSnackbar("Exported \"$exportName\"")
+            } catch (e: Exception) {
+                showSnackbar("Export failed")
+            }
+        }
+        playlistToExport = null
+    }
+    val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            try {
+                val text = context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+                val parsed = text?.let { parsePlaylistImportJson(it) }
+                if (parsed == null || parsed.entries.isEmpty()) {
+                    showSnackbar("Couldn't read that playlist file")
+                } else {
+                    val matched = parsed.entries.mapNotNull { entry ->
+                        songs.firstOrNull {
+                            it.title.trim().equals(entry.title.trim(), ignoreCase = true) &&
+                                it.artist.trim().equals(entry.artist.trim(), ignoreCase = true)
+                        }
+                    }
+                    var finalName = parsed.name.ifBlank { "Imported Playlist" }
+                    var counter = 2
+                    while (customPlaylists.containsKey(finalName)) {
+                        finalName = "${parsed.name.ifBlank { "Imported Playlist" }} ($counter)"
+                        counter++
+                    }
+                    viewModel.createPlaylist(finalName)
+                    if (matched.isNotEmpty()) viewModel.addSongsToPlaylist(finalName, matched)
+                    showSnackbar("Imported \"$finalName\" — matched ${matched.size} of ${parsed.entries.size} songs")
+                }
+            } catch (e: Exception) {
+                showSnackbar("Import failed")
+            }
+        }
+    }
 
     // Intercept System Back Button
     BackHandler(enabled = showLocalDetail || selectedCustomPlaylist != null || playlistToAddSongsTo != null) {
@@ -348,6 +447,7 @@ fun PlaylistScreen(
             onShufflePlay    = { viewModel.playShuffled(pSongs) },
             onPlayAll        = { if (pSongs.isNotEmpty()) viewModel.playSong(pSongs.first(), pSongs) },
             onAddSong        = { playlistToAddSongsTo = pName },
+            onExportPlaylist = { playlistToExport = pName to pSongs; exportLauncher.launch("$pName.json") },
             onAddAllToQueue  = {
                 if (pSongs.isNotEmpty()) {
                     viewModel.addListToQueue(pSongs)
@@ -377,6 +477,10 @@ fun PlaylistScreen(
             ) {
                 Text("Your Playlists", color = SpotifyWhite, fontWeight = FontWeight.Bold, fontSize = 20.sp)
                 Row {
+                    // ✅ NEW: Import a playlist exported from this app (or another device)
+                    IconButton(onClick = { importLauncher.launch(arrayOf("application/json")) }) {
+                        Icon(Icons.Filled.FileUpload, "Import Playlist", tint = SpotifyWhite)
+                    }
                     // ✅ NEW: Settings Icon for Languages
                     IconButton(onClick = { showLanguageSettings = true }) {
                         Icon(Icons.Filled.Settings, "Language Settings", tint = SpotifyWhite)
@@ -475,6 +579,7 @@ fun PlaylistDetailView(
     onShufflePlay    : () -> Unit,
     onPlayAll        : () -> Unit,
     onAddSong        : () -> Unit,
+    onExportPlaylist : () -> Unit = {},
     onAddAllToQueue  : () -> Unit,
     onRemoveSong     : (Song) -> Unit,
     onRemoveSongs    : (List<Song>) -> Unit,
@@ -558,6 +663,7 @@ fun PlaylistDetailView(
                         IconButton(onClick = { isEditMode = !isEditMode; if (!isEditMode) selectedSongsToRemove = emptySet() }) {
                             Icon(Icons.Filled.Checklist, "Select Songs", tint = if (isEditMode) SpotifyGreen else SpotifyGray)
                         }
+                        IconButton(onClick = onExportPlaylist) { Icon(Icons.Filled.FileDownload, "Export Playlist", tint = SpotifyGray) }
                     }
                     IconButton(onClick = onAddAllToQueue) { Icon(Icons.AutoMirrored.Filled.PlaylistAdd, "Add to Queue", tint = SpotifyGray) }
                     SortMenu(sortType = sortType, onSortChange = onSortChange)
