@@ -34,6 +34,8 @@ fun SearchScreen(
     onAddToQueue     : (Song) -> Unit,
     onAddToPlaylist  : (Song) -> Unit,
     onAddSongsToPlaylist: (List<Song>) -> Unit = {},
+    onAddListToQueue: (List<Song>) -> Unit = {},
+    onAddShuffledToQueue: (List<Song>) -> Unit = {},
     onDelete         : (Song) -> Unit,
     onViewAlbum      : (String) -> Unit,
     onViewArtist     : (String) -> Unit,
@@ -48,7 +50,8 @@ fun SearchScreen(
             val queryLower = searchQuery.lowercase()
             val artistMap = LinkedHashMap<String, MutableList<Song>>()
             for (song in filteredSongs) {
-                for (artist in splitArtists(song.artist)) {
+                val artistName = song.artist ?: "Unknown Artist"
+                for (artist in splitArtists(artistName)) {
                     if (artist.lowercase().contains(queryLower)) {
                         artistMap.getOrPut(artist) { mutableListOf() }.add(song)
                     }
@@ -90,7 +93,9 @@ fun SearchScreen(
                     onClick = { onViewAlbum(albumName) },
                     isCircular = false,
                     songs = albumSongs,
-                    onAddToPlaylist = onAddSongsToPlaylist
+                    onAddToPlaylist = onAddSongsToPlaylist,
+                    onAddToQueue = onAddListToQueue,
+                    onAddShuffledToQueue = onAddShuffledToQueue
                 )
             }
         }
@@ -116,7 +121,9 @@ fun SearchScreen(
                     onClick = { onViewArtist(artistName) },
                     isCircular = true,
                     songs = artistSongs,
-                    onAddToPlaylist = onAddSongsToPlaylist
+                    onAddToPlaylist = onAddSongsToPlaylist,
+                    onAddToQueue = onAddListToQueue,
+                    onAddShuffledToQueue = onAddShuffledToQueue
                 )
             }
         }
@@ -146,7 +153,7 @@ fun SearchScreen(
                     onEdit           = {showSnackbar("Edit functionality coming soon!")},
                     onDownload = { onDownload(song) }  ,
                     onViewAlbum      = { onViewAlbum(song.album ?: "Unknown Album") },
-                    onViewArtist     = { onViewArtist(song.artist) }
+                    onViewArtist     = { onViewArtist(song.artist ?: "Unknown Artist") }
                 )
             }
         }

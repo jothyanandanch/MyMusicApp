@@ -21,7 +21,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.PlaylistAdd
 import androidx.compose.material.icons.automirrored.filled.PlaylistPlay
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -63,8 +62,8 @@ val SpotifyWhite     = AppColors.White
 val SpotifyGray      = AppColors.Gray
 val SpotifyLightGray = AppColors.LightGray
 
-fun splitArtists(artistString: String): List<String> {
-    if (artistString.isBlank()) return listOf("Unknown Artist")
+fun splitArtists(artistString: String?): List<String> {
+    if (artistString.isNullOrBlank()) return listOf("Unknown Artist")
     val parts = artistString.split(
         Regex(",\\s*|\\s*&\\s*|\\s+and\\s+|\\s+feat\\.?\\s+|\\s+ft\\.?\\s+|\\s+featuring\\s+|\\s+x\\s+", RegexOption.IGNORE_CASE)
     )
@@ -594,21 +593,21 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
             val filteredSongs = if (searchQuery.isBlank()) currentDisplaySongs else {
                 val searchLower = searchQuery.lowercase()
                 when (libraryMode) {
-                    1 -> onlineSearchSongs
+                    1 -> onlineSearchSongs.distinctBy { it.id }
                     2 -> {
                         if (hybridLocalOnly) {
-                            localSongs.filter { it.title.lowercase().contains(searchLower) || it.artist.lowercase().contains(searchLower) || (it.album != null && it.album.lowercase().contains(searchLower)) }
+                            localSongs.filter { (it.title?.lowercase()?.contains(searchLower) == true) || (it.artist?.lowercase()?.contains(searchLower) == true) || (it.album?.lowercase()?.contains(searchLower) == true) }
                         }
                         else if (hybridOnlineOnly){
-                            onlineSongs.filter{it.title.lowercase().contains(searchLower) || it.artist.lowercase().contains(searchLower) || (it.album!=null && it.album.lowercase().contains(searchLower))}
+                            onlineSongs.filter{(it.title?.lowercase()?.contains(searchLower) == true) || (it.artist?.lowercase()?.contains(searchLower) == true) || (it.album?.lowercase()?.contains(searchLower) == true)}
                         }
                         else {
-                            val localMatches = localSongs.filter { it.title.lowercase().contains(searchLower) || it.artist.lowercase().contains(searchLower) || (it.album != null && it.album.lowercase().contains(searchLower)) }
+                            val localMatches = localSongs.filter { (it.title?.lowercase()?.contains(searchLower) == true) || (it.artist?.lowercase()?.contains(searchLower) == true) || (it.album?.lowercase()?.contains(searchLower) == true) }
                             (localMatches + onlineSearchSongs).distinctBy { it.id }
                         }
                     }
                     else -> {
-                        localSongs.filter { it.title.lowercase().contains(searchLower) || it.artist.lowercase().contains(searchLower) || (it.album != null && it.album.lowercase().contains(searchLower)) }
+                        localSongs.filter { (it.title?.lowercase()?.contains(searchLower) == true) || (it.artist?.lowercase()?.contains(searchLower) == true) || (it.album?.lowercase()?.contains(searchLower) == true) }
                     }
                 }
             }
@@ -634,7 +633,7 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                     val currentView = viewStack.last()
                     when (currentView) {
                         is CollectionView.Album -> {
-                            val albumSongs = currentDisplaySongs.filter { it.album == currentView.name }
+                            val albumSongs = currentDisplaySongs.filter { it.album == currentView.name }.distinctBy { it.id }
                             CollectionDetailView(
                                 title = currentView.name, songs = albumSongs, currentSong = currentSong, favoriteIds = favoriteIds,
                                 sortType = persistentSortType, onSortChange = onSortTypeChange, showSnackbar = showSnackbar,
@@ -655,7 +654,7 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                                         songArtist.equals(searchName, ignoreCase = true)
                                     }
                                 }
-                            }
+                            }.distinctBy { it.id }
                             CollectionDetailView(
                                 title = currentView.name, songs = artistSongs, currentSong = currentSong, favoriteIds = favoriteIds,
                                 sortType = persistentSortType, onSortChange = onSortTypeChange, showSnackbar = showSnackbar,
@@ -694,6 +693,8 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                                 onAddToQueue = { song -> viewModel.addToQueue(song); showSnackbar("Added to queue") },
                                 onAddToPlaylist = { song -> songForPlaylistDialog = song },
                                 onAddSongsToPlaylist = { songs -> songsForPlaylistDialog = songs },
+                                onAddListToQueue = { queueSongs -> viewModel.addListToQueue(queueSongs); showSnackbar("Added ${queueSongs.size} songs to queue") },
+                                onAddShuffledToQueue = { queueSongs -> viewModel.addListToQueue(queueSongs.shuffled()); showSnackbar("Added ${queueSongs.size} shuffled songs to queue") },
                                 onDelete = { song -> viewModel.deleteSong(song);  },
                                 onViewAlbum = handleViewAlbum, onViewArtist = handleViewArtist,
                                 onDownload = { song -> songToDownload = song }
@@ -766,15 +767,10 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                 onToggleFavorite = { viewModel.toggleFavorite(currentSong!!) },
                 onQueueItemClick = { clickedSong -> viewModel.playSongFromQueue(clickedSong) },
                 onQueueItemRemove = { removedSong -> viewModel.removeSongFromUpcoming(removedSong) },
-                onQueueItemsRemove = { removedSongs -> viewModel.removeSongsFromUpcoming(removedSongs) },
                 onQueueItemReorder = { from, to -> viewModel.moveSongInUpcoming(from, to) },
                 onClearQueue = { viewModel.clearQueue(); showSnackbar("Queue cleared") },
                 onLoadLyrics = { viewModel.loadLyrics() },
                 onAddToPlaylist = { songForPlaylistDialog = currentSong },
-                onAddToQueue = {
-                    viewModel.addToQueue(currentSong!!)
-                    showSnackbar("Added to queue")
-                },
                 onDelete = {
                     viewModel.deleteSong(currentSong!!)
                     viewModel.setNowPlayingOpen(false)
@@ -785,7 +781,7 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                 },
                 onViewArtist = {
                     viewModel.setNowPlayingOpen(false)
-                    handleViewArtist(currentSong!!.artist)
+                    handleViewArtist(currentSong!!.artist ?: "Unknown Artist")
                 },
                 onDownload = { songToDownload = currentSong },
                 isSleepTimerActive = isSleepTimerActive,
@@ -881,9 +877,9 @@ fun HomeTab(
     val displaySongs = remember(songs, sortType) {
         when (sortType) {
             SortType.DEFAULT -> songs
-            SortType.TITLE_AZ -> songs.sortedBy { it.title.lowercase() }
-            SortType.TITLE_ZA -> songs.sortedByDescending { it.title.lowercase() }
-            SortType.ARTIST -> songs.sortedBy { it.artist.lowercase() }
+            SortType.TITLE_AZ -> songs.sortedBy { it.title?.lowercase() ?: "" }
+            SortType.TITLE_ZA -> songs.sortedByDescending { it.title?.lowercase() ?: "" }
+            SortType.ARTIST -> songs.sortedBy { it.artist?.lowercase() ?: "" }
         }
     }
 
@@ -952,20 +948,30 @@ fun HomeTab(
                         onDelete = { viewModel.deleteSong(song); },
                         onEdit = { showSnackbar("Edit functionality coming soon!") },
                         onDownload = { onDownload(song) },
-                        onViewAlbum = { onViewAlbum(song.album ?: "Unknown Album") }, onViewArtist = { onViewArtist(song.artist) }
+                        onViewAlbum = { onViewAlbum(song.album ?: "Unknown Album") }, onViewArtist = { onViewArtist(song.artist ?: "Unknown Artist") }
                     )
                 }
             }
             "Albums" -> {
                 items(displayAlbums) { (albumName, albumSongs) ->
                     val firstSong = albumSongs.firstOrNull()
-                    LibraryGroupItem(title = albumName, subtitle = "${albumSongs.size} songs", audioUri = firstSong?.uri, song = firstSong, onClick = { onViewAlbum(albumName) }, songs = albumSongs, onAddToPlaylist = onAddSongsToPlaylist)
+                    LibraryGroupItem(
+                        title = albumName, subtitle = "${albumSongs.size} songs", audioUri = firstSong?.uri, song = firstSong,
+                        onClick = { onViewAlbum(albumName) }, songs = albumSongs, onAddToPlaylist = onAddSongsToPlaylist,
+                        onAddToQueue = { queueSongs -> viewModel.addListToQueue(queueSongs); showSnackbar("Added ${queueSongs.size} songs to queue") },
+                        onAddShuffledToQueue = { queueSongs -> viewModel.addListToQueue(queueSongs.shuffled()); showSnackbar("Added ${queueSongs.size} shuffled songs to queue") }
+                    )
                 }
             }
             "Artists" -> {
                 items(displayArtists) { (artistName, artistSongs) ->
                     val firstSong = artistSongs.firstOrNull()
-                    LibraryGroupItem(title = artistName, subtitle = "${artistSongs.size} songs", audioUri = firstSong?.uri, song = firstSong, onClick = { onViewArtist(artistName) }, isCircular = true, songs = artistSongs, onAddToPlaylist = onAddSongsToPlaylist)
+                    LibraryGroupItem(
+                        title = artistName, subtitle = "${artistSongs.size} songs", audioUri = firstSong?.uri, song = firstSong,
+                        onClick = { onViewArtist(artistName) }, isCircular = true, songs = artistSongs, onAddToPlaylist = onAddSongsToPlaylist,
+                        onAddToQueue = { queueSongs -> viewModel.addListToQueue(queueSongs); showSnackbar("Added ${queueSongs.size} songs to queue") },
+                        onAddShuffledToQueue = { queueSongs -> viewModel.addListToQueue(queueSongs.shuffled()); showSnackbar("Added ${queueSongs.size} shuffled songs to queue") }
+                    )
                 }
             }
         }
@@ -985,7 +991,9 @@ fun CategoryChip(text: String, isSelected: Boolean, onClick: () -> Unit) {
 fun LibraryGroupItem(
     title: String, subtitle: String, audioUri: Uri?, song: Song? = null, onClick: () -> Unit, isCircular: Boolean = false,
     songs: List<Song> = emptyList(),
-    onAddToPlaylist: ((List<Song>) -> Unit)? = null
+    onAddToPlaylist: ((List<Song>) -> Unit)? = null,
+    onAddToQueue: ((List<Song>) -> Unit)? = null,
+    onAddShuffledToQueue: ((List<Song>) -> Unit)? = null
 ) {
     var showMenu by remember { mutableStateOf(false) }
     Row(modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -996,13 +1004,21 @@ fun LibraryGroupItem(
             Text(title, color = SpotifyWhite, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(subtitle, color = SpotifyGray, fontSize = 13.sp)
         }
-        if (onAddToPlaylist != null) {
+        if (onAddToPlaylist != null || onAddToQueue != null || onAddShuffledToQueue != null) {
             Box {
                 IconButton(onClick = { showMenu = true }, modifier = Modifier.size(32.dp)) {
                     Icon(Icons.Filled.MoreVert, "More options", tint = SpotifyGray, modifier = Modifier.size(20.dp))
                 }
                 DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }, modifier = Modifier.background(SpotifySurface2)) {
-                    DropdownMenuItem(text = { Text("Add to Playlist", color = SpotifyWhite) }, onClick = { showMenu = false; onAddToPlaylist(songs) })
+                    if (onAddToPlaylist != null) {
+                        DropdownMenuItem(text = { Text("Add to Playlist", color = SpotifyWhite) }, onClick = { showMenu = false; onAddToPlaylist(songs) })
+                    }
+                    if (onAddToQueue != null) {
+                        DropdownMenuItem(text = { Text("Add to Queue", color = SpotifyWhite) }, onClick = { showMenu = false; if (songs.isNotEmpty()) onAddToQueue(songs) })
+                    }
+                    if (onAddShuffledToQueue != null) {
+                        DropdownMenuItem(text = { Text("Add to Queue (Shuffled)", color = SpotifyWhite) }, onClick = { showMenu = false; if (songs.isNotEmpty()) onAddShuffledToQueue(songs) })
+                    }
                 }
             }
         }
@@ -1021,12 +1037,13 @@ fun CollectionDetailView(
 ) {
     val context =LocalContext.current
     var selectedCategory by remember { mutableStateOf("Songs") }
+    var showCollectionMenu by remember { mutableStateOf(false) }
     val displaySongs = remember(songs, sortType) {
         when (sortType) {
             SortType.DEFAULT -> songs
-            SortType.TITLE_AZ -> songs.sortedBy { it.title.lowercase() }
-            SortType.TITLE_ZA -> songs.sortedByDescending { it.title.lowercase() }
-            SortType.ARTIST -> songs.sortedBy { it.artist.lowercase() }
+            SortType.TITLE_AZ -> songs.sortedBy { it.title?.lowercase() ?: "" }
+            SortType.TITLE_ZA -> songs.sortedByDescending { it.title?.lowercase() ?: "" }
+            SortType.ARTIST -> songs.sortedBy { it.artist?.lowercase() ?: "" }
         }
     }
 
@@ -1043,8 +1060,30 @@ fun CollectionDetailView(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     SortMenu(sortType = sortType, onSortChange = onSortChange)
                     Spacer(Modifier.width(8.dp))
-                    IconButton(onClick = { if (songs.isNotEmpty()) onAddAllToPlaylist(songs) }) {
-                        Icon(Icons.AutoMirrored.Filled.PlaylistAdd, "Add to Playlist", tint = SpotifyGray)
+                    Box {
+                        IconButton(onClick = { showCollectionMenu = true }) {
+                            Icon(Icons.Filled.MoreVert, "More options", tint = SpotifyGray)
+                        }
+                        DropdownMenu(expanded = showCollectionMenu, onDismissRequest = { showCollectionMenu = false }, modifier = Modifier.background(SpotifySurface2)) {
+                            DropdownMenuItem(text = { Text("Add to Playlist", color = SpotifyWhite) }, onClick = {
+                                showCollectionMenu = false
+                                if (songs.isNotEmpty()) onAddAllToPlaylist(songs)
+                            })
+                            DropdownMenuItem(text = { Text("Add to Queue", color = SpotifyWhite) }, onClick = {
+                                showCollectionMenu = false
+                                if (songs.isNotEmpty()) {
+                                    viewModel.addListToQueue(songs)
+                                    showSnackbar("Added ${songs.size} songs to queue")
+                                }
+                            })
+                            DropdownMenuItem(text = { Text("Add to Queue (Shuffled)", color = SpotifyWhite) }, onClick = {
+                                showCollectionMenu = false
+                                if (songs.isNotEmpty()) {
+                                    viewModel.addListToQueue(songs.shuffled())
+                                    showSnackbar("Added ${songs.size} shuffled songs to queue")
+                                }
+                            })
+                        }
                     }
                     Spacer(Modifier.width(8.dp))
                     Box(modifier = Modifier.size(56.dp).clip(CircleShape).background(SpotifyGreen).clickable(onClick = onPlayAll), contentAlignment = Alignment.Center) {
@@ -1067,7 +1106,7 @@ fun CollectionDetailView(
                 onDelete = { viewModel.deleteSong(song); },
                 onEdit = { showSnackbar("Edit functionality coming soon!") },
                 onDownload = { onDownload(song) },
-                onViewAlbum = { onViewAlbum(song.album ?: "Unknown Album") }, onViewArtist = { onViewArtist(song.artist) }
+                onViewAlbum = { onViewAlbum(song.album ?: "Unknown Album") }, onViewArtist = { onViewArtist(song.artist ?: "Unknown Artist") }
             )
         }
     }
@@ -1118,8 +1157,8 @@ fun SongItem(
     ) {
         AlbumArt(song = song, audioUri = song.uri, title = song.title, artist = song.artist, isActive = song.id == currentSong?.id, size = 48.dp, cornerRadius = 4.dp)
         Column(modifier = Modifier.weight(1f)) {
-            Text(text = song.title, color = if (song.id == currentSong?.id) SpotifyGreen else SpotifyWhite, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(text = song.artist, color = SpotifyGray, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(text = song.title ?: "Unknown Title", color = if (song.id == currentSong?.id) SpotifyGreen else SpotifyWhite, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(text = song.artist ?: "Unknown Artist", color = SpotifyGray, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
 
         IconButton(onClick = onToggleFavorite, modifier = Modifier.size(36.dp)) {
@@ -1158,7 +1197,7 @@ fun SongItem(
 fun QuickAccessItem(song: Song, isActive: Boolean, onClick: () -> Unit, modifier: Modifier) {
     Row(modifier = modifier.height(56.dp).clip(RoundedCornerShape(4.dp)).background(SpotifySurface2).clickable { onClick() }, verticalAlignment = Alignment.CenterVertically) {
         AlbumArt(song = song, audioUri = song.uri, title = song.title, artist = song.artist, isActive = isActive, size = 56.dp, cornerRadius = 4.dp)
-        Text(text = song.title, color = if (isActive) SpotifyGreen else SpotifyWhite, fontWeight = FontWeight.SemiBold, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = 8.dp))
+        Text(text = song.title ?: "Unknown Title", color = if (isActive) SpotifyGreen else SpotifyWhite, fontWeight = FontWeight.SemiBold, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = 8.dp))
     }
 }
 
@@ -1182,8 +1221,8 @@ fun MiniPlayerBar(
         Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
             AlbumArt(song = song, audioUri = song.uri, title = song.title, artist = song.artist, isActive = true, size = 40.dp, cornerRadius = 4.dp)
             Column(modifier = Modifier.weight(1f).padding(horizontal = 10.dp)) {
-                Text(text = song.title, color = SpotifyWhite, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(song.artist, color = SpotifyGray, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(text = song.title ?: "Unknown Title", color = SpotifyWhite, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(song.artist ?: "Unknown Artist", color = SpotifyGray, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = onToggleFavorite, modifier = Modifier.size(36.dp)) { Icon(imageVector = if (isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder, contentDescription = null, tint = if (isFavorite) SpotifyGreen else SpotifyWhite, modifier = Modifier.size(20.dp)) }

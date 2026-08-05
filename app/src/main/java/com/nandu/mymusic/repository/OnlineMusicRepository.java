@@ -63,9 +63,9 @@ public class OnlineMusicRepository {
 				JSONObject obj = arr.getJSONObject(i);
 				songs.add(new Song(
 						obj.getLong("id"),
-						obj.getString("artist"),
-						obj.getString("title"),
-						obj.getString("album"),
+						obj.optString("artist", "Unknown Artist"),
+						obj.optString("title", "Unknown Title"),
+						obj.optString("album", "Unknown Album"),
 						Uri.parse(obj.getString("audioUrl")),
 						obj.getLong("duration"),
 						Uri.parse(obj.getString("coverUrl")),
@@ -124,9 +124,9 @@ public class OnlineMusicRepository {
 		for (Map<String, Object> songMap : songsArray) {
 			try {
 				long id = ((Number) songMap.get("id")).longValue();
-				String title = (String) songMap.get("title");
-				String artist = (String) songMap.get("artist");
-				String album = (String) songMap.get("album");
+				String title = songMap.get("title") != null ? (String) songMap.get("title") : "Unknown Title";
+				String artist = songMap.get("artist") != null ? (String) songMap.get("artist") : "Unknown Artist";
+				String album = songMap.get("album") != null ? (String) songMap.get("album") : "Unknown Album";
 				String audioUrl = (String) songMap.get("audioUrl");
 				String coverUrl = (String) songMap.get("coverUrl");
 				long duration = ((Number) songMap.get("duration")).longValue();

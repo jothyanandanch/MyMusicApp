@@ -4,21 +4,25 @@
 -keepattributes SourceFile,LineNumberTable
 -renamesourcefileattribute SourceFile
 
-# ── Firebase ───────────────────────────────────────────────────────
--keep class com.google.firebase.** { *; }
--keep class com.google.android.gms.** { *; }
--dontwarn com.google.firebase.**
--dontwarn com.google.android.gms.**
+# ── R8 optimizations ──────────────────────────────────────────────
+-repackageclasses
+-allowaccessmodification
+-optimizations !code/simplification/arithmetic,!code/simplification/cast,!field/*,!class/merging/*
+
+# ── Firebase Auth (uses reflection internally) ────────────────────
+-keep class com.google.firebase.auth.** { *; }
+-dontwarn com.google.firebase.auth.**
+
+# ── Firebase Firestore (reflection for document mapping) ──────────
+-keep class com.google.firebase.firestore.** { *; }
+-dontwarn com.google.firebase.firestore.**
 
 # ── Media3 / ExoPlayer ────────────────────────────────────────────
--keep class androidx.media3.** { *; }
+-keep class androidx.media3.** extends androidx.media3.common.Player { *; }
+-keep class androidx.media3.session.** { *; }
 -dontwarn androidx.media3.**
 
-# ── Coil ──────────────────────────────────────────────────────────
--keep class coil.** { *; }
--dontwarn coil.**
-
-# ── JAudioTagger ──────────────────────────────────────────────────
+# ── JAudioTagger (Java library with unused desktop deps) ──────────
 -keep class org.jaudiotagger.** { *; }
 -dontwarn org.jaudiotagger.**
 -dontwarn javax.sound.**
@@ -27,7 +31,7 @@
 -dontwarn java.beans.**
 -dontwarn javax.swing.**
 
-# ── Gson / JSON (if used indirectly) ──────────────────────────────
+# ── Gson / JSON serialization ─────────────────────────────────────
 -keepattributes Signature
 -keepattributes *Annotation*
 -keep class com.google.gson.** { *; }
@@ -52,5 +56,12 @@
     public static final ** CREATOR;
 }
 
-# ── R8 full mode compatibility ────────────────────────────────────
+# ── Kotlin coroutines ─────────────────────────────────────────────
 -keep,allowobfuscation,allowshrinking class kotlin.coroutines.Continuation
+
+# ── Remove logging in release ─────────────────────────────────────
+-assumenosideeffects class android.util.Log {
+    public static int v(...);
+    public static int d(...);
+    public static int i(...);
+}

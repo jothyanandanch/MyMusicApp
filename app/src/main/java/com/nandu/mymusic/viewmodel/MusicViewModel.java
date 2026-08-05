@@ -858,7 +858,17 @@ public class MusicViewModel extends AndroidViewModel {
             return;
         }
         if (currentPlaylist.get(currentIndex).getId() == song.getId()) return;
-        currentPlaylist.removeIf(s -> s.getId() == song.getId());
+        // If the song is already in the queue, MOVE it to play-next instead of duplicating it.
+        // Removing it only from the list (not from ExoPlayer) would desync the two timelines.
+        int existingIdx = -1;
+        for (int i = 0; i < currentPlaylist.size(); i++) {
+            if (currentPlaylist.get(i).getId() == song.getId()) { existingIdx = i; break; }
+        }
+        if (existingIdx >= 0) {
+            currentPlaylist.remove(existingIdx);
+            exoPlayer.removeMediaItem(existingIdx);
+            if (existingIdx < currentIndex) currentIndex--;
+        }
         int insertIndex = currentIndex + 1;
         currentPlaylist.add(insertIndex, song);
         // Use addMediaItem to insert without rebuilding the playlist — avoids rebuffering/pause
@@ -1375,10 +1385,12 @@ public class MusicViewModel extends AndroidViewModel {
     public void clearQueue() {
         if (exoPlayer == null || currentPlaylist == null || currentPlaylist.isEmpty()) return;
         Song current = currentPlaylist.get(currentIndex);
+        // Remove every item except the one currently playing, WITHOUT rebuilding the
+        // playlist — so the current song keeps playing uninterrupted (no rebuffer/pause).
+        exoPlayer.removeMediaItems(0, currentIndex);
+        exoPlayer.removeMediaItems(1, exoPlayer.getMediaItemCount());
         currentPlaylist = new ArrayList<>(Collections.singletonList(current));
         currentIndex = 0;
-        exoPlayer.setMediaItems(Collections.singletonList(createMediaItem(current)), 0, 0L);
-        exoPlayer.prepare();
         originalPlaylistBeforeShuffle = null;
         updateQueueUI();
         persistLastIndex(0);
@@ -1480,8 +1492,8 @@ public class MusicViewModel extends AndroidViewModel {
         List<Song> matches = new ArrayList<>();
         if (allOnline != null) {
             for (Song song : allOnline) {
-                boolean matchTitle = song.getTitle().toLowerCase().contains(queryLower);
-                boolean matchArtist = song.getArtist().toLowerCase().contains(queryLower);
+                boolean matchTitle = song.getTitle() != null && song.getTitle().toLowerCase().contains(queryLower);
+                boolean matchArtist = song.getArtist() != null && song.getArtist().toLowerCase().contains(queryLower);
                 boolean matchAlbum = song.getAlbum() != null && song.getAlbum().toLowerCase().contains(queryLower);
                 if (matchTitle || matchArtist || matchAlbum) matches.add(song);
             }

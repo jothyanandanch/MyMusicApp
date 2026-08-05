@@ -3,7 +3,12 @@ package com.nandu.mymusic.ui.screens.library
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -23,7 +28,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.filled.*
-import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -82,11 +86,9 @@ fun NowPlayingScreen(
     onToggleFavorite : () -> Unit,
     onQueueItemClick : (Song) -> Unit,
     onQueueItemRemove: (Song) -> Unit,
-    onQueueItemsRemove: (Set<Song>) -> Unit,
     onQueueItemReorder: (Int, Int) -> Unit,
     onClearQueue      : () -> Unit = {},
     onAddToPlaylist  : () -> Unit = {},
-    onAddToQueue     : () -> Unit = {},
     onLoadLyrics     : () -> Unit = {},
     onDelete         : () -> Unit = {},
     onViewAlbum      : () -> Unit = {},
@@ -159,9 +161,6 @@ fun NowPlayingScreen(
                         DropdownMenuItem(
                             text = { Text("Add to Playlist", color = SpotifyWhite) },
                             onClick = { showMenu = false; onAddToPlaylist() })
-                        DropdownMenuItem(
-                            text = { Text("Add to Queue", color = SpotifyWhite) },
-                            onClick = { showMenu = false; onAddToQueue() })
 
                         if (isOnline) {
                             DropdownMenuItem(
@@ -194,8 +193,8 @@ fun NowPlayingScreen(
                             AlbumArt(song = song, audioUri = song.uri, isActive = true, size = 64.dp, cornerRadius = 8.dp)
                             Spacer(modifier = Modifier.width(16.dp))
                             Column(modifier = Modifier.weight(1f)) {
-                                Text(song.title, color = SpotifyGreen, fontWeight = FontWeight.Bold, fontSize = 20.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text(song.artist, color = SpotifyGray, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(song.title ?: "Unknown Title", color = SpotifyGreen, fontWeight = FontWeight.Bold, fontSize = 20.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(song.artist ?: "Unknown Artist", color = SpotifyGray, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
                             IconButton(onClick = onToggleFavorite) { Icon(imageVector = if (isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder, contentDescription = "Like", tint = if (isFavorite) SpotifyGreen else SpotifyWhite) }
                         }
@@ -209,9 +208,9 @@ fun NowPlayingScreen(
                         Spacer(modifier = Modifier.height(32.dp))
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                             Column(modifier = Modifier.weight(1f)) {
-                                Text(song.title, color = SpotifyGreen, fontWeight = FontWeight.Bold, fontSize = 22.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(song.title ?: "Unknown Title", color = SpotifyGreen, fontWeight = FontWeight.Bold, fontSize = 22.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 Spacer(Modifier.height(4.dp))
-                                Text(song.artist, color = SpotifyGray, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(song.artist ?: "Unknown Artist", color = SpotifyGray, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
                             IconButton(onClick = onToggleFavorite) { Icon(imageVector = if (isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder, contentDescription = "Like", tint = if (isFavorite) SpotifyGreen else SpotifyWhite, modifier = Modifier.size(26.dp)) }
                         }
@@ -310,11 +309,18 @@ fun NowPlayingScreen(
     }
 
     if (showQueueSheet) {
-        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
+        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
         ModalBottomSheet(onDismissRequest = { showQueueSheet = false }, sheetState = sheetState, containerColor = SpotifySurface, dragHandle = { BottomSheetDefaults.DragHandle(color = SpotifyGray) }) {
-            Box(modifier = Modifier.fillMaxWidth().fillMaxHeight(0.9f)) {
-                QueueContent(queue = queue, currentSong = song, onSongClick = onQueueItemClick, onSongRemove = onQueueItemRemove, onSongsRemove = onQueueItemsRemove, onSongReorder = onQueueItemReorder, onClearQueue = onClearQueue, isFullyExpanded = sheetState.currentValue == SheetValue.Expanded)
-            }
+            QueueContent(
+                queue = queue,
+                currentSong = song,
+                isPlaying = isPlaying,
+                onSongClick = onQueueItemClick,
+                onSongRemove = onQueueItemRemove,
+                onSongReorder = onQueueItemReorder,
+                onClearQueue = onClearQueue,
+                modifier = Modifier.fillMaxWidth().fillMaxHeight(0.9f)
+            )
         }
     }
 }
@@ -358,9 +364,14 @@ fun SyncedLyricsView(lyricsText: String?, progress: Long, onSeek: (Long) -> Unit
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun QueueContent(
-    queue: List<Song>, currentSong: Song, onSongClick: (Song) -> Unit,
-    onSongRemove: (Song) -> Unit, onSongsRemove: (Set<Song>) -> Unit,
-    onSongReorder: (Int, Int) -> Unit, onClearQueue: () -> Unit, isFullyExpanded: Boolean
+    queue: List<Song>,
+    currentSong: Song,
+    isPlaying: Boolean,
+    onSongClick: (Song) -> Unit,
+    onSongRemove: (Song) -> Unit,
+    onSongReorder: (Int, Int) -> Unit,
+    onClearQueue: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     val listState = rememberLazyListState()
     var localQueue by remember { mutableStateOf(queue) }
@@ -368,67 +379,88 @@ fun QueueContent(
     var draggedItemIndex by remember { mutableStateOf<Int?>(null) }
     var initialDraggedIndex by remember { mutableStateOf<Int?>(null) }
     var draggedDistance by remember { mutableStateOf(0f) }
-
-    var isSelectionMode by remember { mutableStateOf(false) }
-    var selectedSongs by remember { mutableStateOf(setOf<Song>()) }
     val haptic = LocalHapticFeedback.current
     val coroutineScope = rememberCoroutineScope()
 
+    // Sync the local copy from the ViewModel — but never while a drag is in progress,
+    // otherwise the row being held would jump around.
     LaunchedEffect(queue) {
         if (draggedItemIndex == null) localQueue = queue
     }
 
-    // Core unified index tracking
+    // Unified queue indices (absolute positions inside the full queue list)
     val currentIdx = localQueue.indexOfFirst { it.id == currentSong.id }
-    // ✅ ADDED: Split the queue into selectable sections
-    val historySongs = remember(localQueue, currentIdx) { localQueue.take(maxOf(0, currentIdx)) }
+    val historySongs = remember(localQueue, currentIdx) { if (currentIdx > 0) localQueue.take(currentIdx) else emptyList() }
     val upcomingSongs = remember(localQueue, currentIdx) {
-        if (currentIdx >= 0 && currentIdx < localQueue.size - 1) localQueue.drop(currentIdx + 1) else emptyList()
-    }
-    val allSelectableSongs = remember(localQueue, currentSong) { localQueue.filter { it.id != currentSong.id } }
-    // ✅ ADDED: State for the dropdown menu
-    var showSelectMenu by remember { mutableStateOf(false) }
-
-    LaunchedEffect(Unit) {
-        if (currentIdx >= 0) {
-            // Scroll to currentIdx - 1 so the "Now Playing" header
-            // and a previous song are visible right above it
-            listState.scrollToItem(maxOf(0, currentIdx - 1))
+        when {
+            currentIdx in 0 until localQueue.size - 1 -> localQueue.drop(currentIdx + 1)
+            currentIdx < 0 -> localQueue // current song not in queue — treat everything as upcoming
+            else -> emptyList()
         }
     }
 
-    LaunchedEffect(isFullyExpanded) {
-        if (!isFullyExpanded) {
-            isSelectionMode = false; selectedSongs = emptySet()
-        }
-    }
+    Column(modifier = modifier.fillMaxWidth().background(SpotifySurface)) {
 
-    Box(modifier = Modifier.fillMaxSize()) {
+        // ── Sheet header: title + count + Clear ──
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 8.dp, bottom = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Queue", color = SpotifyWhite, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = when {
+                        upcomingSongs.isNotEmpty() -> "${upcomingSongs.size} more song${if (upcomingSongs.size > 1) "s" else ""}"
+                        historySongs.isNotEmpty() -> "End of queue"
+                        else -> "Nothing next"
+                    },
+                    color = SpotifyGray, fontSize = 13.sp
+                )
+            }
+            if (upcomingSongs.isNotEmpty() || historySongs.isNotEmpty()) {
+                Text(
+                    text = "Clear",
+                    color = AppColors.Error,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 15.sp,
+                    modifier = Modifier.clickable { onClearQueue() }.padding(horizontal = 12.dp, vertical = 8.dp)
+                )
+            }
+        }
+        HorizontalDivider(color = SpotifySurface2, thickness = 0.5.dp)
+
         LazyColumn(
             state = listState,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)
-                .pointerInput(isSelectionMode) {
-                    if (isSelectionMode) return@pointerInput
+            modifier = Modifier.fillMaxWidth()
+                .pointerInput(Unit) {
                     detectDragGesturesAfterLongPress(
                         onDragStart = { offset ->
                             val item = listState.layoutInfo.visibleItemsInfo.firstOrNull { offset.y.toInt() in it.offset..(it.offset + it.size) }
                             val keyStr = item?.key as? String
-                            if (keyStr?.startsWith("song_") == true) {
-                                val idxStr = keyStr.removePrefix("song_")
-                                val idx = localQueue.indexOfFirst { it.id.toString() == idxStr }
-                                if (idx >= 0 && idx != currentIdx) {
-                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                    draggedItemIndex = idx
-                                    initialDraggedIndex = idx
-                                    draggedDistance = 0f
+                            val idx = when {
+                                keyStr?.startsWith("up_") == true || keyStr?.startsWith("hist_") == true -> {
+                                    val idStr = keyStr!!.substringAfter('_')
+                                    if (idStr.isNotEmpty() && idStr.all { it.isDigit() })
+                                        localQueue.indexOfFirst { it.id.toString() == idStr }
+                                    else -1
                                 }
+                                else -> -1
+                            }
+                            if (idx >= 0 && idx != currentIdx) {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                draggedItemIndex = idx
+                                initialDraggedIndex = idx
+                                draggedDistance = 0f
                             }
                         },
                         onDrag = { change, dragAmount ->
                             change.consume()
                             draggedDistance += dragAmount.y
                             val draggedIdx = draggedItemIndex ?: return@detectDragGesturesAfterLongPress
-                            val itemHeight = listState.layoutInfo.visibleItemsInfo.find { it.key == "song_${localQueue[draggedIdx].id}" }?.size ?: 150
+                            if (draggedIdx < 0 || draggedIdx >= localQueue.size) return@detectDragGesturesAfterLongPress
+                            val draggedKey = (if (draggedIdx < currentIdx) "hist_" else "up_") + localQueue[draggedIdx].id
+                            val itemHeight = listState.layoutInfo.visibleItemsInfo.find { it.key == draggedKey }?.size ?: 150
                             if (itemHeight == 0) return@detectDragGesturesAfterLongPress
 
                             val targetDelta = (draggedDistance / itemHeight).toInt()
@@ -455,14 +487,16 @@ fun QueueContent(
                             val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()
                             val firstVisible = listState.layoutInfo.visibleItemsInfo.firstOrNull()
                             if (lastVisible != null && change.position.y > lastVisible.offset + lastVisible.size - scrollThreshold) {
-                                coroutineScope.launch { listState.scrollToItem((lastVisible.index + 1).coerceAtMost(localQueue.size - 1)) }
+                                coroutineScope.launch { listState.scrollToItem((lastVisible.index + 1).coerceAtMost(listState.layoutInfo.totalItemsCount - 1)) }
                             } else if (firstVisible != null && change.position.y < firstVisible.offset + scrollThreshold) {
                                 coroutineScope.launch { listState.scrollToItem((firstVisible.index - 1).coerceAtLeast(0)) }
                             }
                         },
                         onDragEnd = {
-                            if (initialDraggedIndex != null && draggedItemIndex != null && initialDraggedIndex != draggedItemIndex) {
-                                onSongReorder(initialDraggedIndex!!, draggedItemIndex!!)
+                            val from = initialDraggedIndex
+                            val to = draggedItemIndex
+                            if (from != null && to != null && from != to && from in localQueue.indices && to in localQueue.indices) {
+                                onSongReorder(from, to)
                             }
                             draggedItemIndex = null; initialDraggedIndex = null; draggedDistance = 0f
                         },
@@ -470,133 +504,75 @@ fun QueueContent(
                             draggedItemIndex = null; initialDraggedIndex = null; draggedDistance = 0f; localQueue = queue
                         }
                     )
-                }
+                },
+            contentPadding = PaddingValues(bottom = 40.dp)
         ) {
-            // ✅ Unified rendering loop
-            itemsIndexed(items = localQueue, key = { _, song -> "song_${song.id}" }) { index, song ->
-                val isPlaying = index == currentIdx
-                val isDragged = draggedItemIndex == index
-                val isSelected = selectedSongs.contains(song)
-                val elevation by animateFloatAsState(if (isDragged) 8f else 0f, label = "elevation")
-                val scale by animateFloatAsState(if (isDragged) 1.03f else 1f, label = "scale")
-                val offsetY = if (isDragged) draggedDistance else 0f
-                val zIndex = if (isDragged) 1f else 0f
 
-                Column(modifier = Modifier.fillMaxWidth().zIndex(zIndex)) {
+            // ── Now Playing (pinned at the top) ──
+            item(key = "now_playing") {
+                Column(modifier = Modifier.padding(horizontal = 16.dp)) {
+                    Text(
+                        "NOW PLAYING",
+                        color = SpotifyGray,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.sp,
+                        modifier = Modifier.padding(top = 16.dp, bottom = 4.dp)
+                    )
+                    QueueSongItem(song = currentSong, isPlaying = true, isAnimating = isPlaying, onClick = {})
+                }
+            }
 
-                    // 1. Headers (These sit static above specific indices to anchor sections)
-                    if (index == 0 && currentIdx > 0) {
-                        Text("Previously Played", color = SpotifyGray, fontWeight = FontWeight.Bold, fontSize = 18.sp, modifier = Modifier.padding(top = 12.dp, bottom = 12.dp))
+            // ── Next in queue ──
+            item(key = "up_next_header") {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(start = 16.dp, top = 22.dp, end = 16.dp, bottom = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Next in queue", color = SpotifyWhite, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                    if (upcomingSongs.isNotEmpty()) {
+                        Spacer(Modifier.width(8.dp))
+                        Text("${upcomingSongs.size}", color = SpotifyGray, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                     }
-                    if (index == currentIdx) {
-                        Text("Now Playing", color = SpotifyWhite, fontWeight = FontWeight.Bold, fontSize = 18.sp, modifier = Modifier.padding(top = 24.dp, bottom = 12.dp))
-                    }
-                    if (index == currentIdx + 1) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(top = 24.dp, bottom = 12.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text("Next In Queue", color = SpotifyWhite, fontWeight = FontWeight.Bold, fontSize = 18.sp)
-                            if (isFullyExpanded) {
-                                Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    if (isSelectionMode) {
-                                        // ✅ FIXED: New Dropdown Menu for Selection Options
-                                        Box {
-                                            Text(
-                                                text = "Select Options ▼",
-                                                color = SpotifyGreen,
-                                                fontWeight = FontWeight.SemiBold,
-                                                fontSize = 14.sp,
-                                                modifier = Modifier.clickable { showSelectMenu = true }
-                                            )
-                                            DropdownMenu(
-                                                expanded = showSelectMenu,
-                                                onDismissRequest = { showSelectMenu = false },
-                                                modifier = Modifier.background(SpotifySurface2)
-                                            ) {
-                                                if (upcomingSongs.isNotEmpty()) {
-                                                    DropdownMenuItem(
-                                                        text = { Text("All Upcoming", color = SpotifyWhite) },
-                                                        onClick = { selectedSongs = selectedSongs + upcomingSongs; showSelectMenu = false }
-                                                    )
-                                                }
-                                                if (historySongs.isNotEmpty()) {
-                                                    DropdownMenuItem(
-                                                        text = { Text("All Previously Played", color = SpotifyWhite) },
-                                                        onClick = { selectedSongs = selectedSongs + historySongs; showSelectMenu = false }
-                                                    )
-                                                }
-                                                if (allSelectableSongs.isNotEmpty()) {
-                                                    DropdownMenuItem(
-                                                        text = { Text("Select All", color = SpotifyWhite) },
-                                                        onClick = { selectedSongs = allSelectableSongs.toSet(); showSelectMenu = false }
-                                                    )
-                                                }
-                                                if (selectedSongs.isNotEmpty()) {
-                                                    DropdownMenuItem(
-                                                        text = { Text("Deselect All", color = SpotifyGray) },
-                                                        onClick = { selectedSongs = emptySet(); showSelectMenu = false }
-                                                    )
-                                                }
-                                            }
-                                        }
+                }
+            }
+            if (upcomingSongs.isEmpty()) {
+                item(key = "up_next_empty") {
+                    Text(
+                        "Nothing in queue — add songs from your library",
+                        color = SpotifyGray,
+                        fontSize = 14.sp,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)
+                    )
+                }
+            }
+            itemsIndexed(upcomingSongs, key = { _, song -> "up_${song.id}" }) { _, song ->
+                SwipeableQueueItem(
+                    song = song,
+                    isHistory = false,
+                    onRemove = { onSongRemove(song) },
+                    onClick = { onSongClick(song) }
+                )
+            }
 
-                                        if (selectedSongs.isNotEmpty()) {
-                                            Text(
-                                                text = "Remove",
-                                                color = AppColors.Error, fontWeight = FontWeight.SemiBold, fontSize = 14.sp,
-                                                modifier = Modifier.clickable {
-                                                    onSongsRemove(selectedSongs)
-                                                    selectedSongs = emptySet()
-                                                    isSelectionMode = false
-                                                }
-                                            )
-                                        }
-                                    }
-                                    if (!isSelectionMode) {
-                                        Text(
-                                            text = "Clear",
-                                            color = AppColors.Error, fontWeight = FontWeight.SemiBold, fontSize = 14.sp,
-                                            modifier = Modifier.clickable { onClearQueue() }
-                                        )
-                                    }
-                                    Text(
-                                        text = if (isSelectionMode) "Cancel" else "Select",
-                                        color = SpotifyGreen, fontWeight = FontWeight.SemiBold, fontSize = 14.sp,
-                                        modifier = Modifier.clickable {
-                                            isSelectionMode = !isSelectionMode; if (!isSelectionMode) selectedSongs = emptySet()
-                                        }
-                                    )
-                                }
-                            }
-                        }
-                    }
-
-                    // 2. The Item Box (Graphic Layer allows it to be dragged visually up and down)
-                    Box(
-                        modifier = Modifier.fillMaxWidth()
-                            .graphicsLayer { translationY = offsetY; scaleX = scale; scaleY = scale }
-                            .shadow(elevation.dp, RoundedCornerShape(8.dp))
-                            .background(if (isDragged || isSelected) SpotifySurface2 else Color.Transparent)
-                    ) {
-                        if (isPlaying) {
-                            QueueSongItem(song = song, isPlaying = true, onClick = {})
-                        } else {
-                            if (isSelectionMode) {
-                                QueueSongItem(
-                                    song = song, isPlaying = false, isHistory = index < currentIdx,
-                                    isSelectionMode = true, isSelected = isSelected,
-                                    onClick = { selectedSongs = if (isSelected) selectedSongs - song else selectedSongs + song }
-                                )
-                            } else {
-                                SwipeableQueueItem(
-                                    song = song,
-                                    onRemove = { onSongRemove(song) },
-                                    onClick = { onSongClick(song) }
-                                )
-                            }
-                        }
-                    }
+            // ── Played ──
+            if (historySongs.isNotEmpty()) {
+                item(key = "history_header") {
+                    Text(
+                        "Played",
+                        color = SpotifyWhite,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 18.sp,
+                        modifier = Modifier.padding(start = 16.dp, top = 22.dp, end = 16.dp, bottom = 6.dp)
+                    )
+                }
+                itemsIndexed(historySongs, key = { _, song -> "hist_${song.id}" }) { _, song ->
+                    SwipeableQueueItem(
+                        song = song,
+                        isHistory = true,
+                        onRemove = { onSongRemove(song) },
+                        onClick = { onSongClick(song) }
+                    )
                 }
             }
         }
@@ -605,43 +581,69 @@ fun QueueContent(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SwipeableQueueItem(song: Song, onRemove: () -> Unit, onClick: () -> Unit) {
+fun SwipeableQueueItem(song: Song, isHistory: Boolean = false, onRemove: () -> Unit, onClick: () -> Unit) {
     val dismissState = rememberSwipeToDismissBoxState(
         confirmValueChange = { dismissValue ->
-            if (dismissValue == SwipeToDismissBoxValue.EndToStart) { onRemove(); return@rememberSwipeToDismissBoxState false }
+            if (dismissValue == SwipeToDismissBoxValue.EndToStart) {
+                onRemove()
+                return@rememberSwipeToDismissBoxState true
+            }
             false
         }
     )
-    LaunchedEffect(song.id) {
-        if (dismissState.currentValue != SwipeToDismissBoxValue.Settled || dismissState.targetValue != SwipeToDismissBoxValue.Settled) dismissState.snapTo(SwipeToDismissBoxValue.Settled)
-    }
     SwipeToDismissBox(
         state = dismissState, enableDismissFromStartToEnd = false,
         backgroundContent = {
-            val color by animateColorAsState(targetValue = if (dismissState.targetValue == SwipeToDismissBoxValue.EndToStart) AppColors.SwipeDelete.copy(alpha = 0.8f) else Color.Transparent, label = "swipeColor")
+            val color by animateColorAsState(targetValue = if (dismissState.targetValue == SwipeToDismissBoxValue.EndToStart) AppColors.SwipeDelete else Color.Transparent, label = "swipeColor")
             Box(modifier = Modifier.fillMaxSize().background(color, RoundedCornerShape(8.dp)).padding(end = 16.dp), contentAlignment = Alignment.CenterEnd) {
                 if (dismissState.targetValue == SwipeToDismissBoxValue.EndToStart) Icon(Icons.Filled.Delete, contentDescription = "Remove", tint = Color.White)
             }
         }
-    ) { QueueSongItem(song = song, isPlaying = false, onClick = onClick) }
+    ) { QueueSongItem(song = song, isPlaying = false, isHistory = isHistory, onClick = onClick) }
 }
 
 @Composable
-fun QueueSongItem(song: Song, isPlaying: Boolean, isHistory: Boolean = false, isSelectionMode: Boolean = false, isSelected: Boolean = false, onClick: () -> Unit) {
+fun QueueSongItem(
+    song: Song,
+    isPlaying: Boolean,
+    isHistory: Boolean = false,
+    isAnimating: Boolean = false,
+    onClick: () -> Unit
+) {
     Row(modifier = Modifier.fillMaxWidth().clickable { onClick() }.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-        AlbumArt(song = song, audioUri = song.uri, isActive = isPlaying, size = 48.dp, cornerRadius = 4.dp)
+        AlbumArt(song = song, audioUri = song.uri, isActive = isPlaying, size = 48.dp, cornerRadius = 6.dp)
         Spacer(modifier = Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
-            Text(text = song.title, color = if (isPlaying) SpotifyGreen else if (isHistory) SpotifyGray else SpotifyWhite, fontWeight = FontWeight.SemiBold, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(text = song.artist, color = SpotifyGray, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(text = song.title ?: "Unknown Title", color = if (isPlaying) SpotifyGreen else if (isHistory) SpotifyGray else SpotifyWhite, fontWeight = FontWeight.SemiBold, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(text = song.artist ?: "Unknown Artist", color = if (isHistory) SpotifyLightGray else SpotifyGray, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
-        if (isSelectionMode) {
-            Icon(imageVector = if (isSelected) Icons.Filled.CheckCircle else Icons.Outlined.Circle, contentDescription = "Select", tint = if (isSelected) SpotifyGreen else SpotifyGray, modifier = Modifier.size(24.dp))
-        } else if (isPlaying) {
-            Icon(Icons.Filled.GraphicEq, contentDescription = "Playing", tint = SpotifyGreen, modifier = Modifier.size(20.dp))
+        Spacer(modifier = Modifier.width(8.dp))
+        if (isPlaying) {
+            EqualizerBars(isAnimating = isAnimating, color = SpotifyGreen, modifier = Modifier.size(20.dp))
         } else {
-            // ✅ FIXED: Drag handles now appear on ALL non-playing queue items
-            Icon(Icons.Filled.DragHandle, contentDescription = "Long press to Reorder", tint = SpotifyGray, modifier = Modifier.size(24.dp))
+            Icon(Icons.Filled.DragHandle, contentDescription = "Long press to reorder", tint = if (isHistory) SpotifyLightGray else SpotifyGray, modifier = Modifier.size(24.dp))
+        }
+    }
+}
+
+@Composable
+fun EqualizerBars(isAnimating: Boolean, color: Color, modifier: Modifier = Modifier) {
+    val transition = rememberInfiniteTransition(label = "equalizer")
+    val bars = List(3) { index ->
+        transition.animateFloat(
+            initialValue = 0.3f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 320 + index * 140, easing = LinearEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "eqBar$index"
+        )
+    }
+    Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+        bars.forEach { bar ->
+            val h = if (isAnimating) (5f + 13f * bar.value).dp else 10.dp
+            Box(modifier = Modifier.width(3.dp).height(h).clip(RoundedCornerShape(2.dp)).background(color))
         }
     }
 }

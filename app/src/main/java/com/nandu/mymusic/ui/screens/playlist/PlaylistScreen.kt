@@ -597,9 +597,9 @@ fun PlaylistDetailView(
     val displaySongs = remember(songs, sortType) {
         when (sortType) {
             SortType.DEFAULT -> songs
-            SortType.TITLE_AZ -> songs.sortedBy { it.title.lowercase() }
-            SortType.TITLE_ZA -> songs.sortedByDescending { it.title.lowercase() }
-            SortType.ARTIST -> songs.sortedBy { it.artist.lowercase() }
+            SortType.TITLE_AZ -> songs.sortedBy { it.title?.lowercase() ?: "" }
+            SortType.TITLE_ZA -> songs.sortedByDescending { it.title?.lowercase() ?: "" }
+            SortType.ARTIST -> songs.sortedBy { it.artist?.lowercase() ?: "" }
         }
     }
 
@@ -716,7 +716,7 @@ fun PlaylistDetailView(
                     onAddToQueue     = { onAddToQueue(song) },
                     onAddToPlaylist  = { onAddToPlaylist(song) },
                     onViewAlbum      = { onViewAlbum(song.album ?: "Unknown Album") },
-                    onViewArtist     = { onViewArtist(song.artist) },
+                    onViewArtist     = { onViewArtist(song.artist ?: "Unknown Artist") },
                     onDownload       = { onDownload(song) },
                     onEdit           = { onEdit(song) }
                 )
@@ -775,8 +775,8 @@ fun PlaylistSongItem(
         )
 
         Column(modifier = Modifier.padding(start = 12.dp).weight(1f)) {
-            Text(song.title, color = if (isCurrentSong && !isEditMode) SpotifyGreen else SpotifyWhite, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(song.artist, color = SpotifyGray, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(song.title ?: "Unknown Title", color = if (isCurrentSong && !isEditMode) SpotifyGreen else SpotifyWhite, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(song.artist ?: "Unknown Artist", color = SpotifyGray, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
 
         if (!isEditMode) {
@@ -847,8 +847,8 @@ fun AddSongsScreen(
                         AlbumArt(audioUri = song.uri, isActive = isSelected, size = 48.dp, cornerRadius = 4.dp)
                         Spacer(Modifier.width(12.dp))
                         Column(modifier = Modifier.weight(1f)) {
-                            Text(text = song.title, color = SpotifyWhite, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(text = song.artist, color = SpotifyGray, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(text = song.title ?: "Unknown Title", color = SpotifyWhite, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(text = song.artist ?: "Unknown Artist", color = SpotifyGray, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                         if (isSelected) { Icon(Icons.Filled.CheckCircle, "Selected", tint = SpotifyGreen, modifier = Modifier.size(24.dp)) }
                         else { Icon(Icons.Outlined.Circle, "Select", tint = SpotifyGray, modifier = Modifier.size(24.dp)) }

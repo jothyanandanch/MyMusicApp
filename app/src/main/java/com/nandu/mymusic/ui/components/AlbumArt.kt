@@ -31,8 +31,8 @@ import kotlinx.coroutines.withContext
 @Composable
 fun AlbumArt(
     audioUri: Uri? = null,
-    title: String = "",
-    artist: String = "",
+    title: String? = null,
+    artist: String? = null,
     isActive: Boolean = false,
     size: Dp? = null,
     cornerRadius: Dp = 8.dp,
@@ -59,7 +59,7 @@ fun AlbumArt(
         else if (audioUri != null && audioUri.toString().startsWith("http")) {
             withContext(Dispatchers.IO) {
                 // ✅ FIXED TYPO: Changed to fetchAlbumArtUrl to match CoverArtUtils.kt
-                imageUrl = CoverArtUtils.fetchAlbumArtUrl(title, artist)
+                imageUrl = CoverArtUtils.fetchAlbumArtUrl(title ?: "", artist ?: "")
             }
         }
         // 4. Otherwise, it's local

@@ -76,9 +76,9 @@ fun FavoritesScreen(
     val displayFavorites = remember(favorites, sortType) {
         when (sortType) {
             SortType.DEFAULT -> favorites
-            SortType.TITLE_AZ -> favorites.sortedBy { it.title.lowercase() }
-            SortType.TITLE_ZA -> favorites.sortedByDescending { it.title.lowercase() }
-            SortType.ARTIST -> favorites.sortedBy { it.artist.lowercase() }
+            SortType.TITLE_AZ -> favorites.sortedBy { it.title?.lowercase() ?: "" }
+            SortType.TITLE_ZA -> favorites.sortedByDescending { it.title?.lowercase() ?: "" }
+            SortType.ARTIST -> favorites.sortedBy { it.artist?.lowercase() ?: "" }
         }
     }
 
@@ -304,14 +304,14 @@ fun FavoritesScreen(
 
                     Column(modifier = Modifier.padding(start = 12.dp).weight(1f)) {
                         Text(
-                            text       = song.title,
+                            text       = song.title ?: "Unknown Title",
                             color      = if (song.id == currentSong?.id && !isEditMode) SpotifyGreen else SpotifyWhite,
                             fontWeight = FontWeight.SemiBold,
                             fontSize   = 14.sp,
                             maxLines   = 1,
                             overflow   = TextOverflow.Ellipsis
                         )
-                        Text(song.artist, color = SpotifyGray, fontSize = 12.sp,
+                        Text(song.artist ?: "Unknown Artist", color = SpotifyGray, fontSize = 12.sp,
                             maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
 
@@ -351,7 +351,7 @@ fun FavoritesScreen(
                                 )
                                 DropdownMenuItem(
                                     text = { Text("View Artist", color = SpotifyWhite) },
-                                    onClick = { showSongMenu = false; onViewArtist(song.artist) }
+                                    onClick = { showSongMenu = false; onViewArtist(song.artist ?: "Unknown Artist") }
                                 )
                                 DropdownMenuItem(
                                     text = { Text("Play Next", color = SpotifyWhite) },
