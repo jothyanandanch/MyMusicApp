@@ -38,6 +38,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -58,7 +59,12 @@ import androidx.media3.common.Player
 import com.nandu.mymusic.model.Song
 import com.nandu.mymusic.ui.components.AlbumArt
 import com.nandu.mymusic.utils.parseLrc
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import androidx.compose.ui.platform.LocalLocale
 import com.nandu.mymusic.ui.components.SquigglyProgressLine
 import com.nandu.mymusic.ui.theme.AppColors
@@ -309,7 +315,7 @@ fun NowPlayingScreen(
     }
 
     if (showQueueSheet) {
-        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
         ModalBottomSheet(onDismissRequest = { showQueueSheet = false }, sheetState = sheetState, containerColor = SpotifySurface, dragHandle = { BottomSheetDefaults.DragHandle(color = SpotifyGray) }) {
             QueueContent(
                 queue = queue,
@@ -394,9 +400,40 @@ fun QueueContent(
     val upcomingSongs = remember(localQueue, currentIdx) {
         when {
             currentIdx in 0 until localQueue.size - 1 -> localQueue.drop(currentIdx + 1)
-            currentIdx < 0 -> localQueue // current song not in queue — treat everything as upcoming
+            // Current song not in the queue snapshot yet — show everything as upcoming,
+            // but never duplicate the NOW PLAYING row.
+            currentIdx < 0 -> localQueue.filter { it.id != currentSong.id }
             else -> emptyList()
         }
+    }
+
+    // Auto-center NOW PLAYING once per open; re-fires if queue data lands after first composition.
+    var hasCentered by remember { mutableStateOf(false) }
+    LaunchedEffect(historySongs.size, currentSong.id) {
+        if (hasCentered) return@LaunchedEffect
+        // NOW PLAYING list index: history header + history items, or 0 when there is no history block
+        val nowPlayingIndex = if (historySongs.isNotEmpty()) 1 + historySongs.size else 0
+        // Phase 1: instant jump so the row is on screen during the sheet's enter animation
+        listState.scrollToItem(nowPlayingIndex)
+        // Phase 2: wait for the viewport height to settle (ModalBottomSheet expands ~300ms)
+        withTimeoutOrNull(800) {
+            snapshotFlow { listState.layoutInfo.viewportEndOffset - listState.layoutInfo.viewportStartOffset }
+                .distinctUntilChanged()
+                .drop(1)
+                .collectLatest { delay(80) } // debounce — resolves once height is stable for 80ms
+        }
+        if (!listState.isScrollInProgress) {
+            val li = listState.layoutInfo
+            val viewportHeight = li.viewportEndOffset - li.viewportStartOffset
+            val itemInfo = li.visibleItemsInfo.firstOrNull { it.key == "now_playing" }
+            if (itemInfo != null) {
+                // scrollToItem's offset is ABSOLUTE: final item-top position = -scrollOffset.
+                // Center the item: top at viewportH/2 - size/2  →  scrollOffset = size/2 - viewportH/2
+                val centerOffset = itemInfo.size / 2 - viewportHeight / 2
+                listState.animateScrollToItem(nowPlayingIndex, scrollOffset = centerOffset)
+            }
+        }
+        hasCentered = true
     }
 
     Column(modifier = modifier.fillMaxWidth().background(SpotifySurface)) {
@@ -508,25 +545,54 @@ fun QueueContent(
             contentPadding = PaddingValues(bottom = 40.dp)
         ) {
 
-            // ── Now Playing (pinned at the top) ──
+            // ── Played (at the top) ──
+            if (historySongs.isNotEmpty()) {
+                item(key = "history_header") {
+                    Text(
+                        "Played",
+                        color = SpotifyWhite,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 18.sp,
+                        modifier = Modifier.padding(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 6.dp)
+                    )
+                }
+                itemsIndexed(historySongs, key = { _, song -> "hist_${song.id}" }) { _, song ->
+                    SwipeableQueueItem(
+                        song = song,
+                        isHistory = true,
+                        isDragged = draggedItemIndex != null && localQueue.getOrNull(draggedItemIndex ?: -1)?.id == song.id,
+                        onRemove = { onSongRemove(song) },
+                        onClick = { onSongClick(song) }
+                    )
+                }
+            }
+
+            // ── Now Playing (in the middle) ──
             item(key = "now_playing") {
-                Column(modifier = Modifier.padding(horizontal = 16.dp)) {
+                Column(
+                    modifier = Modifier
+                        .padding(start = 12.dp, end = 12.dp, top = 16.dp, bottom = 8.dp)
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(SpotifySurface2.copy(alpha = 0.6f))
+                        .padding(horizontal = 4.dp, vertical = 8.dp)
+                ) {
                     Text(
                         "NOW PLAYING",
                         color = SpotifyGray,
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Bold,
                         letterSpacing = 1.sp,
-                        modifier = Modifier.padding(top = 16.dp, bottom = 4.dp)
+                        modifier = Modifier.padding(bottom = 4.dp)
                     )
                     QueueSongItem(song = currentSong, isPlaying = true, isAnimating = isPlaying, onClick = {})
                 }
             }
 
-            // ── Next in queue ──
+            // ── Next in queue (at the bottom) ──
             item(key = "up_next_header") {
                 Row(
-                    modifier = Modifier.fillMaxWidth().padding(start = 16.dp, top = 22.dp, end = 16.dp, bottom = 6.dp),
+                    modifier = Modifier.fillMaxWidth().padding(start = 16.dp, top = 8.dp, end = 16.dp, bottom = 6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text("Next in queue", color = SpotifyWhite, fontWeight = FontWeight.Bold, fontSize = 18.sp)
@@ -550,30 +616,10 @@ fun QueueContent(
                 SwipeableQueueItem(
                     song = song,
                     isHistory = false,
+                    isDragged = draggedItemIndex != null && localQueue.getOrNull(draggedItemIndex ?: -1)?.id == song.id,
                     onRemove = { onSongRemove(song) },
                     onClick = { onSongClick(song) }
                 )
-            }
-
-            // ── Played ──
-            if (historySongs.isNotEmpty()) {
-                item(key = "history_header") {
-                    Text(
-                        "Played",
-                        color = SpotifyWhite,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 18.sp,
-                        modifier = Modifier.padding(start = 16.dp, top = 22.dp, end = 16.dp, bottom = 6.dp)
-                    )
-                }
-                itemsIndexed(historySongs, key = { _, song -> "hist_${song.id}" }) { _, song ->
-                    SwipeableQueueItem(
-                        song = song,
-                        isHistory = true,
-                        onRemove = { onSongRemove(song) },
-                        onClick = { onSongClick(song) }
-                    )
-                }
             }
         }
     }
@@ -581,7 +627,7 @@ fun QueueContent(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SwipeableQueueItem(song: Song, isHistory: Boolean = false, onRemove: () -> Unit, onClick: () -> Unit) {
+fun SwipeableQueueItem(song: Song, isHistory: Boolean = false, isDragged: Boolean = false, onRemove: () -> Unit, onClick: () -> Unit) {
     val dismissState = rememberSwipeToDismissBoxState(
         confirmValueChange = { dismissValue ->
             if (dismissValue == SwipeToDismissBoxValue.EndToStart) {
@@ -591,6 +637,7 @@ fun SwipeableQueueItem(song: Song, isHistory: Boolean = false, onRemove: () -> U
             false
         }
     )
+    val scale by animateFloatAsState(targetValue = if (isDragged) 1.04f else 1f, animationSpec = tween(150), label = "dragScale")
     SwipeToDismissBox(
         state = dismissState, enableDismissFromStartToEnd = false,
         backgroundContent = {
@@ -599,7 +646,11 @@ fun SwipeableQueueItem(song: Song, isHistory: Boolean = false, onRemove: () -> U
                 if (dismissState.targetValue == SwipeToDismissBoxValue.EndToStart) Icon(Icons.Filled.Delete, contentDescription = "Remove", tint = Color.White)
             }
         }
-    ) { QueueSongItem(song = song, isPlaying = false, isHistory = isHistory, onClick = onClick) }
+    ) {
+        Box(modifier = Modifier.graphicsLayer { scaleX = scale; scaleY = scale; shadowElevation = if (isDragged) 12f else 0f; shape = RoundedCornerShape(8.dp); clip = false }) {
+            QueueSongItem(song = song, isPlaying = false, isHistory = isHistory, isDragged = isDragged, onClick = onClick)
+        }
+    }
 }
 
 @Composable
@@ -608,6 +659,7 @@ fun QueueSongItem(
     isPlaying: Boolean,
     isHistory: Boolean = false,
     isAnimating: Boolean = false,
+    isDragged: Boolean = false,
     onClick: () -> Unit
 ) {
     Row(modifier = Modifier.fillMaxWidth().clickable { onClick() }.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {

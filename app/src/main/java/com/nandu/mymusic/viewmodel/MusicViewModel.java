@@ -22,6 +22,7 @@ import androidx.lifecycle.LiveData;
 import androidx.lifecycle.MutableLiveData;
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.MediaMetadata;
+import androidx.media3.common.PlaybackException;
 import androidx.media3.common.Player;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.session.MediaController;
@@ -42,6 +43,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class MusicViewModel extends AndroidViewModel {
@@ -117,6 +119,9 @@ public class MusicViewModel extends AndroidViewModel {
     private final MutableLiveData<List<Song>> queueLiveData = new MutableLiveData<>(new ArrayList<>());
     private final MutableLiveData<List<Song>> onlineSearchResults = new MutableLiveData<>(new ArrayList<>());
     private final AtomicBoolean sessionRestoreInProgress = new AtomicBoolean(false);
+    // Set once the user starts playback or curates the queue themselves — any pending
+    // session-restore apply must then abort instead of clobbering the user's queue.
+    private volatile boolean userInteractedWithPlayback = false;
     
     // ── Progress polling ────────────────────────────────────────────
     private final Handler progressHandler = new Handler(Looper.getMainLooper());
@@ -265,6 +270,12 @@ public class MusicViewModel extends AndroidViewModel {
                             endOfQueueLiveData.postValue(true);
                             showEndDialogLiveData.postValue(true);
                         }
+                    }
+
+                    @Override
+                    public void onPlayerError(PlaybackException error) {
+                        AppLog.e(AppLog.PLAYER, "Playback error: " + error.getMessage());
+                        isPlayingLiveData.postValue(false);
                     }
                 });
                 progressHandler.post(progressRunnable);
@@ -477,6 +488,13 @@ public class MusicViewModel extends AndroidViewModel {
         return items;
     }
     
+    /** Snapshot of the live queue — iterate the returned list, never currentPlaylist directly. */
+    private List<Song> snapshotPlaylist() {
+        synchronized (this) {
+            return currentPlaylist == null ? new ArrayList<Song>() : new ArrayList<>(currentPlaylist);
+        }
+    }
+
     private void updateQueueUI() {
         final List<Song> snapshot;
         synchronized (this) {
@@ -490,14 +508,18 @@ public class MusicViewModel extends AndroidViewModel {
             if (i < snapshot.size() - 1) sb.append(",");
         }
         getApplication().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                .edit().putString(KEY_QUEUE_IDS, sb.toString()).commit();
+                .edit().putString(KEY_QUEUE_IDS, sb.toString()).apply();
     }
     
     private void persistLastPosition(long position) {
-        executorService.execute(() -> {
-            getApplication().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                    .edit().putLong(KEY_LAST_POSITION, position).commit();
-        });
+        try {
+            executorService.execute(() -> {
+                getApplication().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                        .edit().putLong(KEY_LAST_POSITION, position).commit();
+            });
+        } catch (RejectedExecutionException ignored) {
+            // ViewModel clearing — executor already shut down, safe to skip the write.
+        }
     }
     
     private void persistDeletedId(long songId) {
@@ -567,6 +589,7 @@ public class MusicViewModel extends AndroidViewModel {
     // 3. Apply shuffle behavior gracefully when starting a specific song
     public void playSong(Song song, List<Song> playlist) {
         if (exoPlayer == null) return;
+        userInteractedWithPlayback = true;
 
         if (song.getUri() != null) {
             String scheme = song.getUri().getScheme();
@@ -582,22 +605,25 @@ public class MusicViewModel extends AndroidViewModel {
             }
         }
 
-        currentPlaylist = new ArrayList<>(playlist);
-        currentIndex    = currentPlaylist.indexOf(song);
-        if (currentIndex < 0) currentIndex = 0;
-        
-        // ✅ FIXED: If shuffle is active, re-shuffle the upcoming songs in the queue
-        if (Boolean.TRUE.equals(shuffleModeLiveData.getValue())) {
-            List<Song> upcoming = new ArrayList<>(currentPlaylist.subList(currentIndex + 1, currentPlaylist.size()));
-            Collections.shuffle(upcoming);
-            for (int i = 0; i < upcoming.size(); i++) {
-                currentPlaylist.set(currentIndex + 1 + i, upcoming.get(i));
+        List<Song> queue = new ArrayList<>(playlist);
+        int index = queue.indexOf(song);
+        if (index < 0) index = 0;
+        synchronized (this) {
+            currentPlaylist = queue;
+            currentIndex    = index;
+            // ✅ FIXED: If shuffle is active, re-shuffle the upcoming songs in the queue
+            if (Boolean.TRUE.equals(shuffleModeLiveData.getValue())) {
+                List<Song> upcoming = new ArrayList<>(queue.subList(index + 1, queue.size()));
+                Collections.shuffle(upcoming);
+                for (int i = 0; i < upcoming.size(); i++) {
+                    queue.set(index + 1 + i, upcoming.get(i));
+                }
             }
         }
-        
+
         updateQueueUI();
         List<MediaItem> items = new ArrayList<>();
-        for (Song s : currentPlaylist) items.add(createMediaItem(s));
+        for (Song s : queue) items.add(createMediaItem(s));
         exoPlayer.setShuffleModeEnabled(false);
         exoPlayer.setMediaItems(items, currentIndex, 0L);
         exoPlayer.prepare();
@@ -613,12 +639,17 @@ public class MusicViewModel extends AndroidViewModel {
     }
     
     public void togglePlayPause() {
+        userInteractedWithPlayback = true;
         // 🐛 FIX: Prevent hardware media buttons/headset clicks from bypassing the block
         if (Boolean.TRUE.equals(onlineSongBlockedLiveData.getValue())) return;
-        
+
         if (exoPlayer == null) return;
         if (exoPlayer.isPlaying()) exoPlayer.pause();
-        else exoPlayer.play();
+        else {
+            // After a playback error the player sits in STATE_IDLE; play() alone is a no-op.
+            if (exoPlayer.getPlaybackState() == Player.STATE_IDLE) exoPlayer.prepare();
+            exoPlayer.play();
+        }
     }
     
     public void playNextFromMiniPlayer() { if (Boolean.TRUE.equals(onlineSongBlockedLiveData.getValue())) { restoreFromCacheAndPlayNext(); } else { advanceToNext(); } }
@@ -784,6 +815,7 @@ public class MusicViewModel extends AndroidViewModel {
     
     public void playSongFromQueue(Song song) {
         if (currentPlaylist == null || exoPlayer == null) return;
+        userInteractedWithPlayback = true;
         int index = currentPlaylist.indexOf(song);
         if (index >= 0) {
             currentIndex = index;
@@ -797,59 +829,68 @@ public class MusicViewModel extends AndroidViewModel {
     
     public void removeSongFromUpcoming(Song song) {
         if (currentPlaylist == null || exoPlayer == null) return;
-        int index = currentPlaylist.indexOf(song);
-        // ✅ FIXED: Allow removal from history (index < currentIndex)
-        if (index >= 0 && index != currentIndex) {
-            currentPlaylist.remove(index);
-            exoPlayer.removeMediaItem(index);
-            // ✅ Shift the current index back if we removed a song before it
-            if (index < currentIndex) {
-                currentIndex--;
-                persistLastIndex(currentIndex);
+        userInteractedWithPlayback = true;
+        synchronized (this) {
+            int index = currentPlaylist.indexOf(song);
+            // ✅ FIXED: Allow removal from history (index < currentIndex)
+            if (index >= 0 && index != currentIndex) {
+                currentPlaylist.remove(index);
+                exoPlayer.removeMediaItem(index);
+                // ✅ Shift the current index back if we removed a song before it
+                if (index < currentIndex) {
+                    currentIndex--;
+                    persistLastIndex(currentIndex);
+                }
+                updateQueueUI();
             }
-            updateQueueUI();
         }
     }
     
     public void removeSongsFromUpcoming(Set<Song> songsToRemove) {
         if (currentPlaylist == null || exoPlayer == null || songsToRemove == null || songsToRemove.isEmpty()) return;
-        List<Integer> indicesToRemove = new ArrayList<>();
-        for (Song song : songsToRemove) {
-            int idx = currentPlaylist.indexOf(song);
-            // ✅ FIXED: Allow targeting history songs
-            if (idx >= 0 && idx != currentIndex) indicesToRemove.add(idx);
-        }
-        
-        Collections.sort(indicesToRemove, Collections.reverseOrder());
-        for (int idx : indicesToRemove) {
-            currentPlaylist.remove(idx);
-            exoPlayer.removeMediaItem(idx);
-            if (idx < currentIndex) {
-                currentIndex--;
+        userInteractedWithPlayback = true;
+        synchronized (this) {
+            List<Integer> indicesToRemove = new ArrayList<>();
+            for (Song song : songsToRemove) {
+                int idx = currentPlaylist.indexOf(song);
+                // ✅ FIXED: Allow targeting history songs
+                if (idx >= 0 && idx != currentIndex) indicesToRemove.add(idx);
             }
+
+            Collections.sort(indicesToRemove, Collections.reverseOrder());
+            for (int idx : indicesToRemove) {
+                currentPlaylist.remove(idx);
+                exoPlayer.removeMediaItem(idx);
+                if (idx < currentIndex) {
+                    currentIndex--;
+                }
+            }
+            persistLastIndex(currentIndex);
+            updateQueueUI();
         }
-        persistLastIndex(currentIndex);
-        updateQueueUI();
     }
     
     // ✅ FIXED: Takes absolute indices allowing drags across the entire unified queue
     public void moveSongInUpcoming(int fromAbsolute, int toAbsolute) {
         if (currentPlaylist == null || exoPlayer == null) return;
-        if (fromAbsolute < 0 || fromAbsolute >= currentPlaylist.size() || toAbsolute < 0 || toAbsolute >= currentPlaylist.size()) return;
-        if (fromAbsolute == currentIndex || toAbsolute == currentIndex) return; // Protect Now Playing
-        
-        Song song = currentPlaylist.remove(fromAbsolute);
-        currentPlaylist.add(toAbsolute, song);
-        exoPlayer.moveMediaItem(fromAbsolute, toAbsolute);
-        
-        // Safely adjust currentIndex if we dragged across it
-        if (fromAbsolute < currentIndex && toAbsolute > currentIndex) {
-            currentIndex--;
-        } else if (fromAbsolute > currentIndex && toAbsolute < currentIndex) {
-            currentIndex++;
+        userInteractedWithPlayback = true;
+        synchronized (this) {
+            if (fromAbsolute < 0 || fromAbsolute >= currentPlaylist.size() || toAbsolute < 0 || toAbsolute >= currentPlaylist.size()) return;
+            if (fromAbsolute == currentIndex || toAbsolute == currentIndex) return; // Protect Now Playing
+
+            Song song = currentPlaylist.remove(fromAbsolute);
+            currentPlaylist.add(toAbsolute, song);
+            exoPlayer.moveMediaItem(fromAbsolute, toAbsolute);
+
+            // Safely adjust currentIndex if we dragged across it
+            if (fromAbsolute < currentIndex && toAbsolute > currentIndex) {
+                currentIndex--;
+            } else if (fromAbsolute > currentIndex && toAbsolute < currentIndex) {
+                currentIndex++;
+            }
+            persistLastIndex(currentIndex);
+            updateQueueUI();
         }
-        persistLastIndex(currentIndex);
-        updateQueueUI();
     }
     
     public void setPlayNext(Song song) {
@@ -857,23 +898,27 @@ public class MusicViewModel extends AndroidViewModel {
             playSong(song, Collections.singletonList(song));
             return;
         }
-        if (currentPlaylist.get(currentIndex).getId() == song.getId()) return;
-        // If the song is already in the queue, MOVE it to play-next instead of duplicating it.
-        // Removing it only from the list (not from ExoPlayer) would desync the two timelines.
-        int existingIdx = -1;
-        for (int i = 0; i < currentPlaylist.size(); i++) {
-            if (currentPlaylist.get(i).getId() == song.getId()) { existingIdx = i; break; }
+        userInteractedWithPlayback = true;
+        synchronized (this) {
+            if (currentIndex < 0 || currentIndex >= currentPlaylist.size()) return;
+            if (currentPlaylist.get(currentIndex).getId() == song.getId()) return;
+            // If the song is already in the queue, MOVE it to play-next instead of duplicating it.
+            // Removing it only from the list (not from ExoPlayer) would desync the two timelines.
+            int existingIdx = -1;
+            for (int i = 0; i < currentPlaylist.size(); i++) {
+                if (currentPlaylist.get(i).getId() == song.getId()) { existingIdx = i; break; }
+            }
+            if (existingIdx >= 0) {
+                currentPlaylist.remove(existingIdx);
+                exoPlayer.removeMediaItem(existingIdx);
+                if (existingIdx < currentIndex) currentIndex--;
+            }
+            int insertIndex = currentIndex + 1;
+            currentPlaylist.add(insertIndex, song);
+            // Use addMediaItem to insert without rebuilding the playlist — avoids rebuffering/pause
+            exoPlayer.addMediaItem(insertIndex, createMediaItem(song));
+            updateQueueUI();
         }
-        if (existingIdx >= 0) {
-            currentPlaylist.remove(existingIdx);
-            exoPlayer.removeMediaItem(existingIdx);
-            if (existingIdx < currentIndex) currentIndex--;
-        }
-        int insertIndex = currentIndex + 1;
-        currentPlaylist.add(insertIndex, song);
-        // Use addMediaItem to insert without rebuilding the playlist — avoids rebuffering/pause
-        exoPlayer.addMediaItem(insertIndex, createMediaItem(song));
-        updateQueueUI();
     }
     
     public void addToQueue(Song song) {
@@ -881,10 +926,13 @@ public class MusicViewModel extends AndroidViewModel {
             playSong(song, Collections.singletonList(song));
             return;
         }
-        if (currentPlaylist.stream().anyMatch(s -> s.getId() == song.getId())) return;
-        currentPlaylist.add(song);
-        exoPlayer.addMediaItem(createMediaItem(song));
-        updateQueueUI();
+        userInteractedWithPlayback = true;
+        synchronized (this) {
+            if (currentPlaylist.stream().anyMatch(s -> s.getId() == song.getId())) return;
+            currentPlaylist.add(song);
+            exoPlayer.addMediaItem(createMediaItem(song));
+            updateQueueUI();
+        }
     }
     
     public void seekTo(long positionMs) {
@@ -911,6 +959,7 @@ public class MusicViewModel extends AndroidViewModel {
     public void toggleShuffle() {
         boolean cur  = Boolean.TRUE.equals(shuffleModeLiveData.getValue());
         boolean next = !cur;
+        if (exoPlayer == null || currentPlaylist == null || currentPlaylist.isEmpty()) return;
         if (next) {
             originalPlaylistBeforeShuffle = new ArrayList<>(currentPlaylist);
             shuffleUpcomingQueue();
@@ -927,27 +976,33 @@ public class MusicViewModel extends AndroidViewModel {
     }
     
     private void shuffleUpcomingQueue() {
+        if (currentIndex < 0) return;
         if (currentPlaylist == null || currentPlaylist.size() <= currentIndex + 1) return;
         List<Song> upcoming = new ArrayList<>(currentPlaylist.subList(currentIndex + 1, currentPlaylist.size()));
         Collections.shuffle(upcoming);
-        for (int i = 0; i < upcoming.size(); i++) currentPlaylist.set(currentIndex + 1 + i, upcoming.get(i));
-        exoPlayer.removeMediaItems(currentIndex + 1, currentPlaylist.size());
         List<MediaItem> newItems = new ArrayList<>();
         for (Song s : upcoming) newItems.add(createMediaItem(s));
-        exoPlayer.addMediaItems(currentIndex + 1, newItems);
+        synchronized (this) {
+            for (int i = 0; i < upcoming.size(); i++) currentPlaylist.set(currentIndex + 1 + i, upcoming.get(i));
+            exoPlayer.removeMediaItems(currentIndex + 1, currentPlaylist.size());
+            exoPlayer.addMediaItems(currentIndex + 1, newItems);
+        }
         updateQueueUI();
     }
     
     private void unshuffleUpcomingQueue() {
+        if (currentIndex < 0) return;
         if (currentPlaylist == null || currentPlaylist.size() <= currentIndex + 1) return;
         if (originalPlaylistBeforeShuffle == null || originalPlaylistBeforeShuffle.isEmpty()) return;
         
         List<Song> newQueue = new ArrayList<>(originalPlaylistBeforeShuffle.subList(0, currentIndex + 1));
         List<Song> upcomingOriginal = originalPlaylistBeforeShuffle.subList(currentIndex + 1, originalPlaylistBeforeShuffle.size());
         newQueue.addAll(upcomingOriginal);
-        currentPlaylist = newQueue;
-        
-        exoPlayer.removeMediaItems(currentIndex + 1, currentPlaylist.size());
+        int newSize = newQueue.size();
+        synchronized (this) {
+            currentPlaylist = newQueue;
+            exoPlayer.removeMediaItems(currentIndex + 1, newSize);
+        }
         List<MediaItem> newItems = new ArrayList<>();
         for (Song s : upcomingOriginal) newItems.add(createMediaItem(s));
         exoPlayer.addMediaItems(currentIndex + 1, newItems);
@@ -957,12 +1012,16 @@ public class MusicViewModel extends AndroidViewModel {
     
     public void playAllShuffled(List<Song> library) {
         if (library == null || library.isEmpty()) return;
+        if (exoPlayer == null) return;
         showEndDialogLiveData.setValue(false);
         endOfQueueLiveData.setValue(false);
         List<Song> shuffled = new ArrayList<>(library);
         Collections.shuffle(shuffled);
-        currentPlaylist = shuffled;
-        currentIndex    = 0;
+        userInteractedWithPlayback = true;
+        synchronized (this) {
+            currentPlaylist = shuffled;
+            currentIndex    = 0;
+        }
         updateQueueUI();
         List<MediaItem> items = new ArrayList<>();
         for (Song s : shuffled) items.add(createMediaItem(s));
@@ -984,6 +1043,7 @@ public class MusicViewModel extends AndroidViewModel {
     
     public void playShuffled(List<Song> playlist) {
         if (playlist == null || playlist.isEmpty()) return;
+        if (exoPlayer == null) return;
         Song       currentSong = currentSongLiveData.getValue();
         List<Song> shuffled    = new ArrayList<>(playlist);
         int        nowIdx      = -1;
@@ -998,8 +1058,11 @@ public class MusicViewModel extends AndroidViewModel {
             shuffled.add(0, nowPlaying);
         } else Collections.shuffle(shuffled);
         
-        currentIndex    = 0;
-        currentPlaylist = shuffled;
+        userInteractedWithPlayback = true;
+        synchronized (this) {
+            currentIndex    = 0;
+            currentPlaylist = shuffled;
+        }
         updateQueueUI();
         List<MediaItem> items = new ArrayList<>();
         for (Song s : shuffled) items.add(createMediaItem(s));
@@ -1370,45 +1433,55 @@ public class MusicViewModel extends AndroidViewModel {
             playSong(songs.get(0), songs);
             return;
         }
-        Set<Long> existingIds = new LinkedHashSet<>();
-        for (Song s : currentPlaylist) existingIds.add(s.getId());
-        for (Song song : songs) {
-            if (!existingIds.contains(song.getId())) {
-                currentPlaylist.add(song);
-                existingIds.add(song.getId());
-                exoPlayer.addMediaItem(createMediaItem(song));
+        userInteractedWithPlayback = true;
+        synchronized (this) {
+            Set<Long> existingIds = new LinkedHashSet<>();
+            for (Song s : currentPlaylist) existingIds.add(s.getId());
+            for (Song song : songs) {
+                if (!existingIds.contains(song.getId())) {
+                    currentPlaylist.add(song);
+                    existingIds.add(song.getId());
+                    exoPlayer.addMediaItem(createMediaItem(song));
+                }
             }
+            updateQueueUI();
         }
-        updateQueueUI();
     }
     
     public void clearQueue() {
         if (exoPlayer == null || currentPlaylist == null || currentPlaylist.isEmpty()) return;
+        if (currentIndex < 0 || currentIndex >= currentPlaylist.size()) return;
+        userInteractedWithPlayback = true;
         Song current = currentPlaylist.get(currentIndex);
         // Remove every item except the one currently playing, WITHOUT rebuilding the
         // playlist — so the current song keeps playing uninterrupted (no rebuffer/pause).
         exoPlayer.removeMediaItems(0, currentIndex);
         exoPlayer.removeMediaItems(1, exoPlayer.getMediaItemCount());
-        currentPlaylist = new ArrayList<>(Collections.singletonList(current));
-        currentIndex = 0;
-        originalPlaylistBeforeShuffle = null;
+        synchronized (this) {
+            currentPlaylist = new ArrayList<>(Collections.singletonList(current));
+            currentIndex = 0;
+            originalPlaylistBeforeShuffle = null;
+        }
         updateQueueUI();
         persistLastIndex(0);
     }
     
     public void restoreSongsToQueue(List<Song> songs, int afterIndex) {
         if (songs == null || songs.isEmpty() || exoPlayer == null || currentPlaylist == null) return;
-        int insertAt = afterIndex + 1;
-        for (Song song : songs) {
-            currentPlaylist.add(insertAt, song);
-            exoPlayer.addMediaItem(insertAt, createMediaItem(song));
-            insertAt++;
+        userInteractedWithPlayback = true;
+        synchronized (this) {
+            int insertAt = afterIndex + 1;
+            for (Song song : songs) {
+                currentPlaylist.add(insertAt, song);
+                exoPlayer.addMediaItem(insertAt, createMediaItem(song));
+                insertAt++;
+            }
+            if (afterIndex < currentIndex) {
+                currentIndex += songs.size();
+                persistLastIndex(currentIndex);
+            }
+            updateQueueUI();
         }
-        if (afterIndex < currentIndex) {
-            currentIndex += songs.size();
-            persistLastIndex(currentIndex);
-        }
-        updateQueueUI();
     }
     
     public void deleteSong(Song song) {
@@ -1459,24 +1532,27 @@ public class MusicViewModel extends AndroidViewModel {
         }
         if (favoritesMap.containsKey(song.getId())) toggleFavorite(song);
         if (currentPlaylist != null && currentPlaylist.contains(song)) {
-            int indexToRemove = currentPlaylist.indexOf(song);
-            currentPlaylist.remove(indexToRemove);
-            updateQueueUI();
-            if (exoPlayer != null) exoPlayer.removeMediaItem(indexToRemove);
-            
-            if (indexToRemove < currentIndex) {
-                currentIndex--;
-            } else if (indexToRemove == currentIndex) {
-                if (currentPlaylist.isEmpty()) {
-                    if (exoPlayer != null) exoPlayer.stop();
-                    currentSongLiveData.setValue(null);
-                    isPlayingLiveData.setValue(false);
-                    progressLiveData.setValue(0L);
-                    durationLiveData.setValue(0L);
-                } else {
-                    int newIndex = Math.min(currentIndex, currentPlaylist.size() - 1);
-                    currentIndex = newIndex;
-                    currentSongLiveData.setValue(currentPlaylist.get(newIndex));
+            userInteractedWithPlayback = true;
+            synchronized (this) {
+                int indexToRemove = currentPlaylist.indexOf(song);
+                currentPlaylist.remove(indexToRemove);
+                updateQueueUI();
+                if (exoPlayer != null) exoPlayer.removeMediaItem(indexToRemove);
+
+                if (indexToRemove < currentIndex) {
+                    currentIndex--;
+                } else if (indexToRemove == currentIndex) {
+                    if (currentPlaylist.isEmpty()) {
+                        if (exoPlayer != null) exoPlayer.stop();
+                        currentSongLiveData.setValue(null);
+                        isPlayingLiveData.setValue(false);
+                        progressLiveData.setValue(0L);
+                        durationLiveData.setValue(0L);
+                    } else {
+                        int newIndex = Math.min(currentIndex, currentPlaylist.size() - 1);
+                        currentIndex = newIndex;
+                        currentSongLiveData.setValue(currentPlaylist.get(newIndex));
+                    }
                 }
             }
         }
@@ -1681,8 +1757,10 @@ public class MusicViewModel extends AndroidViewModel {
 
         if (restoredQueue.isEmpty() || resolvedIndex < 0) return;
 
-        currentPlaylist = restoredQueue;
-        currentIndex = resolvedIndex;
+        synchronized (this) {
+            currentPlaylist = restoredQueue;
+            currentIndex = resolvedIndex;
+        }
         currentSongLiveData.postValue(currentPlaylist.get(currentIndex));
         progressLiveData.postValue(exoPlayer.getCurrentPosition());
         isPlayingLiveData.postValue(exoPlayer.isPlaying());
@@ -1759,34 +1837,45 @@ public class MusicViewModel extends AndroidViewModel {
         if (resolvedIndex < 0 && lastIndex >= 0 && lastIndex < restoredQueue.size()) resolvedIndex = lastIndex;
         if (resolvedIndex < 0) { sessionRestoreInProgress.set(false); return; }
 
+        List<Song> snapshot;
         synchronized (this) {
             currentPlaylist = restoredQueue;
             currentIndex    = resolvedIndex;
+            snapshot = new ArrayList<>(restoredQueue);
         }
         updateQueueUI();
 
         List<MediaItem> items = new ArrayList<>();
-        for (Song s : currentPlaylist) items.add(createMediaItem(s));
-        
+        for (Song s : snapshot) items.add(createMediaItem(s));
+
+        final List<Song> finalQueue = restoredQueue;
         final int finalIndex = resolvedIndex;
         new Handler(Looper.getMainLooper()).post(() -> {
-            if (exoPlayer == null) {
+            if (exoPlayer == null || userInteractedWithPlayback) {
                 sessionRestoreInProgress.set(false);
                 return;
             }
-            exoPlayer.setMediaItems(items, finalIndex, savedPosition);
-            exoPlayer.prepare();
-            new Handler(Looper.getMainLooper()).postDelayed(() -> {
-                if (exoPlayer != null) {
-                    long songDuration = exoPlayer.getDuration();
-                    if (songDuration > 0) durationLiveData.postValue(songDuration);
+            synchronized (this) {
+                // Abort if the queue was replaced since (e.g. the user started playback) or
+                // the resolved index no longer matches — never clobber a newer user queue.
+                if (currentPlaylist != finalQueue || finalIndex < 0 || finalIndex >= currentPlaylist.size()) {
+                    sessionRestoreInProgress.set(false);
+                    return;
                 }
-            }, 100);
-            currentSongLiveData.postValue(currentPlaylist.get(finalIndex));
-            shuffleModeLiveData.setValue(savedShuffle);
-            repeatModeLiveData.setValue(savedRepeat);
-            exoPlayer.setRepeatMode(savedRepeat);
-            progressLiveData.setValue(savedPosition);
+                exoPlayer.setMediaItems(items, finalIndex, savedPosition);
+                exoPlayer.prepare();
+                new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                    if (exoPlayer != null) {
+                        long songDuration = exoPlayer.getDuration();
+                        if (songDuration > 0) durationLiveData.postValue(songDuration);
+                    }
+                }, 100);
+                currentSongLiveData.postValue(currentPlaylist.get(finalIndex));
+                shuffleModeLiveData.setValue(savedShuffle);
+                repeatModeLiveData.setValue(savedRepeat);
+                exoPlayer.setRepeatMode(savedRepeat);
+                progressLiveData.setValue(savedPosition);
+            }
             // Start progress polling so the bar updates when user plays
             progressHandler.removeCallbacks(progressRunnable);
             progressHandler.post(progressRunnable);
@@ -1812,8 +1901,10 @@ public class MusicViewModel extends AndroidViewModel {
             if (idx < 0) {
                 playSong(song, songs);
             } else {
-                currentPlaylist = new ArrayList<>(songs);
-                currentIndex = idx;
+                synchronized (this) {
+                    currentPlaylist = new ArrayList<>(songs);
+                    currentIndex = idx;
+                }
                 List<MediaItem> items = new ArrayList<>();
                 for (Song s : currentPlaylist) items.add(createMediaItem(s));
                 SharedPreferences prefs = getApplication().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
@@ -1904,15 +1995,17 @@ public class MusicViewModel extends AndroidViewModel {
     
     @Override
     protected void onCleared() {
-        if (executorService != null) {
-            executorService.shutdown();
-        }
-        
+        // Persist position BEFORE shutting the executor down — persistLastPosition submits
+        // to it, and submitting after shutdown() throws RejectedExecutionException.
+        if (exoPlayer != null) persistLastPosition(exoPlayer.getCurrentPosition());
+
         getApplication().getContentResolver().unregisterContentObserver(contentObserver);
         handler.removeCallbacks(reloadRunnable);
         progressHandler.removeCallbacks(progressRunnable);
-        
-        if (exoPlayer != null) persistLastPosition(exoPlayer.getCurrentPosition());
+
+        if (executorService != null) {
+            executorService.shutdown();
+        }
         super.onCleared();
         if (controllerFuture != null) {
             MediaController.releaseFuture(controllerFuture);
