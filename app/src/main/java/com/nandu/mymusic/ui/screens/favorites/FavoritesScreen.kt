@@ -23,19 +23,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.nandu.mymusic.model.Song
 import com.nandu.mymusic.ui.components.AlbumArt
-import com.nandu.mymusic.ui.screens.library.SpotifyBlack
-import com.nandu.mymusic.ui.screens.library.SpotifyGray
-import com.nandu.mymusic.ui.screens.library.SpotifyGreen
-import com.nandu.mymusic.ui.screens.library.SpotifySurface
-import com.nandu.mymusic.ui.screens.library.SpotifySurface2
-import com.nandu.mymusic.ui.screens.library.SpotifyWhite
-import com.nandu.mymusic.ui.theme.AppColors
+import com.nandu.mymusic.ui.theme.LikedSongsGradient
+import com.nandu.mymusic.ui.theme.appleColors
 import com.nandu.mymusic.ui.screens.playlist.AddSongsScreen
 import com.nandu.mymusic.ui.screens.playlist.SortMenu
 import com.nandu.mymusic.ui.screens.playlist.SortType
 
 @Composable
-fun FavoritesScreen(
+fun LikedSongsView(
     allSongs         : List<Song>, // Needed to see what songs can be added
     favorites        : List<Song>,
     currentSong      : Song?,
@@ -56,6 +51,7 @@ fun FavoritesScreen(
     onShufflePlay    : () -> Unit = {},
     onEdit           : (Song) -> Unit = {}
 ) {
+    val C = appleColors()
     // ── State for Menu & Bulk Actions ──
     var showMenu by remember { mutableStateOf(false) }
     var isEditMode by remember { mutableStateOf(false) }
@@ -103,44 +99,39 @@ fun FavoritesScreen(
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
-            .background(SpotifyBlack)
+            .background(C.background)
     ) {
-        // ── Spotify "Liked Songs" gradient header ──
+        // ── Apple Music "Liked Songs" header ──
         item {
-            Box(
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(220.dp)
-                    .background(
-                        Brush.verticalGradient(
-                            listOf(AppColors.HeroLight, AppColors.HeroDeep, SpotifyBlack)
-                        )
-                    )
-                    .padding(horizontal = 24.dp),
-                contentAlignment = Alignment.BottomStart
+                    .background(C.background)
+                    .padding(horizontal = 20.dp, vertical = 16.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Column(modifier = Modifier.padding(bottom = 24.dp)) {
-                    Box(
-                        modifier = Modifier
-                            .size(96.dp)
-                            .background(
-                                Brush.linearGradient(listOf(AppColors.HeroLight, AppColors.HeroDeep)),
-                                RoundedCornerShape(4.dp)
-                            ),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            Icons.Filled.Favorite,
-                            contentDescription = null,
-                            tint     = SpotifyWhite,
-                            modifier = Modifier.size(52.dp)
-                        )
-                    }
-                    Spacer(Modifier.height(16.dp))
-                    Text("Liked Songs", color = SpotifyWhite, fontWeight = FontWeight.Bold, fontSize = 28.sp)
+                Box(
+                    modifier = Modifier
+                        .size(72.dp)
+                        .background(
+                            Brush.linearGradient(LikedSongsGradient),
+                            RoundedCornerShape(10.dp)
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        Icons.Filled.Favorite,
+                        contentDescription = null,
+                        tint     = Color.White,
+                        modifier = Modifier.size(36.dp)
+                    )
+                }
+                Spacer(Modifier.width(16.dp))
+                Column {
+                    Text("Liked Songs", color = C.label, fontWeight = FontWeight.Bold, fontSize = 24.sp)
                     Text(
                         "${favorites.size} song${if (favorites.size != 1) "s" else ""}",
-                        color = SpotifyGray, fontSize = 13.sp
+                        color = C.secondaryLabel, fontSize = 13.sp
                     )
                 }
             }
@@ -159,7 +150,7 @@ fun FavoritesScreen(
                     // Show Bulk Delete Actions
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         TextButton(onClick = { isEditMode = false; selectedSongsToRemove = emptySet() }) {
-                            Text("Cancel", color = SpotifyWhite)
+                            Text("Cancel", color = C.label)
                         }
                         TextButton(
                             onClick = {
@@ -171,7 +162,7 @@ fun FavoritesScreen(
                         ) {
                             Text(
                                 text = "Remove (${selectedSongsToRemove.size})",
-                                color = if (selectedSongsToRemove.isNotEmpty()) AppColors.Error else SpotifyGray,
+                                color = if (selectedSongsToRemove.isNotEmpty()) C.destructive else C.secondaryLabel,
                                 fontWeight = FontWeight.Bold
                             )
                         }
@@ -183,50 +174,39 @@ fun FavoritesScreen(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box {
                             IconButton(onClick = { showMenu = true }, modifier = Modifier.size(36.dp)) {
-                                Icon(Icons.Filled.MoreVert, null, tint = SpotifyGray)
+                                Icon(Icons.Filled.MoreVert, null, tint = C.secondaryLabel)
                             }
                             DropdownMenu(
                                 expanded = showMenu,
                                 onDismissRequest = { showMenu = false },
-                                modifier = Modifier.background(SpotifySurface2)
+                                modifier = Modifier.background(C.cardElevated)
                             ) {
                                 DropdownMenuItem(
-                                    text = { Text("Add Songs", color = SpotifyWhite) },
+                                    text = { Text("Add Songs", color = C.label) },
                                     onClick = { showMenu = false; showAddSongsOverlay = true }
                                 )
                                 DropdownMenuItem(
-                                    text = { Text("Remove Songs", color = SpotifyWhite) },
+                                    text = { Text("Remove Songs", color = C.label) },
                                     onClick = { showMenu = false; isEditMode = true }
                                 )
                             }
                         }
                         Spacer(Modifier.width(8.dp))
-                        Box(
-                            modifier = Modifier
-                                .size(56.dp)
-                                .clip(RoundedCornerShape(50))
-                                .background(SpotifyGreen)
-                                .clickable {
-                                    if (favorites.isNotEmpty()) onSongClick(favorites.first())
-                                },
-                            contentAlignment = Alignment.Center
-                        ) {
+                        TextButton(onClick = {
+                            if (favorites.isNotEmpty()) onSongClick(favorites.first())
+                        }) {
                             Icon(Icons.Filled.PlayArrow, "Play Liked Songs",
-                                tint = SpotifyBlack, modifier = Modifier.size(32.dp))
+                                tint = C.accent, modifier = Modifier.size(22.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("Play", color = C.accent, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
                         }
-                        Spacer(Modifier.width(8.dp))
-                        Box(
-                            modifier = Modifier
-                                .size(56.dp)
-                                .clip(RoundedCornerShape(50))
-                                .background(SpotifyGreen)
-                                .clickable {
-                                    if (favorites.isNotEmpty()) onShufflePlay()
-                                },
-                            contentAlignment = Alignment.Center
-                        ) {
+                        TextButton(onClick = {
+                            if (favorites.isNotEmpty()) onShufflePlay()
+                        }) {
                             Icon(Icons.Filled.Shuffle, "Shuffle Liked Songs",
-                                tint = SpotifyBlack, modifier = Modifier.size(28.dp))
+                                tint = C.accent, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("Shuffle", color = C.accent, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
                         }
                     }
                 }
@@ -242,13 +222,13 @@ fun FavoritesScreen(
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Icon(Icons.Filled.FavoriteBorder, null,
-                        tint = SpotifyGray, modifier = Modifier.size(56.dp))
+                        tint = C.secondaryLabel, modifier = Modifier.size(56.dp))
                     Spacer(Modifier.height(16.dp))
                     Text("Songs you like will appear here",
-                        color = SpotifyWhite, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+                        color = C.label, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
                     Spacer(Modifier.height(8.dp))
                     Text("Save songs by tapping the heart icon.",
-                        color = SpotifyGray, fontSize = 13.sp)
+                        color = C.secondaryLabel, fontSize = 13.sp)
                 }
             }
         } else {
@@ -267,8 +247,8 @@ fun FavoritesScreen(
                             }
                         }
                         .background(
-                            if (isEditMode && isSelected) SpotifySurface2
-                            else if (song.id == currentSong?.id && !isEditMode) SpotifySurface
+                            if (isEditMode && isSelected) C.cardElevated
+                            else if (song.id == currentSong?.id && !isEditMode) C.card
                             else Color.Transparent
                         )
                         .padding(horizontal = 16.dp, vertical = 8.dp),
@@ -278,7 +258,7 @@ fun FavoritesScreen(
                         Icon(
                             imageVector = if (isSelected) Icons.Filled.CheckCircle else Icons.Outlined.Circle,
                             contentDescription = "Select",
-                            tint = if (isSelected) SpotifyGreen else SpotifyGray,
+                            tint = if (isSelected) C.accent else C.secondaryLabel,
                             modifier = Modifier.size(24.dp)
                         )
                         Spacer(Modifier.width(8.dp))
@@ -286,7 +266,7 @@ fun FavoritesScreen(
                         // Track number
                         Text(
                             text     = "${index + 1}",
-                            color    = if (song.id == currentSong?.id) SpotifyGreen else SpotifyGray,
+                            color    = if (song.id == currentSong?.id) C.accent else C.secondaryLabel,
                             fontSize = 13.sp,
                             modifier = Modifier.requiredWidth(24.dp)
                         )
@@ -305,13 +285,13 @@ fun FavoritesScreen(
                     Column(modifier = Modifier.padding(start = 12.dp).weight(1f)) {
                         Text(
                             text       = song.title ?: "Unknown Title",
-                            color      = if (song.id == currentSong?.id && !isEditMode) SpotifyGreen else SpotifyWhite,
+                            color      = if (song.id == currentSong?.id && !isEditMode) C.accent else C.label,
                             fontWeight = FontWeight.SemiBold,
                             fontSize   = 14.sp,
                             maxLines   = 1,
                             overflow   = TextOverflow.Ellipsis
                         )
-                        Text(song.artist ?: "Unknown Artist", color = SpotifyGray, fontSize = 12.sp,
+                        Text(song.artist ?: "Unknown Artist", color = C.secondaryLabel, fontSize = 12.sp,
                             maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
 
@@ -323,13 +303,13 @@ fun FavoritesScreen(
                             Icon(
                                 imageVector        = Icons.Filled.Favorite,
                                 contentDescription = "Remove from Liked Songs",
-                                tint               = SpotifyGreen,
+                                tint               = C.accent,
                                 modifier           = Modifier.size(18.dp)
                             )
                         }
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            if (isOnline) Icon(Icons.Filled.Cloud, contentDescription = "Online", tint = SpotifyGreen, modifier = Modifier.size(14.dp).padding(end = 4.dp))
-                            Text(com.nandu.mymusic.ui.screens.library.formatDuration(song.duration), color = SpotifyGray, fontSize = 12.sp)
+                            if (isOnline) Icon(Icons.Filled.Cloud, contentDescription = "Online", tint = C.accent, modifier = Modifier.size(14.dp).padding(end = 4.dp))
+                            Text(com.nandu.mymusic.ui.screens.library.formatDuration(song.duration), color = C.secondaryLabel, fontSize = 12.sp)
                         }
                         Spacer(Modifier.width(4.dp))
                         Box {
@@ -337,58 +317,58 @@ fun FavoritesScreen(
                                 onClick = { showSongMenu = true },
                                 modifier = Modifier.size(32.dp)
                             ) {
-                                Icon(Icons.Filled.MoreVert, "More Options", tint = SpotifyGray, modifier = Modifier.size(20.dp))
+                                Icon(Icons.Filled.MoreVert, "More Options", tint = C.secondaryLabel, modifier = Modifier.size(20.dp))
                             }
 
                             DropdownMenu(
                                 expanded = showSongMenu,
                                 onDismissRequest = { showSongMenu = false },
-                                modifier = Modifier.background(SpotifySurface2)
+                                modifier = Modifier.background(C.cardElevated)
                             ) {
                                 DropdownMenuItem(
-                                    text = { Text("View Album", color = SpotifyWhite) },
+                                    text = { Text("View Album", color = C.label) },
                                     onClick = { showSongMenu = false; onViewAlbum(song.album ?: "Unknown Album") }
                                 )
                                 DropdownMenuItem(
-                                    text = { Text("View Artist", color = SpotifyWhite) },
+                                    text = { Text("View Artist", color = C.label) },
                                     onClick = { showSongMenu = false; onViewArtist(song.artist ?: "Unknown Artist") }
                                 )
                                 DropdownMenuItem(
-                                    text = { Text("Play Next", color = SpotifyWhite) },
+                                    text = { Text("Play Next", color = C.label) },
                                     onClick = { showSongMenu = false; onPlayNext(song) }
                                 )
                                 DropdownMenuItem(
-                                    text = { Text("Add to Queue", color = SpotifyWhite) },
+                                    text = { Text("Add to Queue", color = C.label) },
                                     onClick = { showSongMenu = false; onAddToQueue(song) }
                                 )
                                 DropdownMenuItem(
-                                    text = { Text("Add to Playlist", color = SpotifyWhite) },
+                                    text = { Text("Add to Playlist", color = C.label) },
                                     onClick = { showSongMenu = false; onAddToPlaylist(song) }
                                 )
 
                                 // Download/Edit logic based on offline vs online
                                 if (isOnline) {
                                     DropdownMenuItem(
-                                        text = { Text("Download Song", color = SpotifyWhite) },
+                                        text = { Text("Download Song", color = C.label) },
                                         onClick = { showSongMenu = false; onDownload(song) }
                                     )
                                 } else {
                                     DropdownMenuItem(
-                                        text = { Text("Edit Song Info", color = SpotifyWhite) },
+                                        text = { Text("Edit Song Info", color = C.label) },
                                         onClick = { showSongMenu = false; onEdit(song) }
                                     )
                                 }
 
                                 // Specific to Liked Songs
                                 DropdownMenuItem(
-                                    text = { Text("Remove from Liked Songs", color = AppColors.Error) },
+                                    text = { Text("Remove from Liked Songs", color = C.destructive) },
                                     onClick = { showSongMenu = false; onToggleFavorite(song) }
                                 )
                             }
                         }
                     }
                 }
-                HorizontalDivider(color = SpotifySurface, thickness = 0.5.dp)
+                HorizontalDivider(color = C.separator, thickness = 0.5.dp)
             }
         }
         item { Spacer(Modifier.height(16.dp)) }

@@ -38,8 +38,8 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = true
-            isShrinkResources = true
+            isMinifyEnabled = false
+            isShrinkResources = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -108,6 +108,9 @@ dependencies {
     // Coil for image loading
     implementation("net.jthink:jaudiotagger:3.0.1")
     implementation("io.coil-kt:coil-compose:2.7.0")
+
+    // Palette for album-art derived Now Playing background
+    implementation("androidx.palette:palette-ktx:1.0.0")
 
     // Tests
     testImplementation(libs.junit)

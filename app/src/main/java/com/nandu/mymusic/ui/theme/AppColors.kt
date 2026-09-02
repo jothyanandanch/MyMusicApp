@@ -1,29 +1,85 @@
 package com.nandu.mymusic.ui.theme
 
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 
 /**
- * MyMusic — Material You inspired warm/dynamic theme.
- * Single source of truth for the app's color palette. These values flow into
- * every screen via the Spotify* aliases declared in MusicLibraryScreen.kt —
- * names are kept for compatibility, but the values below now express the
- * app's new warm-amber "expressive" identity instead of Spotify green.
+ * Apple Music–style palette. Single source of truth for the app's colors.
+ * Light and dark instances are selected in [AppleMusicTheme] and provided to
+ * the UI via [LocalAppleColors] (read with `appleColors()` inside composables).
  */
-object AppColors {
-    val Black      = Color(0xFF17120E)   // base background
-    val Surface    = Color(0xFF221A14)   // rows / sheets
-    val Surface2   = Color(0xFF2E241C)   // elevated surface (dialogs, chips, selected rows)
-    val Green      = Color(0xFFFF8A3D)   // app accent — warm amber-orange
-    val White      = Color(0xFFF7EDE3)   // primary text / icons (warm off-white)
-    val Gray       = Color(0xFFBBAA9C)   // secondary / muted text
-    val LightGray  = Color(0xFF5C4F44)   // inactive tracks, borders, dividers
+data class AppleColors(
+    val background: Color,      // page background (systemGroupedBackground)
+    val card: Color,            // grouped cards / list rows
+    val cardElevated: Color,    // sheets, dialogs, chips, menus
+    val fill: Color,            // iOS systemFill (search fields, segmented track)
+    val separator: Color,       // hairline dividers
+    val label: Color,           // primary text / icons
+    val secondaryLabel: Color,  // secondary text
+    val tertiaryLabel: Color,   // placeholder / disabled text
+    val accent: Color,          // Apple Music red
+    val systemGreen: Color,     // switches (iOS green)
+    val destructive: Color,     // destructive actions (iOS red)
+    val bar: Color,             // translucent bar material (nav, mini player)
+    val barSeparator: Color,    // hairline on translucent bars
+)
 
-    // Additional Material-You tokens used by the Now Playing screen & hero headers
-    val OnAccent    = Color(0xFF2B1400)  // dark text/icon for use on top of Green
-    val GradientTop = Color(0xFF3A2415)  // top of the "now playing" dynamic gradient
-    val GradientMid = Color(0xFF241A12)  // gradient midpoint
-    val HeroLight   = Color(0xFFFFB870)  // light end of hero-header gradients
-    val HeroDeep    = Color(0xFF8A3B1F)  // deep end of hero-header gradients
-    val Error       = Color(0xFFFF6B55)  // destructive actions, warm-shifted red
-    val SwipeDelete = Color(0xFFE2735F)  // swipe-to-delete background
+val LightAppleColors = AppleColors(
+    background = Color(0xFFF2F2F7),
+    card = Color(0xFFFFFFFF),
+    cardElevated = Color(0xFFFFFFFF),
+    fill = Color(0x29787880),
+    separator = Color(0x4A3C3C43),
+    label = Color(0xFF000000),
+    secondaryLabel = Color(0xFF8E8E93),
+    tertiaryLabel = Color(0x4D3C3C43),
+    accent = Color(0xFFFA233B),
+    systemGreen = Color(0xFF34C759),
+    destructive = Color(0xFFFF3B30),
+    bar = Color(0xF2FFFFFF),
+    barSeparator = Color(0x4D3C3C43),
+)
+
+val DarkAppleColors = AppleColors(
+    background = Color(0xFF000000),
+    card = Color(0xFF1C1C1E),
+    cardElevated = Color(0xFF2C2C2E),
+    fill = Color(0x29787880),
+    separator = Color(0xA6545458),
+    label = Color(0xFFFFFFFF),
+    secondaryLabel = Color(0xFF8D8D93),
+    tertiaryLabel = Color(0x4DEBEBF5),
+    accent = Color(0xFFFC3C44),
+    systemGreen = Color(0xFF30D158),
+    destructive = Color(0xFFFF453A),
+    bar = Color(0xF21C1C1E),
+    barSeparator = Color(0xA6545458),
+)
+
+val LocalAppleColors = staticCompositionLocalOf { DarkAppleColors }
+val LocalIsDarkTheme = staticCompositionLocalOf { true }
+
+/** Read the current Apple Music palette inside a composable. */
+@androidx.compose.runtime.Composable
+fun appleColors(): AppleColors = LocalAppleColors.current
+
+/** Gradient used for the pinned "Liked Songs" artwork tile. */
+val LikedSongsGradient = listOf(Color(0xFFFA233B), Color(0xFFFB5C74))
+
+/** Fixed gradient pairs for Browse category tiles. */
+val CategoryGradients = listOf(
+    listOf(Color(0xFFFA233B), Color(0xFFFB5C74)), // red
+    listOf(Color(0xFF1D77EF), Color(0xFF64D2FF)), // blue
+    listOf(Color(0xFF30D158), Color(0xFF66D4CF)), // green
+    listOf(Color(0xFFFF9F0A), Color(0xFFFFD60A)), // amber
+    listOf(Color(0xFFBF5AF2), Color(0xFFDA9CFF)), // purple
+    listOf(Color(0xFFFF375F), Color(0xFFFF6482)), // pink
+    listOf(Color(0xFF5E5CE6), Color(0xFF7D7AFF)), // indigo
+    listOf(Color(0xFF64D2FF), Color(0xFF0A84FF)), // teal-blue
+)
+
+/** Static fallback gradient for the Now Playing backdrop (replaced by art-derived colors when loaded). */
+object NpFallbackGradient {
+    val Top = Color(0xFF3A2E33)
+    val Mid = Color(0xFF1C1518)
 }

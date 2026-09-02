@@ -5,10 +5,12 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -58,6 +60,7 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.media3.common.Player
 import com.nandu.mymusic.model.Song
 import com.nandu.mymusic.ui.components.AlbumArt
+import com.nandu.mymusic.ui.components.NowPlayingBackdrop
 import com.nandu.mymusic.utils.parseLrc
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
@@ -66,9 +69,8 @@ import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import androidx.compose.ui.platform.LocalLocale
-import com.nandu.mymusic.ui.components.SquigglyProgressLine
-import com.nandu.mymusic.ui.theme.AppColors
-import com.nandu.mymusic.ui.theme.ScallopedShape
+import com.nandu.mymusic.ui.theme.NpFallbackGradient
+import com.nandu.mymusic.ui.theme.appleColors
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -109,6 +111,7 @@ fun NowPlayingScreen(
     onCancelSleepTimer: () -> Unit = {}
 ) {
     var showSleepTimer by remember { mutableStateOf(false) }
+    val C = appleColors()
     val rawFraction = if (duration > 0) (progress.toFloat() / duration.toFloat()).coerceIn(0f, 1f) else 0f
 
     var showQueueSheet by remember { mutableStateOf(false) }
@@ -118,72 +121,97 @@ fun NowPlayingScreen(
 
     val coroutineScope = rememberCoroutineScope()
     val offsetY = remember { Animatable(0f) }
+    val velocityTracker = remember { androidx.compose.ui.input.pointer.util.VelocityTracker() }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Brush.verticalGradient(listOf(AppColors.GradientTop, AppColors.GradientMid, SpotifyBlack), startY = 0f, endY = 1800f))
             .graphicsLayer { translationY = offsetY.value; alpha = (1f - (offsetY.value / 600f)).coerceIn(0f, 1f) }
             .pointerInput(Unit) {
                 detectVerticalDragGestures(
-                    onDragEnd = { if (offsetY.value > 400f) onBack() else coroutineScope.launch { offsetY.animateTo(0f) } },
-                    onVerticalDrag = { change, dragAmount -> change.consume(); val newOffset = (offsetY.value + dragAmount).coerceAtLeast(0f); coroutineScope.launch { offsetY.snapTo(newOffset) } }
+                    onDragStart = { velocityTracker.resetTracking() },
+                    onVerticalDrag = { change, dragAmount ->
+                        change.consume()
+                        velocityTracker.addPosition(change.uptimeMillis, change.position)
+                        val raw = offsetY.value + dragAmount
+                        // Rubber-band resistance when dragging above the top edge
+                        val newOffset = if (raw < 0f) raw * 0.35f else raw
+                        coroutineScope.launch { offsetY.snapTo(newOffset) }
+                    },
+                    onDragEnd = {
+                        val velocity = velocityTracker.calculateVelocity().y
+                        coroutineScope.launch {
+                            if (offsetY.value > 400f || velocity > 1250f) {
+                                // Velocity handoff: flick dismisses with momentum
+                                offsetY.animateTo(size.height.toFloat(), tween(220))
+                                onBack()
+                            } else {
+                                offsetY.animateTo(0f, spring(dampingRatio = 1f, stiffness = Spring.StiffnessMediumLow))
+                            }
+                        }
+                    },
+                    onDragCancel = {
+                        coroutineScope.launch { offsetY.animateTo(0f, spring(dampingRatio = 1f, stiffness = Spring.StiffnessMediumLow)) }
+                    }
                 )
             }
     ) {
+        // Art-derived dynamic gradient backdrop (Apple Music style)
+        NowPlayingBackdrop(song = song)
+
         Column(modifier = Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(horizontal = 24.dp), verticalArrangement = Arrangement.SpaceBetween) {
 
             // ── TOP BAR ────────────────────────────────────────────────
             Row(modifier = Modifier.fillMaxWidth().padding(top = 16.dp, bottom = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = onBack) { Icon(Icons.Filled.KeyboardArrowDown, "Collapse", tint = SpotifyWhite, modifier = Modifier.size(32.dp)) }
+                IconButton(onClick = onBack) { Icon(Icons.Filled.KeyboardArrowDown, "Collapse", tint = C.accent, modifier = Modifier.size(32.dp)) }
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier.weight(1f).padding(horizontal = 12.dp) // ✅ Adds weight to prevent pushing
                 ) {
-                    Text("PLAYING FROM YOUR LIBRARY", color = SpotifyGray, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) // ✅ Added truncation
-                    Text(song.album ?: "Unknown Album", color = SpotifyWhite, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text("PLAYING FROM YOUR LIBRARY", color = Color.White.copy(alpha = 0.5f), fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) // ✅ Added truncation
+                    Text(song.album ?: "Unknown Album", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
                 Box {
                     IconButton(onClick = { showMenu = true }) {
                         Icon(
-                            Icons.Filled.MoreVert,
+                            Icons.Filled.MoreHoriz,
                             "More",
-                            tint = SpotifyWhite,
+                            tint = Color.White,
                             modifier = Modifier.size(24.dp)
                         )
                     }
                     DropdownMenu(
                         expanded = showMenu,
                         onDismissRequest = { showMenu = false },
-                        modifier = Modifier.background(SpotifySurface2)
+                        modifier = Modifier.background(C.cardElevated)
                     ) {
                         DropdownMenuItem(
-                            text = { Text("View Album", color = SpotifyWhite) },
+                            text = { Text("View Album", color = C.label) },
                             onClick = { showMenu = false; onViewAlbum() })
                         DropdownMenuItem(
-                            text = { Text("View Artist", color = SpotifyWhite) },
+                            text = { Text("View Artist", color = C.label) },
                             onClick = { showMenu = false; onViewArtist() })
 
                         DropdownMenuItem(
-                            text = { Text("Add to Playlist", color = SpotifyWhite) },
+                            text = { Text("Add to Playlist", color = C.label) },
                             onClick = { showMenu = false; onAddToPlaylist() })
 
                         if (isOnline) {
                             DropdownMenuItem(
-                                text = { Text("Download Song", color = SpotifyWhite) },
+                                text = { Text("Download Song", color = C.label) },
                                 onClick = { showMenu = false; onDownload() })
                         } else {
                             // ✅ Added Edit placeholder for Offline songs
                             DropdownMenuItem(text = {
                                 Text(
                                     "Edit Song Info",
-                                    color = SpotifyWhite
+                                    color = C.label
                                 )
                             }, onClick = { showMenu = false; /* TODO: Implement Edit */ })
                             DropdownMenuItem(text = {
                                 Text(
                                     "Delete Song",
-                                    color = AppColors.Error
+                                    color = C.destructive
                                 )
                             }, onClick = { showMenu = false; onDelete() })
                         }
@@ -198,27 +226,27 @@ fun NowPlayingScreen(
                         Row(modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                             AlbumArt(song = song, audioUri = song.uri, isActive = true, size = 64.dp, cornerRadius = 8.dp)
                             Spacer(modifier = Modifier.width(16.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(song.title ?: "Unknown Title", color = SpotifyGreen, fontWeight = FontWeight.Bold, fontSize = 20.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text(song.artist ?: "Unknown Artist", color = SpotifyGray, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                             Column(modifier = Modifier.weight(1f)) {
+                                Text(song.title ?: "Unknown Title", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 20.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(song.artist ?: "Unknown Artist", color = C.accent, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
-                            IconButton(onClick = onToggleFavorite) { Icon(imageVector = if (isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder, contentDescription = "Like", tint = if (isFavorite) SpotifyGreen else SpotifyWhite) }
+                            IconButton(onClick = onToggleFavorite) { Icon(imageVector = if (isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder, contentDescription = "Like", tint = if (isFavorite) C.accent else Color.White) }
                         }
                         SyncedLyricsView(lyricsText = lyrics, progress = progress, onSeek = onSeek, modifier = Modifier.fillMaxSize())
                     }
                 } else {
                     Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center) {
-                        Box(modifier = Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(12.dp)).background(SpotifySurface2), contentAlignment = Alignment.Center) {
+                        Box(modifier = Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(12.dp)).background(Color.Black.copy(alpha = 0.3f)), contentAlignment = Alignment.Center) {
                             AlbumArt(song = song, audioUri = song.uri, isActive = true, size = null, cornerRadius = 12.dp)
                         }
                         Spacer(modifier = Modifier.height(32.dp))
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                             Column(modifier = Modifier.weight(1f)) {
-                                Text(song.title ?: "Unknown Title", color = SpotifyGreen, fontWeight = FontWeight.Bold, fontSize = 22.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(song.title ?: "Unknown Title", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 22.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 Spacer(Modifier.height(4.dp))
-                                Text(song.artist ?: "Unknown Artist", color = SpotifyGray, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(song.artist ?: "Unknown Artist", color = C.accent, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
-                            IconButton(onClick = onToggleFavorite) { Icon(imageVector = if (isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder, contentDescription = "Like", tint = if (isFavorite) SpotifyGreen else SpotifyWhite, modifier = Modifier.size(26.dp)) }
+                            IconButton(onClick = onToggleFavorite) { Icon(imageVector = if (isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder, contentDescription = "Like", tint = if (isFavorite) C.accent else Color.White, modifier = Modifier.size(26.dp)) }
                         }
                     }
                 }
@@ -247,41 +275,59 @@ fun NowPlayingScreen(
                     contentAlignment = Alignment.CenterStart
                 ) {
                     val trackWidthDp = this.maxWidth
-                    SquigglyProgressLine(
-                        progressFraction = animatedFraction,
-                        modifier = Modifier.fillMaxWidth().height(16.dp).align(Alignment.Center),
-                        activeColor = SpotifyGreen,
-                        inactiveColor = SpotifyLightGray,
-                        isAnimating = isPlaying && !isDragging,
-                        strokeWidthDp = if (isDragging) 5.dp else 4.dp
-                    )
-                    Box(modifier = Modifier.size(14.dp).align(Alignment.CenterStart).offset(x = (trackWidthDp * animatedFraction) - 7.dp).scale(thumbScale).clip(CircleShape).background(SpotifyWhite).shadow(elevation = 3.dp, shape = CircleShape))
+                    // Straight Apple-style scrubber track
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(4.dp)
+                            .align(Alignment.Center)
+                            .clip(RoundedCornerShape(2.dp))
+                            .background(Color.White.copy(alpha = 0.25f))
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth(animatedFraction)
+                                .height(4.dp)
+                                .clip(RoundedCornerShape(2.dp))
+                                .background(Color.White)
+                        )
+                    }
+                    Box(modifier = Modifier.size(14.dp).align(Alignment.CenterStart).offset(x = (trackWidthDp * animatedFraction) - 7.dp).scale(thumbScale).clip(CircleShape).background(Color.White).shadow(elevation = 3.dp, shape = CircleShape))
                 }
 
                 Row(modifier = Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Text(text = formatDuration(if (isDragging) dragPreviewTime else progress), color = if (isDragging) SpotifyGreen else SpotifyGray, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                    if (isDragging) Text(text = "Seeking to: ${formatDuration(dragPreviewTime)}", color = SpotifyGreen, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                    Text(text = if (duration > 0) formatDuration(duration) else "0:00", color = SpotifyGray, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    // Monospaced digits (tnum) like iOS
+                    val timeStyle = LocalTextStyle.current.copy(fontFeatureSettings = "tnum")
+                    Text(
+                        text = formatDuration(if (isDragging) dragPreviewTime else progress),
+                        color = Color.White.copy(alpha = 0.6f),
+                        fontSize = 13.sp, fontWeight = FontWeight.SemiBold, style = timeStyle
+                    )
+                    Text(
+                        text = if (duration > 0) "-" + formatDuration(duration - progress) else "-0:00",
+                        color = Color.White.copy(alpha = 0.6f),
+                        fontSize = 13.sp, fontWeight = FontWeight.SemiBold, style = timeStyle
+                    )
                 }
 
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = onToggleShuffle) { Icon(Icons.Filled.Shuffle, "Shuffle", tint = if (shuffleMode) SpotifyGreen else SpotifyGray, modifier = Modifier.size(22.dp)) }
+                    IconButton(onClick = onToggleShuffle) { Icon(Icons.Filled.Shuffle, "Shuffle", tint = if (shuffleMode) C.accent else Color.White, modifier = Modifier.size(22.dp)) }
                     Box(
-                        modifier = Modifier.size(56.dp).clip(ScallopedShape(petals = 10, amplitude = 0.10f)).background(SpotifyWhite)
+                        modifier = Modifier.size(56.dp).clip(CircleShape)
                             .clickable(onClick = onPrevious),
                         contentAlignment = Alignment.Center
-                    ) { Icon(Icons.Filled.SkipPrevious, "Previous", tint = SpotifyBlack, modifier = Modifier.size(28.dp)) }
+                    ) { Icon(Icons.Filled.SkipPrevious, "Previous", tint = Color.White, modifier = Modifier.size(34.dp)) }
                     Box(
-                        modifier = Modifier.size(76.dp).clip(ScallopedShape(petals = 9, amplitude = 0.12f)).background(SpotifyWhite)
+                        modifier = Modifier.size(76.dp).clip(CircleShape)
                             .clickable(onClick = onTogglePlayPause),
                         contentAlignment = Alignment.Center
-                    ) { Icon(imageVector = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow, contentDescription = "Play/Pause", tint = SpotifyBlack, modifier = Modifier.size(36.dp)) }
+                    ) { Icon(imageVector = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow, contentDescription = "Play/Pause", tint = Color.White, modifier = Modifier.size(48.dp)) }
                     Box(
-                        modifier = Modifier.size(56.dp).clip(ScallopedShape(petals = 10, amplitude = 0.10f, rotationDegrees = 18f)).background(SpotifyWhite)
+                        modifier = Modifier.size(56.dp).clip(CircleShape)
                             .clickable(onClick = onNext),
                         contentAlignment = Alignment.Center
-                    ) { Icon(Icons.Filled.SkipNext, "Next", tint = SpotifyBlack, modifier = Modifier.size(28.dp)) }
-                    IconButton(onClick = onToggleRepeat) { Icon(imageVector = if (repeatMode == Player.REPEAT_MODE_ONE) Icons.Filled.RepeatOne else Icons.Filled.Repeat, contentDescription = "Repeat", tint = if (repeatMode != Player.REPEAT_MODE_OFF) SpotifyGreen else SpotifyGray, modifier = Modifier.size(22.dp)) }
+                    ) { Icon(Icons.Filled.SkipNext, "Next", tint = Color.White, modifier = Modifier.size(34.dp)) }
+                    IconButton(onClick = onToggleRepeat) { Icon(imageVector = if (repeatMode == Player.REPEAT_MODE_ONE) Icons.Filled.RepeatOne else Icons.Filled.Repeat, contentDescription = "Repeat", tint = if (repeatMode != Player.REPEAT_MODE_OFF) C.accent else Color.White, modifier = Modifier.size(22.dp)) }
                 }
 
                 Row(modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -289,12 +335,12 @@ fun NowPlayingScreen(
                         Icon(
                             Icons.Filled.Timer,
                             "Sleep Timer",
-                            tint = if (isSleepTimerActive) SpotifyGreen else SpotifyGray,
+                            tint = if (isSleepTimerActive) C.accent else Color.White,
                             modifier = Modifier.size(22.dp)
                         )
                     }
-                    IconButton(onClick = { showLyricsView = !showLyricsView; if (showLyricsView) onLoadLyrics() }) { Icon(imageVector = Icons.Filled.Lyrics, contentDescription = "Lyrics", tint = if (showLyricsView) SpotifyGreen else SpotifyWhite, modifier = Modifier.size(22.dp)) }
-                    IconButton(onClick = { showQueueSheet = true }) { Icon(Icons.AutoMirrored.Filled.QueueMusic, "Queue", tint = SpotifyWhite, modifier = Modifier.size(22.dp)) }
+                    IconButton(onClick = { showLyricsView = !showLyricsView; if (showLyricsView) onLoadLyrics() }) { Icon(imageVector = Icons.Filled.Lyrics, contentDescription = "Lyrics", tint = if (showLyricsView) C.accent else Color.White, modifier = Modifier.size(22.dp)) }
+                    IconButton(onClick = { showQueueSheet = true }) { Icon(Icons.AutoMirrored.Filled.QueueMusic, "Queue", tint = Color.White, modifier = Modifier.size(22.dp)) }
                 }
             }
         }
@@ -316,7 +362,7 @@ fun NowPlayingScreen(
 
     if (showQueueSheet) {
         val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
-        ModalBottomSheet(onDismissRequest = { showQueueSheet = false }, sheetState = sheetState, containerColor = SpotifySurface, dragHandle = { BottomSheetDefaults.DragHandle(color = SpotifyGray) }) {
+        ModalBottomSheet(onDismissRequest = { showQueueSheet = false }, sheetState = sheetState, containerColor = C.card, dragHandle = { BottomSheetDefaults.DragHandle(color = C.secondaryLabel) }) {
             QueueContent(
                 queue = queue,
                 currentSong = song,
@@ -340,7 +386,7 @@ fun SyncedLyricsView(lyricsText: String?, progress: Long, onSeek: (Long) -> Unit
     if (lyricsLines.isEmpty()) {
         Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Text(
-                text = lyricsText ?: "No lyrics available.", color = SpotifyGray, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, textAlign = androidx.compose.ui.text.style.TextAlign.Center, modifier = Modifier.verticalScroll(rememberScrollState())
+                text = lyricsText ?: "No lyrics available.", color = Color.White.copy(alpha = 0.5f), fontSize = 18.sp, fontWeight = FontWeight.SemiBold, textAlign = androidx.compose.ui.text.style.TextAlign.Center, modifier = Modifier.verticalScroll(rememberScrollState())
             )
         }
         return
@@ -359,7 +405,7 @@ fun SyncedLyricsView(lyricsText: String?, progress: Long, onSeek: (Long) -> Unit
         itemsIndexed(lyricsLines) { index, line ->
             val isActive = index == activeIndex
             Text(
-                text = line.text.ifEmpty { "♪" }, color = if (isActive) SpotifyWhite else SpotifyGray, fontSize = if (isActive) 24.sp else 20.sp,
+                text = line.text.ifEmpty { "♪" }, color = if (isActive) Color.White else Color.White.copy(alpha = 0.45f), fontSize = if (isActive) 24.sp else 20.sp,
                 fontWeight = if (isActive) FontWeight.Bold else FontWeight.SemiBold,
                 modifier = Modifier.fillMaxWidth().clickable { onSeek(line.startTimeMs) }.padding(vertical = 12.dp)
             )
@@ -381,6 +427,7 @@ fun QueueContent(
 ) {
     val listState = rememberLazyListState()
     var localQueue by remember { mutableStateOf(queue) }
+    val C = appleColors()
 
     var draggedItemIndex by remember { mutableStateOf<Int?>(null) }
     var initialDraggedIndex by remember { mutableStateOf<Int?>(null) }
@@ -436,7 +483,7 @@ fun QueueContent(
         hasCentered = true
     }
 
-    Column(modifier = modifier.fillMaxWidth().background(SpotifySurface)) {
+    Column(modifier = modifier.fillMaxWidth().background(C.card)) {
 
         // ── Sheet header: title + count + Clear ──
         Row(
@@ -444,7 +491,7 @@ fun QueueContent(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                Text("Queue", color = SpotifyWhite, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                Text("Playing Next", color = C.label, fontSize = 22.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(2.dp))
                 Text(
                     text = when {
@@ -452,20 +499,20 @@ fun QueueContent(
                         historySongs.isNotEmpty() -> "End of queue"
                         else -> "Nothing next"
                     },
-                    color = SpotifyGray, fontSize = 13.sp
+                    color = C.secondaryLabel, fontSize = 13.sp
                 )
             }
             if (upcomingSongs.isNotEmpty() || historySongs.isNotEmpty()) {
                 Text(
                     text = "Clear",
-                    color = AppColors.Error,
+                    color = C.destructive,
                     fontWeight = FontWeight.SemiBold,
                     fontSize = 15.sp,
                     modifier = Modifier.clickable { onClearQueue() }.padding(horizontal = 12.dp, vertical = 8.dp)
                 )
             }
         }
-        HorizontalDivider(color = SpotifySurface2, thickness = 0.5.dp)
+        HorizontalDivider(color = C.separator, thickness = 0.5.dp)
 
         LazyColumn(
             state = listState,
@@ -550,7 +597,7 @@ fun QueueContent(
                 item(key = "history_header") {
                     Text(
                         "Played",
-                        color = SpotifyWhite,
+                        color = C.label,
                         fontWeight = FontWeight.Bold,
                         fontSize = 18.sp,
                         modifier = Modifier.padding(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 6.dp)
@@ -574,12 +621,12 @@ fun QueueContent(
                         .padding(start = 12.dp, end = 12.dp, top = 16.dp, bottom = 8.dp)
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(12.dp))
-                        .background(SpotifySurface2.copy(alpha = 0.6f))
+                        .background(C.cardElevated.copy(alpha = 0.6f))
                         .padding(horizontal = 4.dp, vertical = 8.dp)
                 ) {
                     Text(
                         "NOW PLAYING",
-                        color = SpotifyGray,
+                        color = C.secondaryLabel,
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Bold,
                         letterSpacing = 1.sp,
@@ -595,10 +642,10 @@ fun QueueContent(
                     modifier = Modifier.fillMaxWidth().padding(start = 16.dp, top = 8.dp, end = 16.dp, bottom = 6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Next in queue", color = SpotifyWhite, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                    Text("Next in queue", color = C.label, fontWeight = FontWeight.Bold, fontSize = 18.sp)
                     if (upcomingSongs.isNotEmpty()) {
                         Spacer(Modifier.width(8.dp))
-                        Text("${upcomingSongs.size}", color = SpotifyGray, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                        Text("${upcomingSongs.size}", color = C.secondaryLabel, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                     }
                 }
             }
@@ -606,7 +653,7 @@ fun QueueContent(
                 item(key = "up_next_empty") {
                     Text(
                         "Nothing in queue — add songs from your library",
-                        color = SpotifyGray,
+                        color = C.secondaryLabel,
                         fontSize = 14.sp,
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)
                     )
@@ -628,6 +675,7 @@ fun QueueContent(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SwipeableQueueItem(song: Song, isHistory: Boolean = false, isDragged: Boolean = false, onRemove: () -> Unit, onClick: () -> Unit) {
+    val C = appleColors()
     val dismissState = rememberSwipeToDismissBoxState(
         confirmValueChange = { dismissValue ->
             if (dismissValue == SwipeToDismissBoxValue.EndToStart) {
@@ -641,7 +689,7 @@ fun SwipeableQueueItem(song: Song, isHistory: Boolean = false, isDragged: Boolea
     SwipeToDismissBox(
         state = dismissState, enableDismissFromStartToEnd = false,
         backgroundContent = {
-            val color by animateColorAsState(targetValue = if (dismissState.targetValue == SwipeToDismissBoxValue.EndToStart) AppColors.SwipeDelete else Color.Transparent, label = "swipeColor")
+            val color by animateColorAsState(targetValue = if (dismissState.targetValue == SwipeToDismissBoxValue.EndToStart) C.destructive else Color.Transparent, label = "swipeColor")
             Box(modifier = Modifier.fillMaxSize().background(color, RoundedCornerShape(8.dp)).padding(end = 16.dp), contentAlignment = Alignment.CenterEnd) {
                 if (dismissState.targetValue == SwipeToDismissBoxValue.EndToStart) Icon(Icons.Filled.Delete, contentDescription = "Remove", tint = Color.White)
             }
@@ -662,18 +710,19 @@ fun QueueSongItem(
     isDragged: Boolean = false,
     onClick: () -> Unit
 ) {
+    val C = appleColors()
     Row(modifier = Modifier.fillMaxWidth().clickable { onClick() }.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
         AlbumArt(song = song, audioUri = song.uri, isActive = isPlaying, size = 48.dp, cornerRadius = 6.dp)
         Spacer(modifier = Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
-            Text(text = song.title ?: "Unknown Title", color = if (isPlaying) SpotifyGreen else if (isHistory) SpotifyGray else SpotifyWhite, fontWeight = FontWeight.SemiBold, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(text = song.artist ?: "Unknown Artist", color = if (isHistory) SpotifyLightGray else SpotifyGray, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(text = song.title ?: "Unknown Title", color = if (isPlaying) C.accent else if (isHistory) C.tertiaryLabel else C.label, fontWeight = FontWeight.SemiBold, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(text = song.artist ?: "Unknown Artist", color = if (isHistory) C.tertiaryLabel else C.secondaryLabel, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         Spacer(modifier = Modifier.width(8.dp))
         if (isPlaying) {
-            EqualizerBars(isAnimating = isAnimating, color = SpotifyGreen, modifier = Modifier.size(20.dp))
+            EqualizerBars(isAnimating = isAnimating, color = C.accent, modifier = Modifier.size(20.dp))
         } else {
-            Icon(Icons.Filled.DragHandle, contentDescription = "Long press to reorder", tint = if (isHistory) SpotifyLightGray else SpotifyGray, modifier = Modifier.size(24.dp))
+            Icon(Icons.Filled.DragHandle, contentDescription = "Long press to reorder", tint = if (isHistory) C.tertiaryLabel else C.secondaryLabel, modifier = Modifier.size(24.dp))
         }
     }
 }
@@ -724,13 +773,15 @@ fun SleepTimerSheet(
     var trackCount by remember { mutableStateOf("3") }
     var selectedTrackOption by remember { mutableStateOf("current") } // current, custom, queue
 
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, containerColor = SpotifySurface2) {
-        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 16.dp)) {
-            Text("Sleep Timer", color = SpotifyWhite, fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 16.dp))
+    val C = appleColors()
 
-            TabRow(selectedTabIndex = selectedTab, containerColor = SpotifySurface2, contentColor = SpotifyGreen) {
-                Tab(selected = selectedTab == 0, onClick = { selectedTab = 0 }, text = { Text("Time", color = if (selectedTab == 0) SpotifyGreen else SpotifyGray) })
-                Tab(selected = selectedTab == 1, onClick = { selectedTab = 1 }, text = { Text("Tracks", color = if (selectedTab == 1) SpotifyGreen else SpotifyGray) })
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, containerColor = C.cardElevated) {
+        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 16.dp)) {
+            Text("Sleep Timer", color = C.label, fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 16.dp))
+
+            TabRow(selectedTabIndex = selectedTab, containerColor = C.cardElevated, contentColor = C.accent) {
+                Tab(selected = selectedTab == 0, onClick = { selectedTab = 0 }, text = { Text("Time", color = if (selectedTab == 0) C.accent else C.secondaryLabel) })
+                Tab(selected = selectedTab == 1, onClick = { selectedTab = 1 }, text = { Text("Tracks", color = if (selectedTab == 1) C.accent else C.secondaryLabel) })
             }
 
             Spacer(modifier = Modifier.height(24.dp))
@@ -746,7 +797,7 @@ fun SleepTimerSheet(
                     ) {
                         Text(
                             text = "${sliderValue.toInt()} minutes",
-                            color = SpotifyWhite,
+                            color = C.label,
                             fontSize = 32.sp,
                             fontWeight = FontWeight.Bold
                         )
@@ -757,9 +808,9 @@ fun SleepTimerSheet(
                             valueRange = 5f..120f,
                             steps = 22, // Enables 5-minute jumping increments
                             colors = SliderDefaults.colors(
-                                thumbColor = SpotifyWhite,
-                                activeTrackColor = SpotifyGreen,
-                                inactiveTrackColor = SpotifyGray
+                                thumbColor = C.label,
+                                activeTrackColor = C.accent,
+                                inactiveTrackColor = C.secondaryLabel
                             ),
                             modifier = Modifier.padding(horizontal = 16.dp)
                         )
@@ -770,35 +821,35 @@ fun SleepTimerSheet(
                         modifier = Modifier.fillMaxSize(),
                         verticalArrangement = Arrangement.Center
                     ) {
-                        Text("Stop audio after:", color = SpotifyGray, fontSize = 14.sp, modifier = Modifier.padding(bottom = 8.dp))
+                        Text("Stop audio after:", color = C.secondaryLabel, fontSize = 14.sp, modifier = Modifier.padding(bottom = 8.dp))
 
                         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable { selectedTrackOption = "current" }) {
-                            RadioButton(selected = selectedTrackOption == "current", onClick = { selectedTrackOption = "current" }, colors = RadioButtonDefaults.colors(selectedColor = SpotifyGreen, unselectedColor = SpotifyGray))
-                            Text("Current song", color = SpotifyWhite)
+                            RadioButton(selected = selectedTrackOption == "current", onClick = { selectedTrackOption = "current" }, colors = RadioButtonDefaults.colors(selectedColor = C.accent, unselectedColor = C.secondaryLabel))
+                            Text("Current song", color = C.label)
                         }
                         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable { selectedTrackOption = "custom" }) {
-                            RadioButton(selected = selectedTrackOption == "custom", onClick = { selectedTrackOption = "custom" }, colors = RadioButtonDefaults.colors(selectedColor = SpotifyGreen, unselectedColor = SpotifyGray))
+                            RadioButton(selected = selectedTrackOption == "custom", onClick = { selectedTrackOption = "custom" }, colors = RadioButtonDefaults.colors(selectedColor = C.accent, unselectedColor = C.secondaryLabel))
                             OutlinedTextField(
                                 value = trackCount,
                                 onValueChange = { trackCount = it.filter { char -> char.isDigit() }.take(3) },
                                 modifier = Modifier.width(72.dp).height(52.dp),
                                 singleLine = true,
-                                textStyle = LocalTextStyle.current.copy(textAlign = androidx.compose.ui.text.style.TextAlign.Center, color = SpotifyWhite),
+                                textStyle = LocalTextStyle.current.copy(textAlign = androidx.compose.ui.text.style.TextAlign.Center, color = C.label),
                                 colors = OutlinedTextFieldDefaults.colors(
-                                    focusedTextColor = SpotifyWhite,
-                                    unfocusedTextColor = SpotifyWhite,
-                                    focusedBorderColor = SpotifyGreen,
-                                    unfocusedBorderColor = SpotifyGray,
-                                    cursorColor = SpotifyGreen
+                                    focusedTextColor = C.label,
+                                    unfocusedTextColor = C.label,
+                                    focusedBorderColor = C.accent,
+                                    unfocusedBorderColor = C.secondaryLabel,
+                                    cursorColor = C.accent
                                 ),
                                 shape = RoundedCornerShape(8.dp)
                             )
 
-                            Text("songs", color = SpotifyWhite, modifier = Modifier.padding(start = 8.dp))
+                            Text("songs", color = C.label, modifier = Modifier.padding(start = 8.dp))
                         }
                         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable { selectedTrackOption = "queue" }) {
-                            RadioButton(selected = selectedTrackOption == "queue", onClick = { selectedTrackOption = "queue" }, colors = RadioButtonDefaults.colors(selectedColor = SpotifyGreen, unselectedColor = SpotifyGray))
-                            Text("End of queue", color = SpotifyWhite)
+                            RadioButton(selected = selectedTrackOption == "queue", onClick = { selectedTrackOption = "queue" }, colors = RadioButtonDefaults.colors(selectedColor = C.accent, unselectedColor = C.secondaryLabel))
+                            Text("End of queue", color = C.label)
                         }
                     }
                 }
@@ -825,8 +876,8 @@ fun SleepTimerSheet(
                     }
                 },
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = if (isTimerActive) SpotifySurface2 else SpotifyGreen,
-                    contentColor = if (isTimerActive) AppColors.Error else SpotifyBlack
+                    containerColor = if (isTimerActive) C.cardElevated else C.accent,
+                    contentColor = if (isTimerActive) C.destructive else Color.White
                 ),
                 modifier = Modifier
                     .fillMaxWidth()

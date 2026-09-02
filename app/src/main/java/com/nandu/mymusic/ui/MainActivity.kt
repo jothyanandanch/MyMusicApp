@@ -19,7 +19,7 @@ import androidx.annotation.RequiresApi
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModelProvider
 import com.nandu.mymusic.ui.screens.library.MusicLibraryScreen
-import com.nandu.mymusic.ui.theme.SpotifyUIAppTheme
+import com.nandu.mymusic.ui.theme.AppleMusicTheme
 import com.nandu.mymusic.utils.AppLog
 import com.nandu.mymusic.viewmodel.MusicViewModel
 
@@ -45,7 +45,7 @@ class MainActivity : ComponentActivity() {
         musicViewModel = ViewModelProvider(this)[MusicViewModel::class.java]
 
         setContent {
-            SpotifyUIAppTheme {
+            AppleMusicTheme {
                 MusicLibraryScreen(viewModel = musicViewModel)
             }
         }
