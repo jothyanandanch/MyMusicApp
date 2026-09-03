@@ -24,6 +24,7 @@ import androidx.media3.common.MediaItem;
 import androidx.media3.common.MediaMetadata;
 import androidx.media3.common.PlaybackException;
 import androidx.media3.common.Player;
+import androidx.media3.common.Timeline;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.session.MediaController;
 import androidx.media3.session.SessionToken;
@@ -31,11 +32,14 @@ import androidx.media3.session.SessionToken;
 import com.nandu.mymusic.model.Song;
 import com.nandu.mymusic.repository.LocalMusicRepository;
 import com.nandu.mymusic.repository.OnlineMusicRepository;
+import com.nandu.mymusic.service.MusicPlaybackService;
 import com.nandu.mymusic.utils.AppLog;
 import com.google.common.util.concurrent.ListenableFuture;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -61,7 +65,19 @@ public class MusicViewModel extends AndroidViewModel {
     private static final String KEY_DATA_SAVER = "data_saver_mode";
     private static final String KEY_LIBRARY_MODE = "library_mode_state";
     private static final String KEY_DELETED_IDS = "deleted_song_ids";
-    
+
+    // ✅ Apple Music "Recently Played": persistent play history (newest first)
+    private static final String KEY_PLAY_HISTORY = "play_history_ids";
+    private static final int PLAY_HISTORY_MAX = 50;
+    private final MutableLiveData<List<Song>> playHistoryLiveData = new MutableLiveData<>(new ArrayList<>());
+    private final Deque<Long> playHistoryIds = new ArrayDeque<>();
+
+    // ✅ Apple Music "Hot Tracks": persistent per-song play counts
+    private static final String KEY_PLAY_COUNTS = "play_counts";
+    private static final int HOT_TRACKS_MAX = 20;
+    private final MutableLiveData<List<Song>> hotTracksLiveData = new MutableLiveData<>(new ArrayList<>());
+    private final Map<Long, Integer> playCounts = new LinkedHashMap<>();
+
     // ✅ NEW: Persist Sort Type
     private static final String KEY_SORT_TYPE = "last_sort_type_preference";
     private final MutableLiveData<String> sortTypeLiveData;
@@ -126,6 +142,23 @@ public class MusicViewModel extends AndroidViewModel {
     // ── Progress polling ────────────────────────────────────────────
     private final Handler progressHandler = new Handler(Looper.getMainLooper());
     private int progressTicks = 0;
+    /** Apple Music–style error resilience: give up after N consecutive broken tracks. */
+    private static final int MAX_CONSECUTIVE_ERRORS = 3;
+    private int consecutivePlaybackErrors = 0;
+    /** Apple Music–style autoplay pool size at end of queue. */
+    private static final int AUTOPLAY_POOL_SIZE = 50;
+    private final Runnable queueDriftCheckRunnable = new Runnable() {
+        @Override public void run() {
+            // External controllers can edit the queue behind our back; if the
+            // player's timeline diverges from our snapshot, resync instead of
+            // letting the UI go stale.
+            if (exoPlayer != null && currentPlaylist != null && !sessionRestoreInProgress.get()
+                    && exoPlayer.getMediaItemCount() != currentPlaylist.size()) {
+                AppLog.d(AppLog.PLAYER, "Queue drift detected — resyncing UI from player");
+                syncUiFromPlayer();
+            }
+        }
+    };
     private final Runnable progressRunnable = new Runnable() {
         @Override public void run() {
             if (exoPlayer != null) {
@@ -174,11 +207,15 @@ public class MusicViewModel extends AndroidViewModel {
         repository = new LocalMusicRepository(application);
         loadFavoritesFromPrefs();
         loadPlaylistsFromPrefs();
+        loadPlayHistoryFromPrefs();
+        loadPlayCountsFromPrefs();
 
         // Cache-first: load from cache, then fetch from Firestore if missing/expired
         List<Song> cached = onlineRepository.loadCachedSongs(application);
         if (!cached.isEmpty()) {
             allOnlineSongsLiveData.postValue(cached);
+            emitPlayHistory(); // re-resolve history now that online songs are known
+            emitHotTracks();
         }
         if (cached.isEmpty() || onlineRepository.isCacheExpired(application)) {
             AppLog.d(AppLog.REPO, "Cache missing or expired — fetching from Firestore");
@@ -231,6 +268,11 @@ public class MusicViewModel extends AndroidViewModel {
                             currentIndex = idx;
                             Song song = currentPlaylist.get(idx);
                             currentSongLiveData.setValue(song);
+                            // Apple Music behavior: every song that starts playing
+                            // enters the persistent "Recently Played" history and
+                            // bumps its "Hot Tracks" play count.
+                            recordPlayHistory(song);
+                            recordPlayCount(song);
                             persistLastIndex(currentIndex);
                             lyricsLiveData.setValue(null);
                             previousCachedLyrics = cachedLyrics;
@@ -245,6 +287,7 @@ public class MusicViewModel extends AndroidViewModel {
                     
                     @Override
                     public void onPlaybackStateChanged(int state) {
+                        if (state == Player.STATE_READY) consecutivePlaybackErrors = 0;
                         if (exoPlayer != null && exoPlayer.getDuration() > 0)
                             durationLiveData.postValue(exoPlayer.getDuration());
                         if (state == Player.STATE_ENDED) {
@@ -257,15 +300,19 @@ public class MusicViewModel extends AndroidViewModel {
                                     return;
                                 }
                             }
-                            
+
                             // --- SLEEP TIMER QUEUE END CHECK ---
                             if (stopAtQueueEnd) {
                                 triggerSleepTimerAction();
                                 return;
                             }
-                            
+
                             if (exoPlayer.getRepeatMode() == Player.REPEAT_MODE_ALL) return;
-                            
+
+                            // Apple Music behavior: autoplay keeps the music going with a
+                            // fresh shuffled batch from the library instead of stopping.
+                            if (attemptAutoplay()) return;
+
                             isPlayingLiveData.postValue(false);
                             endOfQueueLiveData.postValue(true);
                             showEndDialogLiveData.postValue(true);
@@ -273,9 +320,30 @@ public class MusicViewModel extends AndroidViewModel {
                     }
 
                     @Override
+                    public void onTimelineChanged(Timeline timeline, int reason) {
+                        if (reason != Player.TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED) return;
+                        // Debounced drift check — VM-initiated bursts settle within 300ms;
+                        // a persistent mismatch means an external controller edited the queue.
+                        progressHandler.removeCallbacks(queueDriftCheckRunnable);
+                        progressHandler.postDelayed(queueDriftCheckRunnable, 300);
+                    }
+
+                    @Override
                     public void onPlayerError(PlaybackException error) {
                         AppLog.e(AppLog.PLAYER, "Playback error: " + error.getMessage());
                         isPlayingLiveData.postValue(false);
+                        // Apple Music behavior: a broken/unavailable track never stalls
+                        // playback — it is skipped and the queue keeps moving.
+                        consecutivePlaybackErrors++;
+                        if (exoPlayer != null && currentPlaylist != null
+                                && !currentPlaylist.isEmpty()
+                                && consecutivePlaybackErrors < MAX_CONSECUTIVE_ERRORS) {
+                            AppLog.d(AppLog.PLAYER, "Skipping broken track ("
+                                    + consecutivePlaybackErrors + "/" + MAX_CONSECUTIVE_ERRORS + ")");
+                            exoPlayer.seekToNextMediaItem();
+                            exoPlayer.prepare();
+                            exoPlayer.play();
+                        }
                     }
                 });
                 progressHandler.post(progressRunnable);
@@ -469,12 +537,22 @@ public class MusicViewModel extends AndroidViewModel {
         if (!dataSaver && finalUrl.contains("/upload/q_auto,f_auto/")) {
             finalUrl = finalUrl.replace("/upload/q_auto,f_auto/", "/upload/");
         }
+        // Derive the Cloudinary cover URL from the audio URL when no art is stored —
+        // the same transform the UI's AlbumArt uses — so the media notification
+        // always shows artwork.
+        Uri artworkUri = song.getAlbumArtUri();
+        if (artworkUri == null && finalUrl.contains("cloudinary.com")) {
+            artworkUri = Uri.parse(finalUrl
+                    .replace("/video/upload/", "/image/upload/")
+                    .replace("/songs/", "/covers/")
+                    .replace(".mp3", ".jpg"));
+        }
         MediaMetadata.Builder metadataBuilder = new MediaMetadata.Builder()
                 .setTitle(song.getTitle())
                 .setArtist(song.getArtist())
                 .setDisplayTitle(song.getTitle());
         if (song.getAlbum() != null) metadataBuilder.setAlbumTitle(song.getAlbum());
-        if (song.getAlbumArtUri() != null) metadataBuilder.setArtworkUri(song.getAlbumArtUri());
+        if (artworkUri != null) metadataBuilder.setArtworkUri(artworkUri);
         return new MediaItem.Builder()
                 .setUri(Uri.parse(finalUrl))
                 .setMediaId(String.valueOf(song.getId()))
@@ -493,6 +571,60 @@ public class MusicViewModel extends AndroidViewModel {
         synchronized (this) {
             return currentPlaylist == null ? new ArrayList<Song>() : new ArrayList<>(currentPlaylist);
         }
+    }
+
+    /**
+     * Apple Music behavior: when the queue finishes, keep the music going with a
+     * fresh shuffled batch from the library (recently played excluded first).
+     * Returns true if an autoplay batch was queued.
+     */
+    private boolean attemptAutoplay() {
+        if (exoPlayer == null || !isDataSaverEligibleLibraryAvailable()) return false;
+        List<Song> library = new ArrayList<>();
+        List<Song> local = songsLiveData.getValue();
+        if (local != null) library.addAll(local);
+        List<Song> online = allOnlineSongsLiveData.getValue();
+        if (online != null) {
+            Set<Long> seen = new LinkedHashSet<>();
+            for (Song s : library) seen.add(s.getId());
+            for (Song s : online) {
+                if (seen.add(s.getId())) library.add(s);
+            }
+        }
+        if (library.size() <= 1) return false;
+
+        // Exclude what was just played so autoplay feels fresh.
+        Set<Long> played = new LinkedHashSet<>();
+        List<Song> snapshot = snapshotPlaylist();
+        for (Song s : snapshot) played.add(s.getId());
+        List<Song> pool = new ArrayList<>();
+        for (Song s : library) {
+            if (!played.contains(s.getId())) pool.add(s);
+        }
+        if (pool.size() < 10) {
+            // Small library: allow repeats but keep the shuffle random.
+            pool = new ArrayList<>(library);
+        }
+        if (pool.isEmpty()) return false;
+        Collections.shuffle(pool);
+        int count = Math.min(AUTOPLAY_POOL_SIZE, pool.size());
+        List<Song> autoplay = new ArrayList<>(pool.subList(0, count));
+
+        List<MediaItem> items = new ArrayList<>();
+        for (Song s : autoplay) items.add(createMediaItem(s));
+        synchronized (this) {
+            currentPlaylist.addAll(autoplay);
+        }
+        exoPlayer.addMediaItems(items);
+        updateQueueUI();
+        AppLog.d(AppLog.PLAYER, "Autoplay added " + count + " songs to the queue");
+        return true;
+    }
+
+    private boolean isDataSaverEligibleLibraryAvailable() {
+        List<Song> local = songsLiveData.getValue();
+        List<Song> online = allOnlineSongsLiveData.getValue();
+        return (local != null && !local.isEmpty()) || (online != null && !online.isEmpty());
     }
 
     private void updateQueueUI() {
@@ -540,6 +672,218 @@ public class MusicViewModel extends AndroidViewModel {
                     .edit().putInt(KEY_LAST_INDEX, index).putString(KEY_LAST_URI, uriStr).commit();
         });
     }
+
+    // ── Play history ("Recently Played") ───────────────────────────────────
+
+    /** Apple Music behavior: every played song moves to the front of the history. */
+    private void recordPlayHistory(Song song) {
+        if (song == null) return;
+        Long id = song.getId();
+        playHistoryIds.remove(id); // move-to-front dedupe (replays don't duplicate)
+        playHistoryIds.addFirst(id);
+        while (playHistoryIds.size() > PLAY_HISTORY_MAX) {
+            playHistoryIds.removeLast();
+        }
+        persistPlayHistory();
+        emitPlayHistory();
+    }
+
+    private void loadPlayHistoryFromPrefs() {
+        SharedPreferences prefs = getApplication().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        String saved = prefs.getString(KEY_PLAY_HISTORY, "");
+        playHistoryIds.clear();
+        if (saved != null && !saved.isEmpty()) {
+            for (String idStr : saved.split(",")) {
+                try { playHistoryIds.addLast(Long.parseLong(idStr)); } catch (NumberFormatException ignored) {}
+            }
+        }
+        emitPlayHistory();
+    }
+
+    private void persistPlayHistory() {
+        StringBuilder sb = new StringBuilder();
+        for (Long id : playHistoryIds) {
+            if (sb.length() > 0) sb.append(",");
+            sb.append(id);
+        }
+        final String encoded = sb.toString();
+        try {
+            executorService.execute(() -> {
+                getApplication().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                        .edit().putString(KEY_PLAY_HISTORY, encoded).apply();
+            });
+        } catch (RejectedExecutionException ignored) {
+            // ViewModel clearing — executor already shut down.
+        }
+    }
+
+    /**
+     * Re-emit the resolved history — called whenever the underlying queue or
+     * library changes so removed/renamed songs disappear from "Recently Played".
+     */
+    private void rebuildPlayHistoryFromQueue(List<Song> orderedQueue) {
+        if (orderedQueue == null) return;
+        // Keep entries still present in the given queue, preserving their order.
+        Set<Long> present = new LinkedHashSet<>();
+        for (Song s : orderedQueue) present.add(s.getId());
+        playHistoryIds.removeIf(id -> !present.contains(id));
+        persistPlayHistory();
+        emitPlayHistory();
+    }
+
+    /** Resolve stored ids → Song objects against the combined library. */
+    private List<Song> resolvePlayHistory() {
+        List<Song> out = new ArrayList<>();
+        if (playHistoryIds.isEmpty()) return out;
+        Map<Long, Song> byId = new LinkedHashMap<>();
+        List<Song> online = allOnlineSongsLiveData.getValue();
+        if (online != null) {
+            for (Song s : online) byId.put(s.getId(), s);
+        }
+        List<Song> local = songsLiveData.getValue();
+        if (local != null) {
+            for (Song s : local) byId.put(s.getId(), s); // local wins on id collision
+        }
+        for (Long id : playHistoryIds) {
+            Song s = byId.get(id);
+            if (s != null) out.add(s);
+        }
+        return out;
+    }
+
+    private void emitPlayHistory() {
+        playHistoryLiveData.postValue(resolvePlayHistory());
+    }
+
+    /** Apple Music "Recently Played" — persistent across app restarts. */
+    public LiveData<List<Song>> getPlayHistory() { return playHistoryLiveData; }
+
+    // ── Play counts ("Hot Tracks") ─────────────────────────────────────────
+
+    /** Apple Music behavior: every playback increments the song's play count. */
+    private void recordPlayCount(Song song) {
+        if (song == null) return;
+        Long id = song.getId();
+        playCounts.merge(id, 1, Integer::sum);
+        persistPlayCounts();
+        emitHotTracks();
+    }
+
+    private void loadPlayCountsFromPrefs() {
+        SharedPreferences prefs = getApplication().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        Set<String> saved = prefs.getStringSet(KEY_PLAY_COUNTS, null);
+        playCounts.clear();
+        if (saved != null) {
+            for (String entry : saved) {
+                int sep = entry.indexOf(':');
+                if (sep > 0) {
+                    try {
+                        playCounts.put(Long.parseLong(entry.substring(0, sep)),
+                                Integer.parseInt(entry.substring(sep + 1)));
+                    } catch (NumberFormatException ignored) {}
+                }
+            }
+        }
+        emitHotTracks();
+    }
+
+    private void persistPlayCounts() {
+        Set<String> encoded = new LinkedHashSet<>();
+        for (Map.Entry<Long, Integer> e : playCounts.entrySet()) {
+            encoded.add(e.getKey() + ":" + e.getValue());
+        }
+        try {
+            executorService.execute(() -> {
+                getApplication().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                        .edit().putStringSet(KEY_PLAY_COUNTS, encoded).apply();
+            });
+        } catch (RejectedExecutionException ignored) {
+            // ViewModel clearing — executor already shut down.
+        }
+    }
+
+    /** Resolve stored ids → Song objects, ordered by play count descending. */
+    private List<Song> resolveHotTracks() {
+        if (playCounts.isEmpty()) return new ArrayList<>();
+        Map<Long, Song> byId = new LinkedHashMap<>();
+        List<Song> online = allOnlineSongsLiveData.getValue();
+        if (online != null) {
+            for (Song s : online) byId.put(s.getId(), s);
+        }
+        List<Song> local = songsLiveData.getValue();
+        if (local != null) {
+            for (Song s : local) byId.put(s.getId(), s); // local wins on id collision
+        }
+        List<Map.Entry<Long, Integer>> ranked = new ArrayList<>(playCounts.entrySet());
+        ranked.sort((a, b) -> b.getValue() - a.getValue());
+        List<Song> out = new ArrayList<>();
+        for (Map.Entry<Long, Integer> e : ranked) {
+            Song s = byId.get(e.getKey());
+            if (s != null) {
+                out.add(s);
+                if (out.size() >= HOT_TRACKS_MAX) break;
+            }
+        }
+        return out;
+    }
+
+    private void emitHotTracks() {
+        hotTracksLiveData.postValue(resolveHotTracks());
+    }
+
+    /** Apple Music "Hot Tracks" — your most-played songs, persistent across restarts. */
+    public LiveData<List<Song>> getHotTracks() { return hotTracksLiveData; }
+
+    // ── "Made for You" personalized mixes ──────────────────────────────────
+
+    /** Apple Music behavior: auto-generated mixes, refreshed weekly (Favorites Mix) and per session (Replay). */
+    public void generatePersonalizedMixes() {
+        List<Song> favs = new ArrayList<>(favoritesMap.values());
+        List<Song> hot = resolveHotTracks();
+        if (favs.isEmpty() && hot.size() < 5) return;
+
+        Map<String, List<Long>> updated = new LinkedHashMap<>(
+                customPlaylistsLiveData.getValue() != null ? customPlaylistsLiveData.getValue() : new LinkedHashMap<>());
+        Set<String> autos = new LinkedHashSet<>(autoGeneratedPlaylistsLiveData.getValue() != null
+                ? autoGeneratedPlaylistsLiveData.getValue() : new LinkedHashSet<>());
+        boolean changed = false;
+
+        // Favorites Mix — favorites first in weekly-rotated order, filled with most-played.
+        java.util.Calendar cal = java.util.Calendar.getInstance();
+        java.util.Random weekly = new java.util.Random(cal.get(java.util.Calendar.YEAR) * 100 + cal.get(java.util.Calendar.WEEK_OF_YEAR));
+        List<Song> favShuffled = new ArrayList<>(favs);
+        Collections.shuffle(favShuffled, weekly);
+        Set<Long> seen = new LinkedHashSet<>();
+        List<Long> mixIds = new ArrayList<>();
+        for (Song s : favShuffled) { if (mixIds.size() >= 25) break; if (seen.add(s.getId())) mixIds.add(s.getId()); }
+        for (Song s : hot) { if (mixIds.size() >= 25) break; if (seen.add(s.getId())) mixIds.add(s.getId()); }
+        if (!mixIds.isEmpty() && !mixIds.equals(updated.get("Favorites Mix"))) {
+            updated.put("Favorites Mix", mixIds);
+            autos.add("Favorites Mix");
+            changed = true;
+        }
+
+        // Replay — your top 25 most-played songs.
+        List<Long> replayIds = new ArrayList<>();
+        for (Song s : hot) { replayIds.add(s.getId()); if (replayIds.size() >= 25) break; }
+        if (!replayIds.isEmpty() && !replayIds.equals(updated.get("Replay"))) {
+            updated.put("Replay", replayIds);
+            autos.add("Replay");
+            changed = true;
+        }
+
+        if (changed) {
+            customPlaylistsLiveData.postValue(updated);
+            autoGeneratedPlaylistsLiveData.postValue(autos);
+            savePlaylistsToPrefs(updated);
+            final Set<String> autosFinal = autos;
+            executorService.execute(() -> {
+                getApplication().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                        .edit().putStringSet(KEY_AUTO_PLAYLISTS, autosFinal).apply();
+            });
+        }
+    }
+
     
     private void loadFavoritesFromPrefs() {
         SharedPreferences prefs = getApplication().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
@@ -1530,6 +1874,13 @@ public class MusicViewModel extends AndroidViewModel {
             updated.remove(song);
             songsLiveData.setValue(updated);
         }
+        // Dropped from library → drop from history and play counts too
+        playHistoryIds.remove(song.getId());
+        persistPlayHistory();
+        emitPlayHistory();
+        playCounts.remove(song.getId());
+        persistPlayCounts();
+        emitHotTracks();
         if (favoritesMap.containsKey(song.getId())) toggleFavorite(song);
         if (currentPlaylist != null && currentPlaylist.contains(song)) {
             userInteractedWithPlayback = true;
@@ -1582,6 +1933,9 @@ public class MusicViewModel extends AndroidViewModel {
             @Override
             public void onSuccess(List<Song> songs) {
                 allOnlineSongsLiveData.postValue(songs);
+                emitPlayHistory(); // re-resolve history against the fresh catalog
+                emitHotTracks();
+                generatePersonalizedMixes();
                 onlineRepository.saveCache(context, songs);
                 new Handler(Looper.getMainLooper()).postDelayed(() -> {
                     generateLanguagePlaylistsFromOnlineMusic();
@@ -1622,6 +1976,8 @@ public class MusicViewModel extends AndroidViewModel {
                 @Override
                 public void onSuccess(List<Song> songs) {
                     allOnlineSongsLiveData.postValue(songs);
+                    emitPlayHistory(); // re-resolve history against the fresh catalog
+                    emitHotTracks();
                     onlineRepository.saveCache(getApplication(), songs);
                     generateLanguagePlaylistsFromOnlineMusic();
                     executorService.execute(() -> {
@@ -1660,7 +2016,10 @@ public class MusicViewModel extends AndroidViewModel {
                 local = filtered;
             }
             songsLiveData.postValue(local);
+            emitPlayHistory(); // re-resolve history now that local songs are known
+            emitHotTracks();
             syncFavoritesWithSongs(local);
+            generatePersonalizedMixes();
             restoreLastSession(local);
             updateQueueUI();
             // If the service survived but syncUiFromPlayer ran before songs loaded,

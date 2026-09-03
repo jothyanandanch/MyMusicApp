@@ -6,6 +6,7 @@ import android.content.Intent
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.ForwardingPlayer
+import androidx.media3.common.MediaItem
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.database.StandaloneDatabaseProvider
 import androidx.media3.datasource.DefaultDataSource
@@ -16,9 +17,18 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
+import com.google.common.util.concurrent.Futures
+import com.google.common.util.concurrent.ListenableFuture
 import com.nandu.mymusic.ui.MainActivity
 import java.io.File
 
+/**
+ * Thin MediaSessionService around ExoPlayer, matching Apple Music's system
+ * integration: the notification, Bluetooth, Assistant and Auto controllers all
+ * act on the real player, external queue requests are resolved through
+ * [MediaSession.Callback.onAddMediaItems], and playback survives process death
+ * via the app's own session restore.
+ */
 @UnstableApi
 class MusicPlaybackService : MediaSessionService() {
 
@@ -62,7 +72,7 @@ class MusicPlaybackService : MediaSessionService() {
             .setMediaSourceFactory(DefaultMediaSourceFactory(this).setDataSourceFactory(cacheDataSourceFactory))
             .build()
 
-        // ✨ NEW: Wrap ExoPlayer in a ForwardingPlayer to intercept hardware commands
+        // ✨ Wrap ExoPlayer in a ForwardingPlayer to intercept hardware commands
         val forwardingPlayer = object : ForwardingPlayer(exoPlayer) {
             override fun play() {
                 val prefs = getSharedPreferences("MyMusicPrefs", Context.MODE_PRIVATE)
@@ -86,10 +96,36 @@ class MusicPlaybackService : MediaSessionService() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
-        // 4. Build MediaSession and pass the ForwardingPlayer instead of the raw ExoPlayer
+        // 4. Build MediaSession with the ForwardingPlayer. The callback lets
+        // external controllers (Assistant, Auto, wearables) enqueue playable
+        // requests instead of having them silently fail — matching how Apple
+        // Music handles system-level playback requests.
         mediaSession = MediaSession.Builder(this, forwardingPlayer)
             .setSessionActivity(sessionActivityPendingIntent)
+            .setCallback(object : MediaSession.Callback {
+                override fun onAddMediaItems(
+                    mediaSession: MediaSession,
+                    controller: MediaSession.ControllerInfo,
+                    mediaItems: MutableList<MediaItem>
+                ): ListenableFuture<MutableList<MediaItem>> {
+                    // Items that already carry a playable URI (all app-initiated
+                    // playback) pass through untouched. Metadata-only requests from
+                    // external controllers cannot be resolved by the service and are
+                    // rejected cleanly instead of failing mid-playback.
+                    val resolved = mediaItems.filter { it.localConfiguration != null }
+                    return if (resolved.isEmpty()) {
+                        Futures.immediateFailedFuture(
+                            IllegalArgumentException("Cannot resolve media items without a URI")
+                        )
+                    } else {
+                        Futures.immediateFuture(resolved.toMutableList())
+                    }
+                }
+            })
             .build()
+
+        // Apple Music-style notification: red accent, compact transport controls
+        setMediaNotificationProvider(AppleMusicNotificationProvider(this))
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = mediaSession

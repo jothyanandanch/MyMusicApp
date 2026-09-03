@@ -239,11 +239,14 @@ fun PlaylistDetailView(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Box(
-                    modifier = Modifier.size(200.dp).clip(RoundedCornerShape(10.dp))
-                        .background(Brush.linearGradient(LikedSongsGradient)),
-                    contentAlignment = Alignment.Center
-                ) { Icon(Icons.Filled.LibraryMusic, null, tint = Color.White, modifier = Modifier.size(80.dp)) }
+                // Apple Music playlist detail: 2×2 mosaic of the first four covers
+                com.nandu.mymusic.ui.screens.library.PlaylistCover(
+                    songs = songs.take(4),
+                    cornerRadius = 12.dp,
+                    gradient = LikedSongsGradient,
+                    icon = Icons.Filled.LibraryMusic,
+                    modifier = Modifier.size(200.dp)
+                )
                 Spacer(Modifier.height(16.dp))
                 Text(playlistName, color = C.label, fontWeight = FontWeight.Bold, fontSize = 24.sp, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
                 Text("${songs.size} song${if (songs.size != 1) "s" else ""}", color = C.secondaryLabel, fontSize = 13.sp)

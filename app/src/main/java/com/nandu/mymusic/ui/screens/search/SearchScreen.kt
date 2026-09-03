@@ -151,9 +151,12 @@ fun SearchScreen(
     }
 
     val languages = remember(libraryData.onlineSongs) {
-        libraryData.onlineSongs.mapNotNull { it.language?.takeIf { l -> l.isNotBlank() } }
+        // Songs-bearing languages first, then the full supported set — so the
+        // Browse grid is always full like Apple's.
+        val songLanguages = libraryData.onlineSongs
+            .mapNotNull { it.language?.takeIf { l -> l.isNotBlank() && !l.equals("Unknown", true) } }
             .distinct()
-            .filter { it != "Unknown" }
+        (songLanguages + listOf("Telugu", "English", "Hindi", "Tamil", "Malayalam")).distinct()
     }
 
     LazyColumn(
