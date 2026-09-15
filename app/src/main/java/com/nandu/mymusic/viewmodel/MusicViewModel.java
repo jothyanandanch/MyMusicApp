@@ -65,6 +65,11 @@ public class MusicViewModel extends AndroidViewModel {
     private static final String KEY_DATA_SAVER = "data_saver_mode";
     private static final String KEY_LIBRARY_MODE = "library_mode_state";
     private static final String KEY_DELETED_IDS = "deleted_song_ids";
+    // Apple Music "Autoplay": opt-in toggle for keeping music going at end of queue.
+    // Default OFF — the old always-on behavior silently replaced the queue with
+    // random library songs, which users experienced as the queue "resetting".
+    private static final String KEY_AUTOPLAY_ENABLED = "autoplay_enabled";
+    private static final String KEY_NP_SOURCE = "now_playing_source";
 
     // ✅ Apple Music "Recently Played": persistent play history (newest first)
     private static final String KEY_PLAY_HISTORY = "play_history_ids";
@@ -87,15 +92,38 @@ public class MusicViewModel extends AndroidViewModel {
     
     // --- SLEEP TIMER STATE ---
     private android.os.CountDownTimer sleepTimer;
+    /** Fade-out timer used at the sleep timer's end (Apple Music fades instead of hard-pausing). */
+    private android.os.CountDownTimer sleepFadeTimer;
+    /** Player volume before a sleep fade, restored on pause/cancel. */
+    private volatile float volBeforeSleepFade = 1f;
+    /** True while a sleep fade-out is running. */
+    private volatile boolean sleepFadeActive = false;
+    /** Apple Music: ~5s graceful fade before the sleep timer pauses playback. */
+    private static final long SLEEP_FADE_MS = 5000L;
+    private static final long SLEEP_FADE_TICK_MS = 100L;
     private final MutableLiveData<Boolean> isSleepTimerActive = new MutableLiveData<>(false);
     private final MutableLiveData<Long> sleepTimerRemainingLiveData = new MutableLiveData<>(0L); // ✅ NEW: Live Countdown
     private final MutableLiveData<Integer> sleepTimerTracksRemainingLiveData = new MutableLiveData<>(-1);
     private int sleepTrackCounter = -1; // -1 means inactive
     private boolean stopAtQueueEnd = false;
     // ── Thread Management ────────────────────────────────────────────────
+    /** Reference to the SharedPreferences used to register/unregister the favorites listener. */
+    private final android.content.SharedPreferences appPrefs;
+
+    /**
+     * Watch favorite_song_ids changes pushed by the media notification handler
+     * (system UI toggles) so the app's heart state never desyncs.
+     */
+    private final android.content.SharedPreferences.OnSharedPreferenceChangeListener
+            favoritesPrefsListener = (prefs, key) -> {
+        if (!KEY_FAV_IDS.equals(key)) return;
+        new Handler(Looper.getMainLooper()).post(this::refreshFavoritesFromPrefs);
+    };
+
     private final ExecutorService executorService = Executors.newFixedThreadPool(4);
-    
+
     private final MutableLiveData<Boolean> isDataSaverModeLiveData;
+    private final MutableLiveData<Boolean> isAutoplayEnabledLiveData;
     private final MutableLiveData<List<Song>> songsLiveData = new MutableLiveData<>();
     private final MutableLiveData<List<Song>> allOnlineSongsLiveData = new MutableLiveData<>(new ArrayList<>());
     private final MutableLiveData<Boolean> isRefreshingOnlineLiveData = new MutableLiveData<>(false);
@@ -108,6 +136,8 @@ public class MusicViewModel extends AndroidViewModel {
     private final MutableLiveData<Boolean> endOfQueueLiveData = new MutableLiveData<>(false);
     private final MutableLiveData<Boolean> showEndDialogLiveData = new MutableLiveData<>(false);
     private final MutableLiveData<Boolean> isNowPlayingOpenLiveData = new MutableLiveData<>(false);
+    /** Apple Music "Playing From" — the queue's origin (playlist, album, Listen Now…). */
+    private final MutableLiveData<String> nowPlayingSourceLiveData = new MutableLiveData<>(null);
     private final MutableLiveData<Boolean> isLoadingLiveData = new MutableLiveData<>(true);
     private final MutableLiveData<String> lyricsLiveData = new MutableLiveData<>(null);
     private String cachedLyrics = null;
@@ -152,8 +182,12 @@ public class MusicViewModel extends AndroidViewModel {
             // External controllers can edit the queue behind our back; if the
             // player's timeline diverges from our snapshot, resync instead of
             // letting the UI go stale.
-            if (exoPlayer != null && currentPlaylist != null && !sessionRestoreInProgress.get()
-                    && exoPlayer.getMediaItemCount() != currentPlaylist.size()) {
+            if (exoPlayer == null || sessionRestoreInProgress.get()) return;
+            Integer queueSize;
+            synchronized (MusicViewModel.this) {
+                queueSize = currentPlaylist == null ? null : currentPlaylist.size();
+            }
+            if (queueSize != null && exoPlayer.getMediaItemCount() != queueSize) {
                 AppLog.d(AppLog.PLAYER, "Queue drift detected — resyncing UI from player");
                 syncUiFromPlayer();
             }
@@ -190,6 +224,7 @@ public class MusicViewModel extends AndroidViewModel {
         SharedPreferences prefs = application.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
         
         isDataSaverModeLiveData = new MutableLiveData<>(prefs.getBoolean(KEY_DATA_SAVER, true));
+        isAutoplayEnabledLiveData = new MutableLiveData<>(prefs.getBoolean(KEY_AUTOPLAY_ENABLED, false));
         libraryModeLiveData = new MutableLiveData<>(prefs.getInt(KEY_LIBRARY_MODE, 0));
         
         // Load deleted song IDs
@@ -205,6 +240,8 @@ public class MusicViewModel extends AndroidViewModel {
         sortTypeLiveData = new MutableLiveData<>(savedSortType);
         
         repository = new LocalMusicRepository(application);
+        appPrefs = application.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        appPrefs.registerOnSharedPreferenceChangeListener(favoritesPrefsListener);
         loadFavoritesFromPrefs();
         loadPlaylistsFromPrefs();
         loadPlayHistoryFromPrefs();
@@ -262,11 +299,12 @@ public class MusicViewModel extends AndroidViewModel {
                                 triggerSleepTimerAction();
                             }
                         }
-                        if (currentPlaylist == null || currentPlaylist.isEmpty()) return;
+                        List<Song> snapshot = snapshotPlaylist();
+                        if (snapshot.isEmpty()) return;
                         int idx = exoPlayer.getCurrentMediaItemIndex();
-                        if (idx >= 0 && idx < currentPlaylist.size()) {
+                        if (idx >= 0 && idx < snapshot.size()) {
                             currentIndex = idx;
-                            Song song = currentPlaylist.get(idx);
+                            Song song = snapshot.get(idx);
                             currentSongLiveData.setValue(song);
                             // Apple Music behavior: every song that starts playing
                             // enters the persistent "Recently Played" history and
@@ -329,6 +367,14 @@ public class MusicViewModel extends AndroidViewModel {
                     }
 
                     @Override
+                    public void onRepeatModeChanged(int repeatMode) {
+                        // Keeps the in-app Repeat pill in sync when repeat is toggled
+                        // from the system media notification (Android 13+ layout) or
+                        // any other external controller.
+                        repeatModeLiveData.postValue(repeatMode);
+                    }
+
+                    @Override
                     public void onPlayerError(PlaybackException error) {
                         AppLog.e(AppLog.PLAYER, "Playback error: " + error.getMessage());
                         isPlayingLiveData.postValue(false);
@@ -352,8 +398,9 @@ public class MusicViewModel extends AndroidViewModel {
                 if (exoPlayer.getCurrentMediaItem() != null) {
                     syncUiFromPlayer();
                 } else if (songsLiveData.getValue() != null && !songsLiveData.getValue().isEmpty()) {
+                    // restoreLastSession self-publishes on the main thread; no
+                    // trailing updateQueueUI() — publishing here raced the apply.
                     restoreLastSession(songsLiveData.getValue());
-                    updateQueueUI();
                 }
             } catch (Exception e) {
                 AppLog.e(AppLog.PLAYER, "Failed to connect to MediaSessionService");
@@ -386,6 +433,16 @@ public class MusicViewModel extends AndroidViewModel {
         executorService.execute(() -> {
             getApplication().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                     .edit().putBoolean(KEY_DATA_SAVER, isEnabled).commit();
+        });
+    }
+
+    /** Apple Music "Autoplay" — opt-in. When off, the queue simply ends (dialog). */
+    public LiveData<Boolean> getIsAutoplayEnabled() { return isAutoplayEnabledLiveData; }
+    public void setAutoplayEnabled(boolean isEnabled) {
+        isAutoplayEnabledLiveData.setValue(isEnabled);
+        executorService.execute(() -> {
+            getApplication().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                    .edit().putBoolean(KEY_AUTOPLAY_ENABLED, isEnabled).commit();
         });
     }
     
@@ -458,6 +515,7 @@ public class MusicViewModel extends AndroidViewModel {
     public LiveData<Boolean>    getShowEndDialog()   { return showEndDialogLiveData; }
     public LiveData<Set<Long>>  getFavoriteIds()     { return favoriteIdsLiveData; }
     public LiveData<Boolean>    isNowPlayingOpen()   { return isNowPlayingOpenLiveData; }
+    public LiveData<String>     getNowPlayingSource() { return nowPlayingSourceLiveData; }
     public LiveData<Map<String, List<Long>>> getCustomPlaylists() { return customPlaylistsLiveData; }
     public LiveData<IntentSender> getDeleteIntentSender() { return deleteIntentSenderLiveData; }
     
@@ -579,6 +637,10 @@ public class MusicViewModel extends AndroidViewModel {
      * Returns true if an autoplay batch was queued.
      */
     private boolean attemptAutoplay() {
+        // Opt-in Apple Music autoplay: disabled by default so the queue ends
+        // cleanly (end-of-queue dialog) instead of being silently refilled
+        // with random songs the user never asked for.
+        if (!Boolean.TRUE.equals(isAutoplayEnabledLiveData.getValue())) return false;
         if (exoPlayer == null || !isDataSaverEligibleLibraryAvailable()) return false;
         List<Song> library = new ArrayList<>();
         List<Song> local = songsLiveData.getValue();
@@ -665,11 +727,16 @@ public class MusicViewModel extends AndroidViewModel {
     }
     
     private void persistLastIndex(int index) {
-        if (currentPlaylist == null || index < 0 || index >= currentPlaylist.size()) return;
-        String uriStr = currentPlaylist.get(index).getUri().toString();
+        String uriStr;
+        synchronized (this) {
+            List<Song> snapshot = snapshotPlaylist();
+            if (snapshot.isEmpty() || index < 0 || index >= snapshot.size()) return;
+            uriStr = snapshot.get(index).getUri().toString();
+        }
+        final String uri = uriStr;
         executorService.execute(() -> {
             getApplication().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                    .edit().putInt(KEY_LAST_INDEX, index).putString(KEY_LAST_URI, uriStr).commit();
+                    .edit().putInt(KEY_LAST_INDEX, index).putString(KEY_LAST_URI, uri).commit();
         });
     }
 
@@ -896,6 +963,17 @@ public class MusicViewModel extends AndroidViewModel {
         }
         favoriteIdsLiveData.postValue(restoredIds);
     }
+
+    /**
+     * Re-read favorites from prefs (shared storage, same process as the media
+     * session). Called when the notification's heart action toggles a song so
+     * in-app UI stays authoritative.
+     */
+    public void refreshFavoritesFromPrefs() {
+        loadFavoritesFromPrefs();
+        List<Song> songs = songsLiveData.getValue();
+        if (songs != null && !songs.isEmpty()) syncFavoritesWithSongs(songs);
+    }
     
     private void syncFavoritesWithSongs(List<Song> songs) {
         Set<Long> persistedIds = favoriteIdsLiveData.getValue();
@@ -926,14 +1004,24 @@ public class MusicViewModel extends AndroidViewModel {
             for (Long id : ids) stringSet.add(String.valueOf(id));
             getApplication().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                     .edit().putStringSet(KEY_FAV_IDS, stringSet).commit();
+            // Android 13+ SystemUI heart button reads prefs — refresh its icon.
+            com.nandu.mymusic.service.MusicPlaybackService.notifyMediaStateChange();
         });
     }
     
     // ── Playback / Queue / Custom Playlists / Deletion logic ───────────────────
     // 3. Apply shuffle behavior gracefully when starting a specific song
     public void playSong(Song song, List<Song> playlist) {
+        playSong(song, playlist, null);
+    }
+
+    /** Apple Music "Playing From {source}": records where the queue came from. */
+    public void playSong(Song song, List<Song> playlist, String source) {
         if (exoPlayer == null) return;
         userInteractedWithPlayback = true;
+        cancelSleepFade(); // starting fresh playback cancels any sleep fade
+        nowPlayingSourceLiveData.setValue(source != null ? source
+                : (song.getAlbum() != null ? song.getAlbum() : "Library"));
 
         if (song.getUri() != null) {
             String scheme = song.getUri().getScheme();
@@ -980,14 +1068,22 @@ public class MusicViewModel extends AndroidViewModel {
         endOfQueueLiveData.setValue(false);
         showEndDialogLiveData.setValue(false);
         persistLastIndex(currentIndex);
+        // Persist the "Playing From" label so it survives session restore.
+        executorService.execute(() -> {
+            String src = nowPlayingSourceLiveData.getValue();
+            getApplication().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                    .edit().putString(KEY_NP_SOURCE, src).apply();
+        });
     }
-    
+
     public void togglePlayPause() {
         userInteractedWithPlayback = true;
         // 🐛 FIX: Prevent hardware media buttons/headset clicks from bypassing the block
         if (Boolean.TRUE.equals(onlineSongBlockedLiveData.getValue())) return;
 
         if (exoPlayer == null) return;
+        // User resumed during a sleep-timer fade — cancel it and restore volume.
+        cancelSleepFade();
         if (exoPlayer.isPlaying()) exoPlayer.pause();
         else {
             // After a playback error the player sits in STATE_IDLE; play() alone is a no-op.
@@ -997,14 +1093,15 @@ public class MusicViewModel extends AndroidViewModel {
     }
     
     public void playNextFromMiniPlayer() { if (Boolean.TRUE.equals(onlineSongBlockedLiveData.getValue())) { restoreFromCacheAndPlayNext(); } else { advanceToNext(); } }
-    public void playNextFromFullPlayer()  { advanceToNext(); }
+    public void playNextFromFullPlayer()  { cancelSleepFade(); advanceToNext(); }
     
     private void advanceToNext() {
-        if (exoPlayer == null || currentPlaylist == null || currentPlaylist.isEmpty()) return;
+        List<Song> snapshot = snapshotPlaylist();
+        if (exoPlayer == null || snapshot.isEmpty()) return;
         // Always use ExoPlayer's actual index as source of truth for rapid clicks
         currentIndex = exoPlayer.getCurrentMediaItemIndex();
         int nextIndex = currentIndex + 1;
-        if (nextIndex >= currentPlaylist.size()) {
+        if (nextIndex >= snapshot.size()) {
             if (exoPlayer.getRepeatMode() == Player.REPEAT_MODE_ALL) nextIndex = 0;
             else {
                 exoPlayer.pause();
@@ -1014,7 +1111,7 @@ public class MusicViewModel extends AndroidViewModel {
                 return;
             }
         }
-        Song next = currentPlaylist.get(nextIndex);
+        Song next = snapshot.get(nextIndex);
         currentIndex = nextIndex;
         currentSongLiveData.setValue(next);
         progressLiveData.setValue(0L);
@@ -1025,11 +1122,14 @@ public class MusicViewModel extends AndroidViewModel {
     
     public void playPrevious() {
         if (exoPlayer == null) return;
+        cancelSleepFade(); // skipping cancels an in-progress fade-out
         if (Boolean.TRUE.equals(onlineSongBlockedLiveData.getValue())) {
             restoreFromCacheAndPlayPrevious();
             return;
         }
-        if (currentPlaylist == null || currentPlaylist.isEmpty()) return;
+        if (currentPlaylist == null) return;
+        List<Song> snapshot = snapshotPlaylist();
+        if (snapshot.isEmpty()) return;
         if (exoPlayer.getCurrentPosition() > 3000) {
             exoPlayer.seekTo(0);
             progressLiveData.postValue(0L);
@@ -1039,7 +1139,7 @@ public class MusicViewModel extends AndroidViewModel {
         currentIndex = exoPlayer.getCurrentMediaItemIndex();
         int prevIndex = currentIndex - 1;
         if (prevIndex < 0) prevIndex = 0;
-        Song prev = currentPlaylist.get(prevIndex);
+        Song prev = snapshot.get(prevIndex);
         currentIndex = prevIndex;
         currentSongLiveData.setValue(prev);
         progressLiveData.setValue(0L);
@@ -1158,9 +1258,12 @@ public class MusicViewModel extends AndroidViewModel {
     }
     
     public void playSongFromQueue(Song song) {
-        if (currentPlaylist == null || exoPlayer == null) return;
+        if (exoPlayer == null) return;
+        List<Song> snapshot = snapshotPlaylist();
+        if (snapshot.isEmpty()) return;
         userInteractedWithPlayback = true;
-        int index = currentPlaylist.indexOf(song);
+        cancelSleepFade(); // skipping cancels an in-progress fade-out
+        int index = snapshot.indexOf(song);
         if (index >= 0) {
             currentIndex = index;
             currentSongLiveData.setValue(song);
@@ -1355,10 +1458,15 @@ public class MusicViewModel extends AndroidViewModel {
     }
     
     public void playAllShuffled(List<Song> library) {
+        playAllShuffled(library, null);
+    }
+
+    public void playAllShuffled(List<Song> library, String source) {
         if (library == null || library.isEmpty()) return;
         if (exoPlayer == null) return;
         showEndDialogLiveData.setValue(false);
         endOfQueueLiveData.setValue(false);
+        nowPlayingSourceLiveData.setValue(source != null ? source : "Library");
         List<Song> shuffled = new ArrayList<>(library);
         Collections.shuffle(shuffled);
         userInteractedWithPlayback = true;
@@ -1386,8 +1494,13 @@ public class MusicViewModel extends AndroidViewModel {
     }
     
     public void playShuffled(List<Song> playlist) {
+        playShuffled(playlist, null);
+    }
+
+    public void playShuffled(List<Song> playlist, String source) {
         if (playlist == null || playlist.isEmpty()) return;
         if (exoPlayer == null) return;
+        nowPlayingSourceLiveData.setValue(source != null ? source : "Library");
         Song       currentSong = currentSongLiveData.getValue();
         List<Song> shuffled    = new ArrayList<>(playlist);
         int        nowIdx      = -1;
@@ -1950,8 +2063,8 @@ public class MusicViewModel extends AndroidViewModel {
                     executorService.execute(() -> {
                         List<Song> local = songsLiveData.getValue();
                         if (local != null && !local.isEmpty()) {
+                            // Self-publishing on main thread — no trailing publish here.
                             restoreLastSession(local);
-                            updateQueueUI();
                         }
                     });
                 }, 1000);
@@ -2020,8 +2133,7 @@ public class MusicViewModel extends AndroidViewModel {
             emitHotTracks();
             syncFavoritesWithSongs(local);
             generatePersonalizedMixes();
-            restoreLastSession(local);
-            updateQueueUI();
+            restoreLastSession(local); // self-publishes on main thread
             // If the service survived but syncUiFromPlayer ran before songs loaded,
             // the queue was never synced. Retry now that songsLiveData is populated.
             if (currentSongLiveData.getValue() == null
@@ -2096,20 +2208,36 @@ public class MusicViewModel extends AndroidViewModel {
             }
         }
 
-        // Rebuild currentPlaylist from ExoPlayer's media items
+        // Rebuild currentPlaylist from ExoPlayer's media items.
+        // Resolve by URI first — URIs are unique, while numeric IDs share one
+        // namespace between local (MediaStore._ID) and online (Firestore id)
+        // songs, so an id-only lookup can silently substitute a DIFFERENT
+        // song on collision. ID is only a fallback for URI-less items.
+        Map<String, Song> songByUri = new LinkedHashMap<>();
+        Map<Long, Song> songById = new LinkedHashMap<>();
+        for (Song s : allSongs) {
+            songByUri.put(s.getUri().toString(), s);
+            songById.putIfAbsent(s.getId(), s);
+        }
         List<Song> restoredQueue = new ArrayList<>();
         int resolvedIndex = -1;
         for (int i = 0; i < exoPlayer.getMediaItemCount(); i++) {
             MediaItem item = exoPlayer.getMediaItemAt(i);
             if (item == null) continue;
-            long id = Long.parseLong(item.mediaId);
-            for (Song s : allSongs) {
-                if (s.getId() == id) {
-                    restoredQueue.add(s);
-                    if (i == exoPlayer.getCurrentMediaItemIndex()) {
-                        resolvedIndex = restoredQueue.size() - 1;
-                    }
-                    break;
+            Song resolved = null;
+            if (item.localConfiguration != null && item.localConfiguration.uri != null) {
+                resolved = songByUri.get(item.localConfiguration.uri.toString());
+            }
+            if (resolved == null) {
+                try {
+                    long id = Long.parseLong(item.mediaId);
+                    resolved = songById.get(id);
+                } catch (NumberFormatException ignored) {}
+            }
+            if (resolved != null) {
+                restoredQueue.add(resolved);
+                if (i == exoPlayer.getCurrentMediaItemIndex()) {
+                    resolvedIndex = restoredQueue.size() - 1;
                 }
             }
         }
@@ -2131,8 +2259,10 @@ public class MusicViewModel extends AndroidViewModel {
     private void restoreLastSession(List<Song> localSongs) {
         if (localSongs == null || localSongs.isEmpty()) return;
         if (!sessionRestoreInProgress.compareAndSet(false, true)) return;
-        if (currentSongLiveData.getValue() != null) { sessionRestoreInProgress.set(false); return; }
-        if (exoPlayer != null && exoPlayer.getCurrentMediaItem() != null) { sessionRestoreInProgress.set(false); return; }
+        // NOTE: the old early guards (currentSong != null / player has media)
+        // ran on the EXECUTOR thread and could be stale by the time the result
+        // was applied — that race let a stale saved queue clobber a live one.
+        // All guards now run fresh on the main thread in the apply phase below.
 
         List<Song> allSongs = new ArrayList<>(localSongs);
         List<Song> online = allOnlineSongsLiveData.getValue();
@@ -2196,31 +2326,32 @@ public class MusicViewModel extends AndroidViewModel {
         if (resolvedIndex < 0 && lastIndex >= 0 && lastIndex < restoredQueue.size()) resolvedIndex = lastIndex;
         if (resolvedIndex < 0) { sessionRestoreInProgress.set(false); return; }
 
-        List<Song> snapshot;
-        synchronized (this) {
-            currentPlaylist = restoredQueue;
-            currentIndex    = resolvedIndex;
-            snapshot = new ArrayList<>(restoredQueue);
-        }
-        updateQueueUI();
-
-        List<MediaItem> items = new ArrayList<>();
-        for (Song s : snapshot) items.add(createMediaItem(s));
-
-        final List<Song> finalQueue = restoredQueue;
+        // ── PHASE 2: main thread — fresh guards, THEN mutate + publish. The old
+        // code assigned currentPlaylist and called updateQueueUI() on the executor
+        // BEFORE the abort checks, so a stale restored queue could clobber a queue
+        // the user had just started (the "queue resets to other songs" bug).
+        final List<Song> finalQueue = new ArrayList<>(restoredQueue);
         final int finalIndex = resolvedIndex;
         new Handler(Looper.getMainLooper()).post(() -> {
-            if (exoPlayer == null || userInteractedWithPlayback) {
-                sessionRestoreInProgress.set(false);
-                return;
-            }
-            synchronized (this) {
-                // Abort if the queue was replaced since (e.g. the user started playback) or
-                // the resolved index no longer matches — never clobber a newer user queue.
-                if (currentPlaylist != finalQueue || finalIndex < 0 || finalIndex >= currentPlaylist.size()) {
-                    sessionRestoreInProgress.set(false);
-                    return;
+            try {
+                if (exoPlayer == null || userInteractedWithPlayback) return;
+                // Fresh abort checks — the user may have started playback (or the
+                // player already had media) while the executor was resolving.
+                if (currentSongLiveData.getValue() != null) return;
+                if (exoPlayer.getCurrentMediaItem() != null) return;
+                // Never clobber a queue that exists since we resolved ours.
+                synchronized (this) {
+                    if (currentPlaylist != null && !currentPlaylist.isEmpty()) return;
                 }
+
+                List<MediaItem> items = new ArrayList<>();
+                for (Song s : finalQueue) items.add(createMediaItem(s));
+
+                synchronized (this) {
+                    currentPlaylist = finalQueue;
+                    currentIndex    = finalIndex;
+                }
+                updateQueueUI();
                 exoPlayer.setMediaItems(items, finalIndex, savedPosition);
                 exoPlayer.prepare();
                 new Handler(Looper.getMainLooper()).postDelayed(() -> {
@@ -2234,11 +2365,16 @@ public class MusicViewModel extends AndroidViewModel {
                 repeatModeLiveData.setValue(savedRepeat);
                 exoPlayer.setRepeatMode(savedRepeat);
                 progressLiveData.setValue(savedPosition);
+                // Apple Music "Playing From" — restore the label with the session.
+                String savedSource = prefs.getString(KEY_NP_SOURCE, null);
+                if (savedSource != null) nowPlayingSourceLiveData.setValue(savedSource);
+            } finally {
+                // Every path (including aborts) must release the guard.
+                sessionRestoreInProgress.set(false);
             }
             // Start progress polling so the bar updates when user plays
             progressHandler.removeCallbacks(progressRunnable);
             progressHandler.post(progressRunnable);
-            sessionRestoreInProgress.set(false);
         });
     }
     
@@ -2334,6 +2470,7 @@ public class MusicViewModel extends AndroidViewModel {
     }
     
     public void cancelSleepTimer() {
+        cancelSleepFade(); // restores volume if a fade is mid-flight
         if (sleepTimer != null) {
             sleepTimer.cancel();
             sleepTimer = null;
@@ -2346,10 +2483,45 @@ public class MusicViewModel extends AndroidViewModel {
     }
     
     private void triggerSleepTimerAction() {
-        if (exoPlayer != null) {
-            exoPlayer.pause();
+        // Don't cancel the timer yet: the fade must finish cleanly either way.
+        if (exoPlayer == null) { cancelSleepTimer(); return; }
+        sleepFadeActive = true;
+        volBeforeSleepFade = Math.min(1f, exoPlayer.getVolume());
+        sleepFadeTimer = new android.os.CountDownTimer(SLEEP_FADE_MS, SLEEP_FADE_TICK_MS) {
+            @Override
+            public void onTick(long millisUntilFinished) {
+                if (!sleepFadeActive || exoPlayer == null) return;
+                float ratio = millisUntilFinished / (float) SLEEP_FADE_MS;
+                exoPlayer.setVolume(volBeforeSleepFade * Math.max(0f, ratio));
+            }
+            @Override
+            public void onFinish() {
+                if (sleepFadeActive) {
+                    if (exoPlayer != null) {
+                        exoPlayer.pause();
+                        exoPlayer.setVolume(volBeforeSleepFade);
+                    }
+                    sleepFadeActive = false;
+                }
+                sleepFadeTimer = null;
+                cancelSleepTimer();
+            }
+        }.start();
+    }
+
+    /**
+     * Aborts an in-flight sleep fade and restores the pre-fade volume. Called
+     * from every user-initiated play so a fade never hijacks a resume.
+     */
+    private void cancelSleepFade() {
+        if (sleepFadeTimer != null) {
+            sleepFadeTimer.cancel();
+            sleepFadeTimer = null;
         }
-        cancelSleepTimer();
+        if (sleepFadeActive) {
+            sleepFadeActive = false;
+            if (exoPlayer != null) exoPlayer.setVolume(volBeforeSleepFade);
+        }
     }
     
     @Override
@@ -2357,6 +2529,7 @@ public class MusicViewModel extends AndroidViewModel {
         // Persist position BEFORE shutting the executor down — persistLastPosition submits
         // to it, and submitting after shutdown() throws RejectedExecutionException.
         if (exoPlayer != null) persistLastPosition(exoPlayer.getCurrentPosition());
+        appPrefs.unregisterOnSharedPreferenceChangeListener(favoritesPrefsListener);
 
         getApplication().getContentResolver().unregisterContentObserver(contentObserver);
         handler.removeCallbacks(reloadRunnable);

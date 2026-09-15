@@ -18,6 +18,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.RequiresApi
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModelProvider
+import com.nandu.mymusic.service.MusicPlaybackService
 import com.nandu.mymusic.ui.screens.library.MusicLibraryScreen
 import com.nandu.mymusic.ui.theme.AppleMusicTheme
 import com.nandu.mymusic.utils.AppLog
@@ -28,8 +29,19 @@ class MainActivity : ComponentActivity() {
     private lateinit var permissionLauncher: ActivityResultLauncher<String>
     private lateinit var musicViewModel: MusicViewModel
 
+    // Favorites toggled from the system media notification (Android 13+ custom
+    // layout) — re-sync the app's in-memory heart state with the service write.
+    private val favoritesChangedReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (intent.action == MusicPlaybackService.ACTION_FAVORITES_CHANGED) {
+                musicViewModel.refreshFavoritesFromPrefs()
+            }
+        }
+    }
+
     private val downloadCompleteReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
+
             if (intent.action == DownloadManager.ACTION_DOWNLOAD_COMPLETE) {
                 AppLog.d(AppLog.REPO, "Download complete — refreshing local music")
                 musicViewModel.loadLocalMusic()
@@ -65,12 +77,16 @@ class MainActivity : ComponentActivity() {
         val downloadFilter = IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE)
         registerReceiver(downloadCompleteReceiver, downloadFilter, RECEIVER_NOT_EXPORTED)
 
+        val favoritesFilter = IntentFilter(MusicPlaybackService.ACTION_FAVORITES_CHANGED)
+        registerReceiver(favoritesChangedReceiver, favoritesFilter, RECEIVER_NOT_EXPORTED)
+
         checkStoragePermission()
     }
 
     override fun onDestroy() {
         super.onDestroy()
         unregisterReceiver(downloadCompleteReceiver)
+        unregisterReceiver(favoritesChangedReceiver)
     }
 
     private fun checkStoragePermission() {

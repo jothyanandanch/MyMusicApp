@@ -23,9 +23,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -33,7 +31,6 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.VerticalPager
@@ -43,19 +40,11 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.QueueMusic
+import androidx.compose.material.icons.automirrored.filled.VolumeDown
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -67,6 +56,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -77,20 +67,26 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.media3.common.Player
 import com.nandu.mymusic.model.Song
 import com.nandu.mymusic.ui.components.AlbumArt
+import com.nandu.mymusic.ui.components.AppleMenu
+import com.nandu.mymusic.ui.components.AppleMenuAction
+import com.nandu.mymusic.ui.components.AudioRoute
+import com.nandu.mymusic.ui.components.MediaOutputSheet
 import com.nandu.mymusic.ui.components.NowPlayingBackdrop
+import com.nandu.mymusic.ui.components.currentAudioRoute
 import com.nandu.mymusic.utils.parseLrc
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import androidx.compose.ui.platform.LocalLocale
 import com.nandu.mymusic.ui.theme.appleColors
 
 /**
  * Apple Music Now Playing replica:
  * - Two-page vertical pager — page 0: player; page 1: "Playing Next" queue.
- *   Swipe up/down (or tap the queue icon) to move between them, like iOS.
- * - Lyrics toggle lives in the TOP BAR (always reachable); lyrics swap the
- *   middle section for a full takeover while scrubber/transport stay pinned.
- * - Art-derived dynamic gradient backdrop, always-white content.
- * - Drag down on the top bar to dismiss (velocity handoff + rubber-band).
+ * - Top bar: collapse | PLAYING FROM {source} | favorite + iOS popover menu
+ *   (Sleep Timer with live countdown, View Album/Artist, Add to Playlist,
+ *   Download/Edit/Delete).
+ * - Long-press drag reordering on the queue, pull-down header to collapse,
+ *   Apple Music Autoplay (∞) + Clear in the queue header.
+ * - Dynamic output button (bottom-left) shows the active route icon.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -104,6 +100,11 @@ fun NowPlayingScreen(
     repeatMode       : Int,
     shuffleMode      : Boolean,
     isFavorite       : Boolean,
+    nowPlayingSource : String? = null,
+    isSleepTimerActive: Boolean = false,
+    sleepTimerRemainingMs: Long = 0L,
+    sleepTimerTracksRemaining: Int = -1,
+    isAutoplayEnabled: Boolean = false,
     onBack           : () -> Unit,
     onTogglePlayPause: () -> Unit,
     onNext           : () -> Unit,
@@ -115,22 +116,24 @@ fun NowPlayingScreen(
     onQueueItemClick : (Song) -> Unit,
     onQueueItemRemove: (Song) -> Unit,
     onQueueItemReorder: (Int, Int) -> Unit,
-    onClearQueue      : () -> Unit = {},
+    onClearQueue     : () -> Unit = {},
+    onToggleAutoplay : () -> Unit = {},
     onAddToPlaylist  : () -> Unit = {},
     onLoadLyrics     : () -> Unit = {},
     onDelete         : () -> Unit = {},
     onViewAlbum      : () -> Unit = {},
     onViewArtist     : () -> Unit = {},
     onDownload       : () -> Unit = {},
-    isSleepTimerActive: Boolean = false,
     onStartSleepTimerTime: (Int) -> Unit = {},
     onStartSleepTimerTracks: (Int) -> Unit = {},
+    onStartSleepTimerQueueEnd: () -> Unit = {},
     onCancelSleepTimer: () -> Unit = {}
 ) {
     var showSleepTimer by remember { mutableStateOf(false) }
     var selectedTimerOption by remember { mutableStateOf<String?>(null) }
-    var showAirPlaySheet by remember { mutableStateOf(false) }
+    var showOutputSheet by remember { mutableStateOf(false) }
     val C = appleColors()
+    val sleepStatus = sleepTimerStatusLabel(isSleepTimerActive, sleepTimerRemainingMs, sleepTimerTracksRemaining)
     // Clear the checkmark when the timer expires or is cancelled externally
     LaunchedEffect(isSleepTimerActive) { if (!isSleepTimerActive) selectedTimerOption = null }
     val rawFraction = if (duration > 0) (progress.toFloat() / duration.toFloat()).coerceIn(0f, 1f) else 0f
@@ -151,6 +154,9 @@ fun NowPlayingScreen(
     var initialDraggedIndex by remember { mutableStateOf<Int?>(null) }
     var draggedDistance by remember { mutableStateOf(0f) }
     val haptic = LocalHapticFeedback.current
+    // Hold the local preview order while a drop is pending (draggedItemIndex
+    // non-null) so the row never appears to fly back before animating into
+    // its slot — fixes the rubber-band "returning to position" on drop.
     LaunchedEffect(queue) { if (draggedItemIndex == null) localQueue = queue }
     val currentIdx = localQueue.indexOfFirst { it.id == song.id }
     val upcomingSongs = remember(localQueue, currentIdx) {
@@ -166,14 +172,44 @@ fun NowPlayingScreen(
     var hasCenteredQueue by remember { mutableStateOf(false) }
     LaunchedEffect(pagerState.currentPage) {
         if (pagerState.currentPage == 1 && !hasCenteredQueue) {
-            // Land on the currently-playing row (first item of the queue list).
             queueListState.scrollToItem(0)
             hasCenteredQueue = true
         }
     }
+    // Queue-page pull-down (collapses back to the player like iOS).
+    val pagerDragOffset = remember { Animatable(0f) }
 
     /** Drag-to-dismiss gesture (top bar only, like Apple — never fights the scroll). */
     val dismissDrag = Modifier.pointerInput(Unit) {
+        detectVerticalDragGestures(
+            onDragStart = { velocityTracker.resetTracking() },
+            onVerticalDrag = { change, dragAmount ->
+                change.consume()
+                velocityTracker.addPosition(change.uptimeMillis, change.position)
+                val raw = offsetY.value + dragAmount
+                val newOffset = if (raw < 0f) raw * 0.35f else raw
+                coroutineScope.launch { offsetY.snapTo(newOffset) }
+            },
+            onDragEnd = {
+                val velocity = velocityTracker.calculateVelocity().y
+                coroutineScope.launch {
+                    if (offsetY.value > 400f || velocity > 1250f) {
+                        offsetY.animateTo(screenH, tween(220))
+                        onBack()
+                    } else {
+                        offsetY.animateTo(0f, spring(dampingRatio = 1f, stiffness = Spring.StiffnessMediumLow))
+                    }
+                }
+            },
+            onDragCancel = {
+                coroutineScope.launch { offsetY.animateTo(0f, spring(dampingRatio = 1f, stiffness = Spring.StiffnessMediumLow)) }
+            }
+        )
+    }
+
+    // Artwork variant: only intercept DOWNWARD drags (dismiss). Upward swipes
+    // remain unconsumed so the VerticalPager can take them (swipe up → queue).
+    val artworkDismissDrag = Modifier.pointerInput(Unit) {
         detectVerticalDragGestures(
             onDragStart = { velocityTracker.resetTracking() },
             onVerticalDrag = { change, dragAmount ->
@@ -211,9 +247,7 @@ fun NowPlayingScreen(
 
         Column(modifier = Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(horizontal = 24.dp)) {
 
-            // ── TOP BAR: chevron | PLAYING FROM | lyrics + more ──
-            // The lyrics toggle lives here so it is ALWAYS reachable
-            // (this was the bug: it used to live inside the player branch).
+            // ── TOP BAR: chevron | PLAYING FROM {source} | heart + menu ──
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -227,29 +261,40 @@ fun NowPlayingScreen(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier.weight(1f).padding(horizontal = 12.dp)
                 ) {
-                    Text("PLAYING FROM YOUR LIBRARY", color = Color.White.copy(alpha = 0.5f), fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(song.album ?: "Unknown Album", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text("PLAYING FROM", color = Color.White.copy(alpha = 0.5f), fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(nowPlayingSource?.takeIf { it.isNotBlank() } ?: song.album ?: "Your Library", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
-                Box {
-                    IconButton(onClick = { showMenu = true }) {
-                        // Apple's ellipsis.circle glyph (dots inside a circle ring)
-                        Icon(Icons.Filled.MoreHoriz, "More", tint = Color.White, modifier = Modifier.size(22.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = onToggleFavorite) {
+                        Icon(
+                            imageVector = if (isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
+                            contentDescription = if (isFavorite) "Remove from Favorites" else "Add to Favorites",
+                            tint = if (isFavorite) C.accent else Color.White.copy(alpha = 0.85f),
+                            modifier = Modifier.size(22.dp)
+                        )
                     }
-                    DropdownMenu(
-                        expanded = showMenu,
-                        onDismissRequest = { showMenu = false },
-                        modifier = Modifier.background(C.cardElevated)
-                    ) {
-                        DropdownMenuItem(text = { Text("View Album", color = C.label) }, onClick = { showMenu = false; onViewAlbum() })
-                        DropdownMenuItem(text = { Text("View Artist", color = C.label) }, onClick = { showMenu = false; onViewArtist() })
-                        DropdownMenuItem(text = { Text("Add to Playlist", color = C.label) }, onClick = { showMenu = false; onAddToPlaylist() })
-                        DropdownMenuItem(text = { Text("Sleep Timer", color = C.label) }, onClick = { showMenu = false; showSleepTimer = true })
-                        if (isOnline) {
-                            DropdownMenuItem(text = { Text("Download Song", color = C.label) }, onClick = { showMenu = false; onDownload() })
-                        } else {
-                            DropdownMenuItem(text = { Text("Edit Song Info", color = C.label) }, onClick = { showMenu = false; /* TODO: Implement Edit */ })
-                            DropdownMenuItem(text = { Text("Delete Song", color = C.destructive) }, onClick = { showMenu = false; onDelete() })
+                    Box {
+                        IconButton(onClick = { showMenu = true }) {
+                            Icon(Icons.Filled.MoreHoriz, "More", tint = Color.White, modifier = Modifier.size(22.dp))
                         }
+                        AppleMenu(
+                            expanded = showMenu,
+                            onDismissRequest = { showMenu = false },
+                            actions = buildList {
+                                add(AppleMenuAction(
+                                    label = if (sleepStatus != null) "Sleep Timer — $sleepStatus" else "Sleep Timer",
+                                    icon = Icons.Filled.Bedtime
+                                ) { showSleepTimer = true })
+                                add(AppleMenuAction("View Album", Icons.Filled.Album) { onViewAlbum() })
+                                add(AppleMenuAction("View Artist", Icons.Filled.Person) { onViewArtist() })
+                                add(AppleMenuAction("Add to Playlist", Icons.Filled.PlaylistAdd) { onAddToPlaylist() })
+                                if (isOnline) {
+                                    add(AppleMenuAction("Download Song", Icons.Filled.Download) { onDownload() })
+                                } else {
+                                    add(AppleMenuAction("Delete Song", Icons.Filled.Delete, isDestructive = true) { onDelete() })
+                                }
+                            }
+                        )
                     }
                 }
             }
@@ -278,9 +323,19 @@ fun NowPlayingScreen(
                                 }
                             } else {
                                 Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center) {
-                                    // Square art that fits both width and remaining height
+                                    // Square art that fits both width and remaining height.
+                                    // Swipe DOWN on the art dismisses the player (Apple);
+                                    // swipe UP still pages to the queue.
                                     Box(modifier = Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
-                                        Box(modifier = Modifier.aspectRatio(1f).fillMaxSize().clip(RoundedCornerShape(12.dp)).background(Color.Black.copy(alpha = 0.3f)), contentAlignment = Alignment.Center) {
+                                        Box(
+                                            modifier = Modifier
+                                                .aspectRatio(1f)
+                                                .fillMaxSize()
+                                                .then(artworkDismissDrag)
+                                                .clip(RoundedCornerShape(12.dp))
+                                                .background(Color.Black.copy(alpha = 0.3f)),
+                                            contentAlignment = Alignment.Center
+                                        ) {
                                             AlbumArt(song = song, audioUri = song.uri, isActive = true, size = null, cornerRadius = 12.dp, modifier = Modifier.fillMaxSize())
                                         }
                                     }
@@ -300,8 +355,7 @@ fun NowPlayingScreen(
                         // Pinned controls (always visible on the player page)
                         ScrubberSection(onSeek = onSeek, rawFraction = rawFraction, progress = progress, duration = duration)
                         VolumeSlider(modifier = Modifier.padding(vertical = 2.dp))
-                        Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                            IconButton(onClick = onToggleShuffle) { Icon(Icons.Filled.Shuffle, "Shuffle", tint = if (shuffleMode) C.accent else Color.White, modifier = Modifier.size(22.dp)) }
+                        Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(20.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically) {
                             Box(
                                 modifier = Modifier.size(56.dp).clip(CircleShape).clickable(onClick = onPrevious),
                                 contentAlignment = Alignment.Center
@@ -314,13 +368,24 @@ fun NowPlayingScreen(
                                 modifier = Modifier.size(56.dp).clip(CircleShape).clickable(onClick = onNext),
                                 contentAlignment = Alignment.Center
                             ) { Icon(Icons.Filled.SkipNext, "Next", tint = Color.White, modifier = Modifier.size(34.dp)) }
-                            IconButton(onClick = onToggleRepeat) { Icon(imageVector = if (repeatMode == Player.REPEAT_MODE_ONE) Icons.Filled.RepeatOne else Icons.Filled.Repeat, contentDescription = "Repeat", tint = if (repeatMode != Player.REPEAT_MODE_OFF) C.accent else Color.White, modifier = Modifier.size(22.dp)) }
                         }
                         Row(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                            // AirPlay — Apple's exact bottom-left slot. Opens the
-                            // iOS-style output picker (with the sleep timer inside).
-                            IconButton(onClick = { showAirPlaySheet = true }) {
-                                Icon(Icons.Filled.Airplay, "AirPlay", tint = Color.White, modifier = Modifier.size(22.dp))
+                            // Dynamic output button — icon reflects the ACTIVE route
+                            // (Apple Music behavior), opens the iOS-style picker.
+                            var outputRoute by remember { mutableStateOf(currentAudioRoute(context)) }
+                            LaunchedEffect(showOutputSheet) {
+                                while (true) {
+                                    outputRoute = currentAudioRoute(context)
+                                    delay(1000)
+                                }
+                            }
+                            IconButton(onClick = { showOutputSheet = true }) {
+                                val (routeIcon, routeDesc) = when (outputRoute) {
+                                    AudioRoute.BLUETOOTH -> Icons.Filled.BluetoothAudio to "Bluetooth"
+                                    AudioRoute.WIRED -> Icons.Filled.Headphones to "Headphones"
+                                    AudioRoute.SPEAKER -> Icons.Filled.VolumeUp to "Speaker"
+                                }
+                                Icon(routeIcon, routeDesc, tint = Color.White, modifier = Modifier.size(22.dp))
                             }
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 // Apple's quote.bubble lyrics glyph (bottom-right pair)
@@ -335,25 +400,84 @@ fun NowPlayingScreen(
                         }
                     }
                 } else {
-                    // ── PAGE 1: PLAYING NEXT (full-screen queue) ──
+                    // -- PAGE 1: PLAYING NEXT (full-screen queue) --
                     Column(modifier = Modifier.fillMaxSize()) {
+                        // Grabber + header: pull DOWN anywhere here to collapse back
+                        // to the player — no need to scroll the list to the top first.
+                        var headerPull by remember { mutableStateOf(0f) }
+                        val headerDrag = Modifier.pointerInput(Unit) {
+                            detectVerticalDragGestures(
+                                onDragStart = { headerPull = 0f },
+                                onVerticalDrag = { change, amount ->
+                                    if (amount > 0f) {
+                                        change.consume()
+                                        headerPull += amount
+                                        coroutineScope.launch { pagerDragOffset.snapTo(headerPull.coerceAtMost(150f)) }
+                                    }
+                                },
+                                onDragEnd = {
+                                    coroutineScope.launch {
+                                        if (headerPull > 36f) {
+                                            pagerState.animateScrollToPage(0)
+                                        }
+                                        headerPull = 0f
+                                        pagerDragOffset.snapTo(0f)
+                                    }
+                                },
+                                onDragCancel = {
+                                    headerPull = 0f
+                                    coroutineScope.launch { pagerDragOffset.animateTo(0f, tween(180)) }
+                                }
+                            )
+                        }
                         // Grabber, like the iOS queue page
-                        Box(modifier = Modifier.fillMaxWidth().padding(top = 6.dp, bottom = 2.dp), contentAlignment = Alignment.Center) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .then(headerDrag)
+                                .padding(top = 6.dp, bottom = 2.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
                             Box(modifier = Modifier.width(36.dp).height(5.dp).clip(RoundedCornerShape(2.5.dp)).background(Color.White.copy(alpha = 0.3f)))
                         }
-                        Row(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .then(headerDrag)
+                                .padding(vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
                             IconButton(onClick = { coroutineScope.launch { pagerState.animateScrollToPage(0) } }) {
                                 Icon(Icons.Filled.KeyboardArrowDown, "Back to player", tint = C.accent, modifier = Modifier.size(28.dp))
                             }
                             Spacer(Modifier.width(4.dp))
-                            Column {
+                            Column(modifier = Modifier.weight(1f)) {
                                 Text("Playing Next", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 20.sp)
-                                Text("From your library", color = Color.White.copy(alpha = 0.5f), fontSize = 13.sp)
+                                Text("From ${nowPlayingSource?.takeIf { it.isNotBlank() } ?: "your library"}", color = Color.White.copy(alpha = 0.5f), fontSize = 13.sp)
+                            }
+                            // ∞ Autoplay (Apple Music header-right placement)
+                            IconButton(onClick = onToggleAutoplay) {
+                                Icon(
+                                    Icons.Filled.AllInclusive,
+                                    "Autoplay",
+                                    tint = if (isAutoplayEnabled) C.accent else Color.White.copy(alpha = 0.6f),
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+                            if (upcomingSongs.isNotEmpty()) {
+                                TextButton(
+                                    onClick = onClearQueue,
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                                ) {
+                                    Text("Clear", color = Color.White.copy(alpha = 0.85f), fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                                }
                             }
                         }
                         LazyColumn(
                             state = queueListState,
-                            modifier = Modifier.fillMaxSize()
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .graphicsLayer { translationY = pagerDragOffset.value * 0.15f }
                                 .pointerInput(localQueue.size) {
                                     // Long-press drag reordering (Apple Music style)
                                     detectDragGesturesAfterLongPress(
@@ -410,7 +534,7 @@ fun NowPlayingScreen(
                                             val lastVisible = queueListState.layoutInfo.visibleItemsInfo.lastOrNull()
                                             val firstVisible = queueListState.layoutInfo.visibleItemsInfo.firstOrNull()
                                             if (lastVisible != null && change.position.y > lastVisible.offset + lastVisible.size - scrollThreshold) {
-                                                coroutineScope.launch { queueListState.scrollToItem((lastVisible.index + 1).coerceAtMost(queueListState.layoutInfo.totalItemsCount - 1)) }
+                                                coroutineScope.launch { queueListState.scrollToItem((lastVisible.index + 3).coerceAtMost(queueListState.layoutInfo.totalItemsCount - 1)) }
                                             } else if (firstVisible != null && change.position.y < firstVisible.offset + scrollThreshold) {
                                                 coroutineScope.launch { queueListState.scrollToItem((firstVisible.index - 1).coerceAtLeast(0)) }
                                             }
@@ -418,10 +542,12 @@ fun NowPlayingScreen(
                                         onDragEnd = {
                                             val from = initialDraggedIndex
                                             val to = draggedItemIndex
+                                            draggedItemIndex = null
+                                            initialDraggedIndex = null
+                                            draggedDistance = 0f
                                             if (from != null && to != null && from != to && from in localQueue.indices && to in localQueue.indices) {
                                                 onQueueItemReorder(from, to)
                                             }
-                                            draggedItemIndex = null; initialDraggedIndex = null; draggedDistance = 0f
                                         },
                                         onDragCancel = {
                                             draggedItemIndex = null; initialDraggedIndex = null; draggedDistance = 0f; localQueue = queue
@@ -430,6 +556,33 @@ fun NowPlayingScreen(
                                 },
                             contentPadding = PaddingValues(bottom = 24.dp)
                         ) {
+                            // Shuffle / Repeat pair at the head of the queue list
+                            // (Apple Music layout), then the pinned current row.
+                            item(key = "playing_controls") {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
+                                    QueueControlButton(
+                                        label = if (shuffleMode) "Shuffle On" else "Shuffle",
+                                        icon = Icons.Filled.Shuffle,
+                                        active = shuffleMode,
+                                        onClick = onToggleShuffle,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    QueueControlButton(
+                                        label = when (repeatMode) {
+                                            Player.REPEAT_MODE_ONE -> "Repeat One"
+                                            Player.REPEAT_MODE_ALL -> "Repeat All"
+                                            else -> "Repeat"
+                                        },
+                                        icon = if (repeatMode == Player.REPEAT_MODE_ONE) Icons.Filled.RepeatOne else Icons.Filled.Repeat,
+                                        active = repeatMode != Player.REPEAT_MODE_OFF,
+                                        onClick = onToggleRepeat,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                }
+                            }
                             // Apple keeps the current track as the first, non-interactive
                             // queue row with the red playing indicator.
                             item(key = "cur_${song.id}") {
@@ -458,7 +611,8 @@ fun NowPlayingScreen(
                                     song = s,
                                     onClick = { onQueueItemClick(s) },
                                     onRemove = { onQueueItemRemove(s) },
-                                    isDragging = draggedItemIndex != null && localQueue.getOrNull(draggedItemIndex ?: -1)?.id == s.id
+                                    isDragging = draggedItemIndex != null && localQueue.getOrNull(draggedItemIndex ?: -1)?.id == s.id &&
+                                        s.id == localQueue.getOrNull(initialDraggedIndex ?: -1)?.id
                                 )
                             }
                         }
@@ -468,30 +622,29 @@ fun NowPlayingScreen(
         }
     }
 
-    // iOS-style AirPlay output picker (Apple's bottom-left slot behavior)
-    if (showAirPlaySheet) {
-        AirPlayOutputSheet(
-            onDismiss = { showAirPlaySheet = false }
-        )
+    // ── Output picker (Apple Music style) ──
+    if (showOutputSheet) {
+        MediaOutputSheet(onDismiss = { showOutputSheet = false })
     }
 
-    // Render the sleep timer at the bottom of the Box
+    // ── Sleep timer sheet ──
     if (showSleepTimer) {
         SleepTimerSheet(
             isTimerActive = isSleepTimerActive,
             selectedOption = selectedTimerOption,
+            liveStatus = sleepStatus,
             onSelectOption = { label ->
                 when (label) {
-                    "When Current Song Ends" -> onStartSleepTimerTracks(1)
-                    "5 Minutes" -> onStartSleepTimerTime(5)
-                    "10 Minutes" -> onStartSleepTimerTime(10)
-                    "15 Minutes" -> onStartSleepTimerTime(15)
-                    "30 Minutes" -> onStartSleepTimerTime(30)
-                    "45 Minutes" -> onStartSleepTimerTime(45)
-                    "1 Hour" -> onStartSleepTimerTime(60)
-                    "2 Hours" -> onStartSleepTimerTime(120)
+                    "When Current Song Ends" -> { onStartSleepTimerTracks(1); selectedTimerOption = label }
+                    "End of Queue" -> { onStartSleepTimerQueueEnd(); selectedTimerOption = label }
+                    "5 Minutes" -> { onStartSleepTimerTime(5); selectedTimerOption = label }
+                    "10 Minutes" -> { onStartSleepTimerTime(10); selectedTimerOption = label }
+                    "15 Minutes" -> { onStartSleepTimerTime(15); selectedTimerOption = label }
+                    "30 Minutes" -> { onStartSleepTimerTime(30); selectedTimerOption = label }
+                    "45 Minutes" -> { onStartSleepTimerTime(45); selectedTimerOption = label }
+                    "1 Hour" -> { onStartSleepTimerTime(60); selectedTimerOption = label }
+                    "2 Hours" -> { onStartSleepTimerTime(120); selectedTimerOption = label }
                 }
-                selectedTimerOption = label
                 showSleepTimer = false
             },
             onCancelTimer = {
@@ -504,89 +657,62 @@ fun NowPlayingScreen(
     }
 }
 
-// ── iOS AirPlay-style audio output picker ──────────────────────────────
-@OptIn(ExperimentalMaterial3Api::class)
+/** Equal-width queue control buttons (Shuffle / Repeat) — Apple layout. */
 @Composable
-fun AirPlayOutputSheet(
-    onDismiss: () -> Unit
+private fun QueueControlButton(
+    label: String,
+    icon: ImageVector,
+    active: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     val C = appleColors()
-    val context = LocalContext.current
-    val audioManager = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
-
-    // Real output devices: paired Bluetooth A2DP devices (headphones, speakers,
-    // car kits). Android routes via the system panel — we present the inventory
-    // iOS shows and offer the system router dialog for actual switching.
-    val bluetoothDevices = remember {
-        try {
-            val bt = context.getSystemService(Context.BLUETOOTH_SERVICE) as? android.bluetooth.BluetoothManager
-            bt?.adapter?.bondedDevices
-                ?.filter { it.bluetoothClass?.hasService(android.bluetooth.BluetoothClass.Service.AUDIO) == true }
-                ?.map { AirPlayDevice(it.name ?: "Bluetooth Device", true) }
-                ?: emptyList()
-            } catch (e: SecurityException) { emptyList() }
-    }
-    var routedDeviceName by remember { mutableStateOf<String?>(null) }
-
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState,
-        containerColor = C.cardElevated
-    ) {
-        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
-            Text("Audio Output", color = C.label, fontWeight = FontWeight.Bold, fontSize = 20.sp)
-
-            Spacer(Modifier.height(14.dp))
-
-            // ── This Phone (always present, iOS-style) ──
-            OutputDeviceRow(
-                name = "This Phone",
-                icon = Icons.Filled.Smartphone,
-                selected = routedDeviceName == null,
-                onClick = { routedDeviceName = null }
-            )
-            bluetoothDevices.forEach { device ->
-                OutputDeviceRow(
-                    name = device.name,
-                    icon = Icons.Filled.BluetoothAudio,
-                    selected = routedDeviceName == device.name,
-                    onClick = { routedDeviceName = device.name }
-                )
-            }
-            if (bluetoothDevices.isEmpty()) {
-                Text(
-                    "No Bluetooth audio devices paired",
-                    color = C.secondaryLabel, fontSize = 13.sp,
-                    modifier = Modifier.padding(start = 44.dp, bottom = 8.dp)
-                )
-            }
-
-            Spacer(Modifier.height(28.dp))
-        }
-    }
-}
-
-data class AirPlayDevice(val name: String, val isBluetooth: Boolean)
-
-@Composable
-fun OutputDeviceRow(name: String, icon: ImageVector, selected: Boolean, onClick: () -> Unit) {
-    val C = appleColors()
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
+        modifier = modifier
+            .clip(RoundedCornerShape(10.dp))
             .clickable(onClick = onClick)
+            .background(if (active) C.accent.copy(alpha = 0.25f) else Color.White.copy(alpha = 0.08f))
             .padding(vertical = 10.dp),
+        horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(icon, null, tint = C.label, modifier = Modifier.size(22.dp))
-        Spacer(Modifier.width(14.dp))
-        Text(name, color = C.label, fontSize = 16.sp, modifier = Modifier.weight(1f))
-        if (selected) Icon(Icons.Filled.Check, "Selected", tint = C.accent, modifier = Modifier.size(20.dp))
+        Icon(
+            icon,
+            contentDescription = label,
+            tint = if (active) C.accent else Color.White.copy(alpha = 0.7f),
+            modifier = Modifier.size(18.dp)
+        )
+        Spacer(Modifier.width(7.dp))
+        Text(
+            label,
+            color = if (active) C.accent else Color.White.copy(alpha = 0.7f),
+            fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold
+        )
     }
 }
 
-// ── System volume slider (Apple pins one under the transport) ─────────
+/** "12:34" / "2 songs left" / "End of queue" — live status for menu + sheet. */
+@Composable
+fun sleepTimerStatusLabel(
+    active: Boolean,
+    remainingMs: Long,
+    tracksRemaining: Int
+): String? {
+    if (!active) return null
+    return when {
+        tracksRemaining > 0 -> "$tracksRemaining song${if (tracksRemaining == 1) "" else "s"} left"
+        tracksRemaining == 0 -> "Stopping soon"
+        remainingMs > 0 -> {
+            val totalSecs = (remainingMs + 999L) / 1000L
+            val m = totalSecs / 60
+            val s = totalSecs % 60
+            "%d:%02d".format(m, s)
+        }
+        else -> "End of queue"
+    }
+}
+
 @Composable
 fun VolumeSlider(modifier: Modifier = Modifier) {
     val context = LocalContext.current
@@ -606,7 +732,7 @@ fun VolumeSlider(modifier: Modifier = Modifier) {
     }
 
     Row(modifier = modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Icon(Icons.Filled.VolumeDown, null, tint = Color.White.copy(alpha = 0.6f), modifier = Modifier.size(16.dp))
+        Icon(Icons.AutoMirrored.Filled.VolumeDown, null, tint = Color.White.copy(alpha = 0.6f), modifier = Modifier.size(16.dp))
         // Thin 3dp track, no thumb — iOS slider proportions
         BoxWithConstraints(
             modifier = Modifier.weight(1f).height(28.dp).pointerInput(Unit) {
@@ -643,11 +769,11 @@ fun VolumeSlider(modifier: Modifier = Modifier) {
                 )
             }
         }
-        Icon(Icons.Filled.VolumeUp, null, tint = Color.White.copy(alpha = 0.6f), modifier = Modifier.size(20.dp))
+        Icon(Icons.AutoMirrored.Filled.VolumeUp, null, tint = Color.White.copy(alpha = 0.6f), modifier = Modifier.size(20.dp))
     }
 }
 
-// ─── Downstream Queueing logic and Lyrics ─────────
+// --- Synced lyrics (Apple Music type scale: huge active vs dimmed lines) ---
 @Composable
 fun SyncedLyricsView(lyricsText: String?, progress: Long, onSeek: (Long) -> Unit, modifier: Modifier = Modifier) {
     val lyricsLines = remember(lyricsText) { parseLrc(lyricsText) }
@@ -675,15 +801,18 @@ fun SyncedLyricsView(lyricsText: String?, progress: Long, onSeek: (Long) -> Unit
         itemsIndexed(lyricsLines) { index, line ->
             val isActive = index == activeIndex
             Text(
-                text = line.text.ifEmpty { "♪" }, color = if (isActive) Color.White else Color.White.copy(alpha = 0.45f), fontSize = if (isActive) 24.sp else 20.sp,
+                text = line.text.ifEmpty { "♪" },
+                color = if (isActive) Color.White else Color.White.copy(alpha = 0.38f),
+                fontSize = if (isActive) 26.sp else 22.sp,
                 fontWeight = if (isActive) FontWeight.Bold else FontWeight.SemiBold,
-                modifier = Modifier.fillMaxWidth().clickable { onSeek(line.startTimeMs) }.padding(vertical = 12.dp)
+                lineHeight = if (isActive) 32.sp else 28.sp,
+                modifier = Modifier.fillMaxWidth().clickable { onSeek(line.startTimeMs) }.padding(vertical = 14.dp)
             )
         }
     }
 }
 
-// ── Scrubber with time labels (extracted; identical gesture engine) ──
+// -- Scrubber with time labels (extracted; identical gesture engine) --
 @Composable
 fun ScrubberSection(onSeek: (Long) -> Unit, rawFraction: Float, progress: Long, duration: Long) {
     var isDragging by remember { mutableStateOf(false) }
@@ -729,7 +858,7 @@ fun ScrubberSection(onSeek: (Long) -> Unit, rawFraction: Float, progress: Long, 
 
     Row(modifier = Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
         // Monospaced digits (tnum) like iOS
-        val timeStyle = LocalTextStyle.current.copy(fontFeatureSettings = "tnum")
+        val timeStyle = androidx.compose.material3.LocalTextStyle.current.copy(fontFeatureSettings = "tnum")
         Text(
             text = formatDuration(if (isDragging) dragPreviewTime else progress),
             color = Color.White.copy(alpha = 0.6f),
@@ -743,8 +872,8 @@ fun ScrubberSection(onSeek: (Long) -> Unit, rawFraction: Float, progress: Long, 
     }
 }
 
-// ── Inline queue row (Apple Music "Playing Next"): swipe-to-delete only —
-//    no drag handle; reordering is long-press anywhere on the row. ──
+// -- Inline queue row (Apple Music "Playing Next"): swipe-to-delete only —
+//    no drag handle; reordering is long-press anywhere on the row. --
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun InlineQueueRow(
@@ -808,12 +937,13 @@ fun EqualizerBars(isAnimating: Boolean, color: Color, modifier: Modifier = Modif
     }
 }
 
-// ── Apple Music-style Sleep Timer sheet ────────────────────────────────
+// -- Apple Music-style Sleep Timer sheet --------------------------------
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SleepTimerSheet(
     isTimerActive: Boolean,
     selectedOption: String?,
+    liveStatus: String? = null,
     onSelectOption: (String) -> Unit,
     onCancelTimer: () -> Unit,
     onDismiss: () -> Unit
@@ -822,7 +952,7 @@ fun SleepTimerSheet(
     val C = appleColors()
 
     val options = listOf(
-        "When Current Song Ends",
+        "When Current Song Ends", "End of Queue",
         "5 Minutes", "10 Minutes", "15 Minutes",
         "30 Minutes", "45 Minutes", "1 Hour", "2 Hours"
     )
@@ -834,9 +964,20 @@ fun SleepTimerSheet(
                 color = C.label,
                 fontWeight = FontWeight.Bold,
                 fontSize = 20.sp,
-                modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+                modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center
             )
+            if (isTimerActive && liveStatus != null) {
+                Text(
+                    "Stopping in $liveStatus",
+                    color = C.secondaryLabel,
+                    fontSize = 13.sp,
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                )
+            } else {
+                Spacer(Modifier.height(12.dp))
+            }
 
             // Grouped list card (iOS-style rounded card)
             Column(
