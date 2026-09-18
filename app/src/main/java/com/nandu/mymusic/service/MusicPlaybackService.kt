@@ -5,6 +5,8 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.ForwardingPlayer
@@ -73,9 +75,19 @@ class MusicPlaybackService : MediaSessionService() {
         /**
          * Rebuild and push the custom layout (heart + repeat icons) to the
          * session. Called on connect and whenever the state changes. Safe to
-         * call from any thread — MediaSession.setCustomLayout posts internally.
+         * call from any thread: every Player read below is marshalled onto the
+         * app main thread, which is the only thread ExoPlayer may be touched
+         * from. Callers include background executor threads (favorites
+         * persistence), so reading the player inline here would throw
+         * IllegalStateException: Player is accessed on the wrong thread.
          */
         fun refreshCustomLayout() {
+            if (Looper.myLooper() == Looper.getMainLooper()) applyCustomLayout()
+            else Handler(Looper.getMainLooper()).post { applyCustomLayout() }
+        }
+
+        /** Must run on the main thread — reads [Player] state directly. */
+        private fun applyCustomLayout() {
             val session = activeSession ?: return
             val appContext = sessionServiceContext ?: return
             val player = session.player

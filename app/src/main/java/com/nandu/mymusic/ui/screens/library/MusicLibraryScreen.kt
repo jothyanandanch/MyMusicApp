@@ -643,11 +643,11 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                                     onSongClick = { song -> viewModel.playSong(song, favorites) },
                                     onToggleFavorite = { song -> handleToggleFavorite(song) },
                                     onAddSongs = {list ->
-                                        list.forEach {song -> if (!favoriteIds.contains(song.id)) viewModel.toggleFavorite(song)}
+                                        viewModel.setFavoriteBatch(list, true)
                                         showSnackbar("Added ${list.size} song/songs to Liked Songs")
                                     },
                                     onRemoveSongs = {list ->
-                                        list.forEach { song -> if (favoriteIds.contains(song.id)) viewModel.toggleFavorite(song) }
+                                        viewModel.setFavoriteBatch(list, false)
                                         showSnackbar("Removed ${list.size} song/songs from Liked Songs")
                                     },
                                     onPlayNext = { song -> viewModel.setPlayNext(song); showSnackbar("Will play next") },

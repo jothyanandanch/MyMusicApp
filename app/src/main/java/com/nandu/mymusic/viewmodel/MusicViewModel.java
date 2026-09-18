@@ -998,7 +998,40 @@ public class MusicViewModel extends AndroidViewModel {
             favoritesMap.put(song.getId(), song);
         }
         favoriteIdsLiveData.setValue(ids);
-        
+        persistFavorites(ids);
+    }
+
+    /**
+     * Add/remove many songs from favorites in one pass. Bulk callers (Library
+     * "select all" / "remove all") previously looped over [toggleFavorite],
+     * which fired one executor task per song — N blocking prefs commits and N
+     * notification layout refreshes. This collapses that to a single write.
+     * Already-in-target-state songs are skipped, so no-op when nothing changes.
+     */
+    @SuppressLint("ApplySharedPref")
+    public void setFavoriteBatch(List<Song> songs, boolean favorite) {
+        if (songs == null || songs.isEmpty()) return;
+        Set<Long> ids = new LinkedHashSet<>(favoriteIdsLiveData.getValue() != null ? favoriteIdsLiveData.getValue() : new LinkedHashSet<>());
+        boolean changed = false;
+        for (Song song : songs) {
+            if (favorite) {
+                if (ids.add(song.getId())) {
+                    favoritesMap.put(song.getId(), song);
+                    changed = true;
+                }
+            } else {
+                if (ids.remove(song.getId())) {
+                    favoritesMap.remove(song.getId());
+                    changed = true;
+                }
+            }
+        }
+        if (!changed) return;
+        favoriteIdsLiveData.setValue(ids);
+        persistFavorites(ids);
+    }
+
+    private void persistFavorites(Set<Long> ids) {
         executorService.execute(() -> {
             Set<String> stringSet = new LinkedHashSet<>();
             for (Long id : ids) stringSet.add(String.valueOf(id));
