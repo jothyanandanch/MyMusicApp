@@ -629,7 +629,7 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                                             }
                                         },
                                         onRemoveSong     = { song -> viewModel.removeSongFromPlaylist(pName, song); showSnackbar("Removed 1 song") },
-                                        onRemoveSongs    = { list -> list.forEach { viewModel.removeSongFromPlaylist(pName, it) }; showSnackbar("Removed ${list.size} songs") },
+                                        onRemoveSongs    = { list -> viewModel.removeSongsFromPlaylist(pName, list); showSnackbar("Removed ${list.size} songs") },
                                         onDeletePlaylist = { playlistToDelete = pName },
                                         onRenamePlaylist = { renameValue = pName; playlistToRename = pName }
                                     )

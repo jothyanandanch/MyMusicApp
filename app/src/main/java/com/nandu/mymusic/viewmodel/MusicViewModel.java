@@ -1893,16 +1893,30 @@ public class MusicViewModel extends AndroidViewModel {
         });
     }
     public void removeSongFromPlaylist(String playlistName, Song song) {
+        if (song == null) return;
+        removeSongsFromPlaylist(playlistName, Collections.singletonList(song));
+    }
+
+    /**
+     * Remove many songs from one playlist in a single pass. Bulk callers looped
+     * over [removeSongFromPlaylist], and [savePlaylistsToPrefs] rewrites EVERY
+     * playlist in prefs on each call — N songs meant N full rewrites. This
+     * resolves the removals together and saves once.
+     */
+    public void removeSongsFromPlaylist(String playlistName, List<Song> songs) {
+        if (songs == null || songs.isEmpty()) return;
         Map<String, List<Long>> current = customPlaylistsLiveData.getValue();
-        if (current != null && current.containsKey(playlistName)) {
-            Map<String, List<Long>> newPlaylists = new LinkedHashMap<>(current);
-            List<Long> newSongs = new ArrayList<>(newPlaylists.get(playlistName));
-            if (newSongs.remove(Long.valueOf(song.getId()))) {
-                newPlaylists.put(playlistName, newSongs);
-                customPlaylistsLiveData.setValue(newPlaylists);
-                savePlaylistsToPrefs(newPlaylists);
-            }
+        if (current == null || !current.containsKey(playlistName)) return;
+        List<Long> newSongs = new ArrayList<>(current.get(playlistName));
+        boolean changed = false;
+        for (Song song : songs) {
+            if (song != null && newSongs.remove(Long.valueOf(song.getId()))) changed = true;
         }
+        if (!changed) return;
+        Map<String, List<Long>> newPlaylists = new LinkedHashMap<>(current);
+        newPlaylists.put(playlistName, newSongs);
+        customPlaylistsLiveData.setValue(newPlaylists);
+        savePlaylistsToPrefs(newPlaylists);
     }
     
     public void renamePlaylist(String oldName, String newName) {

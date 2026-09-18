@@ -322,11 +322,9 @@ fun NowPlayingScreen(
                                     SyncedLyricsView(lyricsText = lyrics, progress = progress, onSeek = onSeek, modifier = Modifier.fillMaxSize())
                                 }
                             } else {
-                                Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center) {
+                                Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
                                     // Square art that fits both width and remaining height.
-                                    // Swipe DOWN on the art dismisses the player (Apple);
-                                    // swipe UP still pages to the queue.
-                                    Box(modifier = Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
+                                    Box(modifier = Modifier.fillMaxWidth().weight(1f).wrapContentHeight(), contentAlignment = Alignment.Center) {
                                         Box(
                                             modifier = Modifier
                                                 .aspectRatio(1f)
@@ -340,22 +338,17 @@ fun NowPlayingScreen(
                                         }
                                     }
                                     Spacer(modifier = Modifier.height(20.dp))
-                                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text(song.title ?: "Unknown Title", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 22.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                            Spacer(Modifier.height(4.dp))
-                                            Text(song.artist ?: "Unknown Artist", color = C.accent, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                        }
-                                        IconButton(onClick = onToggleFavorite) { Icon(imageVector = if (isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder, contentDescription = "Like", tint = if (isFavorite) C.accent else Color.White, modifier = Modifier.size(26.dp)) }
-                                    }
+                                    Text(song.title ?: "Unknown Title", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 22.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Spacer(Modifier.height(4.dp))
+                                    Text(song.artist ?: "Unknown Artist", color = C.accent, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 }
                             }
                         }
 
-                        // Pinned controls (always visible on the player page)
+                        // Pinned controls (always visible on the player page).
+                        // Apple order: scrubber → transport → volume → bottom row.
                         ScrubberSection(onSeek = onSeek, rawFraction = rawFraction, progress = progress, duration = duration)
-                        VolumeSlider(modifier = Modifier.padding(vertical = 2.dp))
-                        Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(20.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically) {
+                        Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 4.dp), horizontalArrangement = Arrangement.spacedBy(20.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically) {
                             Box(
                                 modifier = Modifier.size(56.dp).clip(CircleShape).clickable(onClick = onPrevious),
                                 contentAlignment = Alignment.Center
@@ -369,6 +362,7 @@ fun NowPlayingScreen(
                                 contentAlignment = Alignment.Center
                             ) { Icon(Icons.Filled.SkipNext, "Next", tint = Color.White, modifier = Modifier.size(34.dp)) }
                         }
+                        VolumeSlider(modifier = Modifier.padding(vertical = 2.dp))
                         Row(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                             // Dynamic output button — icon reflects the ACTIVE route
                             // (Apple Music behavior), opens the iOS-style picker.
@@ -692,7 +686,11 @@ private fun QueueControlButton(
     }
 }
 
-/** "12:34" / "2 songs left" / "End of queue" — live status for menu + sheet. */
+/**
+ * Apple Music wording for the live sleep-timer subtitle:
+ *   "Sleeping for 9m 53s"  /  "Sleeping until queue ends"
+ * Shown in the menu label and the sheet header while a timer is active.
+ */
 @Composable
 fun sleepTimerStatusLabel(
     active: Boolean,
@@ -701,15 +699,15 @@ fun sleepTimerStatusLabel(
 ): String? {
     if (!active) return null
     return when {
-        tracksRemaining > 0 -> "$tracksRemaining song${if (tracksRemaining == 1) "" else "s"} left"
-        tracksRemaining == 0 -> "Stopping soon"
+        tracksRemaining > 0 -> "Sleeping until queue ends ($tracksRemaining left)"
+        tracksRemaining == 0 -> "Sleeping until queue ends"
         remainingMs > 0 -> {
             val totalSecs = (remainingMs + 999L) / 1000L
             val m = totalSecs / 60
             val s = totalSecs % 60
-            "%d:%02d".format(m, s)
+            "Sleeping for ${m}m ${s}s"
         }
-        else -> "End of queue"
+        else -> "Sleeping until queue ends"
     }
 }
 
@@ -957,75 +955,68 @@ fun SleepTimerSheet(
         "30 Minutes", "45 Minutes", "1 Hour", "2 Hours"
     )
 
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, containerColor = C.background) {
-        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
-            Text(
-                "Sleep Timer",
-                color = C.label,
-                fontWeight = FontWeight.Bold,
-                fontSize = 20.sp,
-                modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
-                textAlign = androidx.compose.ui.text.style.TextAlign.Center
-            )
-            if (isTimerActive && liveStatus != null) {
-                Text(
-                    "Stopping in $liveStatus",
-                    color = C.secondaryLabel,
-                    fontSize = 13.sp,
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                )
-            } else {
-                Spacer(Modifier.height(12.dp))
-            }
-
-            // Grouped list card (iOS-style rounded card)
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(C.cardElevated)
-            ) {
-                options.forEachIndexed { index, label ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { onSelectOption(label) }
-                            .padding(horizontal = 16.dp, vertical = 14.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(label, color = C.label, fontSize = 17.sp, modifier = Modifier.weight(1f))
-                        AnimatedVisibility(
-                            visible = selectedOption == label && isTimerActive,
-                            enter = scaleIn(tween(150)) + fadeIn(tween(150)),
-                            exit = scaleOut(tween(100)) + fadeOut(tween(100))
-                        ) {
-                            Icon(Icons.Filled.Check, null, tint = C.accent, modifier = Modifier.size(20.dp))
-                        }
-                    }
-                    if (index < options.size - 1) {
-                        HorizontalDivider(color = C.separator, thickness = 0.5.dp, modifier = Modifier.padding(start = 16.dp))
-                    }
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, containerColor = Color.Transparent) {
+        Box(
+            modifier = Modifier
+                .navigationBarsPadding()
+                .fillMaxWidth()
+                .padding(start = 8.dp, end = 8.dp, bottom = 8.dp),
+            contentAlignment = Alignment.BottomCenter
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                // Live subtitle while active — Apple places it just above the card.
+                if (isTimerActive && liveStatus != null) {
+                    Text(
+                        liveStatus,
+                        color = C.secondaryLabel,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.padding(bottom = 10.dp)
+                    )
                 }
-            }
 
-            // Cancel button (only when timer is active)
-            if (isTimerActive) {
-                Spacer(Modifier.height(12.dp))
-                Box(
+                // Centered grouped card — Apple Music's round, elevated surface.
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(10.dp))
+                        .clip(RoundedCornerShape(16.dp))
                         .background(C.cardElevated)
-                        .clickable { onCancelTimer() }
-                        .padding(vertical = 14.dp),
-                    contentAlignment = Alignment.Center
                 ) {
-                    Text("Cancel Timer", color = C.destructive, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+                    options.forEachIndexed { index, label ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onSelectOption(label) }
+                                .padding(horizontal = 16.dp, vertical = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(label, color = C.label, fontSize = 17.sp, fontWeight = FontWeight.Normal, modifier = Modifier.weight(1f))
+                            AnimatedVisibility(
+                                visible = selectedOption == label && isTimerActive,
+                                enter = scaleIn(tween(150)) + fadeIn(tween(150)),
+                                exit = scaleOut(tween(100)) + fadeOut(tween(100))
+                            ) {
+                                Icon(Icons.Filled.Check, null, tint = C.accent, modifier = Modifier.size(20.dp))
+                            }
+                        }
+                        if (index < options.size - 1) {
+                            HorizontalDivider(color = C.separator.copy(alpha = 0.5f), thickness = 0.5.dp, modifier = Modifier.padding(start = 16.dp))
+                        }
+                    }
+                }
+
+                // Cancel — Apple places it as a top-aligned text button above the
+                // card when a timer is running; here pinned above the card so it
+                // scrolls with the sheet content.
+                if (isTimerActive) {
+                    TextButton(
+                        onClick = { onCancelTimer(); onDismiss() },
+                        modifier = Modifier.padding(top = 14.dp)
+                    ) {
+                        Text("Cancel", color = C.label, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+                    }
                 }
             }
-
-            Spacer(Modifier.height(24.dp))
         }
     }
 }
