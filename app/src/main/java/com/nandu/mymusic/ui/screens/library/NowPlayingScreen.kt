@@ -71,9 +71,10 @@ import com.nandu.mymusic.ui.components.AlbumArt
 import com.nandu.mymusic.ui.components.AppleMenu
 import com.nandu.mymusic.ui.components.AppleMenuAction
 import com.nandu.mymusic.ui.components.AudioRoute
-import com.nandu.mymusic.ui.components.MediaOutputSheet
+
 import com.nandu.mymusic.ui.components.NowPlayingBackdrop
 import com.nandu.mymusic.ui.components.currentAudioRoute
+import com.nandu.mymusic.ui.components.showMediaOutputPicker
 import com.nandu.mymusic.utils.parseLrc
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -132,7 +133,6 @@ fun NowPlayingScreen(
 ) {
     var showSleepTimer by remember { mutableStateOf(false) }
     var selectedTimerOption by remember { mutableStateOf<String?>(null) }
-    var showOutputSheet by remember { mutableStateOf(false) }
     val C = appleColors()
     val sleepStatus = sleepTimerStatusLabel(isSleepTimerActive, sleepTimerRemainingMs, sleepTimerTracksRemaining)
     // Clear the checkmark when the timer expires or is cancelled externally
@@ -369,20 +369,20 @@ fun NowPlayingScreen(
                         VolumeSlider(modifier = Modifier.padding(vertical = 2.dp))
                         Row(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                             // Dynamic output button — icon reflects the ACTIVE route
-                            // (Apple Music behavior), opens the iOS-style picker.
-                            var outputRoute by remember { mutableStateOf(currentAudioRoute(context)) }
-                            LaunchedEffect(showOutputSheet) {
-                                while (true) {
-                                    outputRoute = currentAudioRoute(context)
-                                    delay(1000)
-                                }
+                            // (Apple Music behavior), opens the system media output picker
+                            // (same UX as JioSaavn / Spotify / YouTube Music).
+                            val outputRoute = currentAudioRoute(context)
+                            val routeIcon = when (outputRoute) {
+                                AudioRoute.BLUETOOTH -> Icons.Filled.BluetoothAudio
+                                AudioRoute.WIRED -> Icons.Filled.Headphones
+                                AudioRoute.SPEAKER -> Icons.Filled.VolumeUp
                             }
-                            IconButton(onClick = { showOutputSheet = true }) {
-                                val (routeIcon, routeDesc) = when (outputRoute) {
-                                    AudioRoute.BLUETOOTH -> Icons.Filled.BluetoothAudio to "Bluetooth"
-                                    AudioRoute.WIRED -> Icons.Filled.Headphones to "Headphones"
-                                    AudioRoute.SPEAKER -> Icons.Filled.VolumeUp to "Speaker"
-                                }
+                            val routeDesc = when (outputRoute) {
+                                AudioRoute.BLUETOOTH -> "Bluetooth"
+                                AudioRoute.WIRED -> "Headphones"
+                                AudioRoute.SPEAKER -> "Speaker"
+                            }
+                            IconButton(onClick = { showMediaOutputPicker(context) }) {
                                 Icon(routeIcon, routeDesc, tint = Color.White, modifier = Modifier.size(22.dp))
                             }
                             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -642,11 +642,6 @@ fun NowPlayingScreen(
                 }
             }
         }
-    }
-
-    // ── Output picker (Apple Music style) ──
-    if (showOutputSheet) {
-        MediaOutputSheet(onDismiss = { showOutputSheet = false })
     }
 
     // ── Sleep timer sheet ──
