@@ -117,14 +117,17 @@ class MusicPlaybackService : MediaSessionService() {
             val repeatButton = CommandButton.Builder()
                 .setSessionCommand(SessionCommand(ACTION_CYCLE_REPEAT, Bundle.EMPTY))
                 .setIconResId(
-                    if (repeatMode == Player.REPEAT_MODE_ONE) com.nandu.mymusic.R.drawable.ic_notification_repeat_one
-                    else com.nandu.mymusic.R.drawable.ic_notification_repeat
+                    when (repeatMode) {
+                        Player.REPEAT_MODE_ONE -> com.nandu.mymusic.R.drawable.ic_notification_repeat_one
+                        Player.REPEAT_MODE_ALL -> com.nandu.mymusic.R.drawable.ic_notification_repeat
+                        else -> com.nandu.mymusic.R.drawable.ic_notification_repeat_off
+                    }
                 )
                 .setDisplayName(
                     when (repeatMode) {
                         Player.REPEAT_MODE_ONE -> "Repeat One"
                         Player.REPEAT_MODE_ALL -> "Repeat All"
-                        else -> "Repeat"
+                        else -> "Repeat Off"
                     }
                 )
                 .setEnabled(true)
@@ -173,14 +176,17 @@ class MusicPlaybackService : MediaSessionService() {
                     if (isFavorite) com.nandu.mymusic.R.drawable.ic_notification_heart_filled
                     else com.nandu.mymusic.R.drawable.ic_notification_heart_outline
                 val repeatRes =
-                    if (repeatMode == Player.REPEAT_MODE_ONE) com.nandu.mymusic.R.drawable.ic_notification_repeat_one
-                    else com.nandu.mymusic.R.drawable.ic_notification_repeat
+                    when (repeatMode) {
+                        Player.REPEAT_MODE_ONE -> com.nandu.mymusic.R.drawable.ic_notification_repeat_one
+                        Player.REPEAT_MODE_ALL -> com.nandu.mymusic.R.drawable.ic_notification_repeat
+                        else -> com.nandu.mymusic.R.drawable.ic_notification_repeat_off
+                    }
                 val heartTitle =
                     if (isFavorite) "Remove from Favorites" else "Add to Favorites"
                 val repeatTitle = when (repeatMode) {
                     Player.REPEAT_MODE_ONE -> "Repeat One"
                     Player.REPEAT_MODE_ALL -> "Repeat All"
-                    else -> "Repeat"
+                    else -> "Repeat Off"
                 }
                 val buttons = listOf(
                     buildMediaButton(appContext, heartRes, ACTION_TOGGLE_FAVORITE, heartTitle),

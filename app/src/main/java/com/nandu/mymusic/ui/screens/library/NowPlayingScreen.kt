@@ -29,6 +29,7 @@ import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -151,13 +152,16 @@ fun NowPlayingScreen(
     val queueListState = rememberLazyListState()
     var localQueue by remember { mutableStateOf(queue) }
     var draggedItemIndex by remember { mutableStateOf<Int?>(null) }
-    var initialDraggedIndex by remember { mutableStateOf<Int?>(null) }
-    var draggedDistance by remember { mutableStateOf(0f) }
+    var dragStartIndex by remember { mutableStateOf<Int?>(null) } // original index at drag start, never changes
+    var draggedDistancePx by remember { mutableStateOf(0f) }   // accumulated Y delta relative to current draggedItemIndex
+    var draggedItemHeight by remember { mutableStateOf(0f) }    // fixed pixel height of one row
+    var queueSnapshot by remember { mutableStateOf<List<Song>>(emptyList()) } // localQueue at drag start, for cancel restore
+    var dragOffsetY by remember { mutableStateOf(0f) }          // visual offset of the dragged row (px), for following the finger
     val haptic = LocalHapticFeedback.current
     // Hold the local preview order while a drop is pending (draggedItemIndex
     // non-null) so the row never appears to fly back before animating into
     // its slot — fixes the rubber-band "returning to position" on drop.
-    LaunchedEffect(queue) { if (draggedItemIndex == null) localQueue = queue }
+    LaunchedEffect(queue) { if (draggedItemIndex == null) localQueue = queue; dragOffsetY = 0f }
     val currentIdx = localQueue.indexOfFirst { it.id == song.id }
     val upcomingSongs = remember(localQueue, currentIdx) {
         when {
@@ -480,7 +484,7 @@ fun NowPlayingScreen(
                                             val keyStr = item?.key as? String
                                             val idx = when {
                                                 keyStr?.startsWith("up_") == true -> {
-                                                    val idStr = keyStr!!.substringAfter('_')
+                                                    val idStr = keyStr.substringAfter('_')
                                                     if (idStr.isNotEmpty() && idStr.all { it.isDigit() })
                                                         localQueue.indexOfFirst { it.id.toString() == idStr }
                                                     else -1
@@ -490,61 +494,84 @@ fun NowPlayingScreen(
                                             if (idx >= 0 && idx != currentIdx) {
                                                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                                 draggedItemIndex = idx
-                                                initialDraggedIndex = idx
-                                                draggedDistance = 0f
+                                                dragStartIndex = idx
+                                                draggedDistancePx = 0f
+                                                // Use a consistent row height estimate from the actual item size.
+                                                // Fallback to a reasonable default if layout info is stale.
+                                                draggedItemHeight = item?.size?.toFloat() ?: 120f
+                                                queueSnapshot = localQueue
+                                                dragOffsetY = 0f
                                             }
                                         },
                                         onDrag = { change, dragAmount ->
                                             change.consume()
-                                            draggedDistance += dragAmount.y
                                             val draggedIdx = draggedItemIndex ?: return@detectDragGesturesAfterLongPress
                                             if (draggedIdx < 0 || draggedIdx >= localQueue.size) return@detectDragGesturesAfterLongPress
-                                            val draggedKey = "up_" + localQueue[draggedIdx].id
-                                            val itemHeight = queueListState.layoutInfo.visibleItemsInfo.find { it.key == draggedKey }?.size ?: 150
-                                            if (itemHeight == 0) return@detectDragGesturesAfterLongPress
+                                            if (draggedItemHeight <= 0f) return@detectDragGesturesAfterLongPress
+                                            if (localQueue.isEmpty()) return@detectDragGesturesAfterLongPress
 
-                                            val targetDelta = (draggedDistance / itemHeight).toInt()
-                                            if (targetDelta != 0) {
-                                                var targetIdx = (draggedIdx + targetDelta).coerceIn(0, localQueue.size - 1)
-                                                if (targetIdx == currentIdx) {
-                                                    targetIdx += if (targetDelta > 0) 1 else -1
-                                                    targetIdx = targetIdx.coerceIn(0, localQueue.size - 1)
-                                                }
+                                            // Accumulate drag delta relative to the CURRENT dragged position.
+                                            // This is re-based on every swap so the threshold always resets,
+                                            // preventing double-counting and micro-jumps.
+                                            draggedDistancePx += dragAmount.y
+                                            dragOffsetY += dragAmount.y
 
-                                                if (draggedIdx != targetIdx && targetIdx != currentIdx) {
-                                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                                    val newList = localQueue.toMutableList()
-                                                    val item = newList.removeAt(draggedIdx)
-                                                    newList.add(targetIdx, item)
-                                                    localQueue = newList
-                                                    draggedItemIndex = targetIdx
-                                                    draggedDistance -= (targetDelta * itemHeight)
-                                                }
+                                            val deltaRows = (draggedDistancePx / draggedItemHeight).toInt()
+                                            var targetIdx = (draggedIdx + deltaRows).coerceIn(0, localQueue.size - 1)
+
+                                            // Never let the current (Now Playing) song be a drop target.
+                                            if (targetIdx == currentIdx) {
+                                                targetIdx += if (deltaRows > 0) 1 else -1
+                                                targetIdx = targetIdx.coerceIn(0, localQueue.size - 1)
                                             }
 
-                                            // Auto-scroll at viewport edges during drag
-                                            val viewportHeight = queueListState.layoutInfo.viewportEndOffset - queueListState.layoutInfo.viewportStartOffset
+                                            if (draggedIdx != targetIdx && targetIdx != currentIdx && deltaRows != 0) {
+                                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                val newList = localQueue.toMutableList()
+                                                val item = newList.removeAt(draggedIdx)
+                                                newList.add(targetIdx, item)
+                                                localQueue = newList
+                                                // Re-base: reset accumulated delta relative to the new position.
+                                                draggedItemIndex = targetIdx
+                                                draggedDistancePx = draggedDistancePx - (targetIdx - draggedIdx) * draggedItemHeight
+                                                dragOffsetY = draggedDistancePx
+                                            }
+
+                                            // Auto-scroll at viewport edges during drag (smooth, not jarring)
+                                            val li = queueListState.layoutInfo
+                                            val viewportHeight = li.viewportEndOffset - li.viewportStartOffset
                                             val scrollThreshold = viewportHeight * 0.15f
-                                            val lastVisible = queueListState.layoutInfo.visibleItemsInfo.lastOrNull()
-                                            val firstVisible = queueListState.layoutInfo.visibleItemsInfo.firstOrNull()
+                                            val lastVisible = li.visibleItemsInfo.lastOrNull()
+                                            val firstVisible = li.visibleItemsInfo.firstOrNull()
                                             if (lastVisible != null && change.position.y > lastVisible.offset + lastVisible.size - scrollThreshold) {
-                                                coroutineScope.launch { queueListState.scrollToItem((lastVisible.index + 3).coerceAtMost(queueListState.layoutInfo.totalItemsCount - 1)) }
+                                                val targetIndex = (lastVisible.index + 1).coerceAtMost(li.totalItemsCount - 1)
+                                                coroutineScope.launch { queueListState.scrollToItem(targetIndex) }
                                             } else if (firstVisible != null && change.position.y < firstVisible.offset + scrollThreshold) {
-                                                coroutineScope.launch { queueListState.scrollToItem((firstVisible.index - 1).coerceAtLeast(0)) }
+                                                val targetIndex = (firstVisible.index - 1).coerceAtLeast(0)
+                                                coroutineScope.launch { queueListState.scrollToItem(targetIndex) }
                                             }
                                         },
                                         onDragEnd = {
-                                            val from = initialDraggedIndex
+                                            val from = dragStartIndex
                                             val to = draggedItemIndex
                                             draggedItemIndex = null
-                                            initialDraggedIndex = null
-                                            draggedDistance = 0f
+                                            dragStartIndex = null
+                                            draggedDistancePx = 0f
+                                            draggedItemHeight = 0f
+                                            dragOffsetY = 0f
+                                            queueSnapshot = emptyList()
                                             if (from != null && to != null && from != to && from in localQueue.indices && to in localQueue.indices) {
                                                 onQueueItemReorder(from, to)
                                             }
                                         },
                                         onDragCancel = {
-                                            draggedItemIndex = null; initialDraggedIndex = null; draggedDistance = 0f; localQueue = queue
+                                            draggedItemIndex = null
+                                            dragStartIndex = null
+                                            draggedDistancePx = 0f
+                                            draggedItemHeight = 0f
+                                            dragOffsetY = 0f
+                                            localQueue = if (queueSnapshot.isNotEmpty()) queueSnapshot else queue
+                                            queueSnapshot = emptyList()
                                         }
                                     )
                                 },
@@ -601,12 +628,13 @@ fun NowPlayingScreen(
                                 }
                             }
                             itemsIndexed(upcomingSongs, key = { _, s -> "up_${s.id}" }) { _, s ->
+                                val idx = localQueue.indexOfFirst { it.id == s.id }
                                 InlineQueueRow(
                                     song = s,
                                     onClick = { onQueueItemClick(s) },
                                     onRemove = { onQueueItemRemove(s) },
-                                    isDragging = draggedItemIndex != null && localQueue.getOrNull(draggedItemIndex ?: -1)?.id == s.id &&
-                                        s.id == localQueue.getOrNull(initialDraggedIndex ?: -1)?.id
+                                    isDragging = draggedItemIndex != null && idx == draggedItemIndex,
+                                    dragOffsetY = if (idx == draggedItemIndex) dragOffsetY else 0f
                                 )
                             }
                         }
@@ -878,7 +906,8 @@ fun InlineQueueRow(
     song: Song,
     onClick: () -> Unit,
     onRemove: () -> Unit = {},
-    isDragging: Boolean = false
+    isDragging: Boolean = false,
+    dragOffsetY: Float = 0f
 ) {
     val C = appleColors()
     val dismissState = rememberSwipeToDismissBoxState(
@@ -891,6 +920,10 @@ fun InlineQueueRow(
         }
     )
     val scale by animateFloatAsState(targetValue = if (isDragging) 1.04f else 1f, animationSpec = tween(150), label = "dragScale")
+    val translationY by animateFloatAsState(targetValue = if (isDragging) dragOffsetY else 0f, animationSpec = spring(
+        stiffness = 500f,
+        dampingRatio = 0.8f
+    ), label = "dragTranslate")
     SwipeToDismissBox(
         state = dismissState, enableDismissFromStartToEnd = false,
         backgroundContent = {
@@ -900,7 +933,16 @@ fun InlineQueueRow(
             }
         }
     ) {
-        Box(modifier = Modifier.graphicsLayer { scaleX = scale; scaleY = scale; shadowElevation = if (isDragging) 12f else 0f; shape = RoundedCornerShape(8.dp); clip = false }) {
+        Box(modifier = Modifier
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+                shadowElevation = if (isDragging) 12f else 0f
+                shape = RoundedCornerShape(8.dp)
+                clip = false
+                this.translationY = translationY
+            }
+        ) {
             Row(modifier = Modifier.fillMaxWidth().clickable { onClick() }.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                 AlbumArt(song = song, audioUri = song.uri, isActive = false, size = 48.dp, cornerRadius = 6.dp)
                 Spacer(modifier = Modifier.width(12.dp))

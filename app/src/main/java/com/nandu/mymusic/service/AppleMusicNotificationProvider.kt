@@ -133,13 +133,18 @@ class AppleMusicNotificationProvider(
         )
 
         // ── Repeat: custom action — cycles Off → All → One in handleCustomCommand ──
+        // Three distinct icons so you can always see which mode is active:
+        // off = dimmed/broken repeat, all = solid repeat, one = repeat with "1" badge
         val repeatMode = player.repeatMode
         val repeatAction = actionFactory.createCustomAction(
             mediaSession,
             IconCompat.createWithResource(
                 context,
-                if (repeatMode == Player.REPEAT_MODE_ONE) R.drawable.ic_notification_repeat_one
-                else R.drawable.ic_notification_repeat
+                when (repeatMode) {
+                    Player.REPEAT_MODE_ONE -> R.drawable.ic_notification_repeat_one
+                    Player.REPEAT_MODE_ALL -> R.drawable.ic_notification_repeat
+                    else -> R.drawable.ic_notification_repeat_off
+                }
             ),
             when (repeatMode) {
                 Player.REPEAT_MODE_ONE -> "Repeat One"
@@ -169,20 +174,25 @@ class AppleMusicNotificationProvider(
             .setSmallIcon(R.drawable.media3_notification_small_icon)
             .setContentIntent(mediaSession.sessionActivity)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-            .setOngoing(isPlaying)
+            .setCategory("media")  // Notification.CATEGORY_MEDIA — realme Mini Capsule requires this category
+            .setOngoing(true)               // ONGOING_EVENT flag — required for realme Mini Capsule
+            .setOnlyAlertOnce(true)          // ONLY_ALERT_ONCE — prevent re-trigger on state updates
+            .setLocalOnly(false)            // Allow on lock screen + dynamic island
+            .setAutoCancel(false)           // NO_DISMISS — don't swipe-dismiss the media notification
             .setColor(APPLE_MUSIC_RED)
             .setColorized(true)
             .setLargeIcon(albumArtBitmap)
             .setStyle(
                 MediaStyleNotificationHelper.MediaStyle(mediaSession)
+                    // Compact view (realme Mini Capsule / dynamic island): like, prev, play/pause
                     .setShowActionsInCompactView(0, 1, 2)
             )
-            // Compact view: prev, play/pause, next
+            // Action order: favorite(0), prev(1), play/pause(2), next(3), repeat(4)
+            // This puts the heart first (like Spotify) for the dynamic island.
+            .addAction(favoriteAction)
             .addAction(prevAction)
             .addAction(playPauseAction)
             .addAction(nextAction)
-            // Expanded view adds: favorite, repeat — Apple Music layout
-            .addAction(favoriteAction)
             .addAction(repeatAction)
 
         return MediaNotification(NOTIFICATION_ID, builder.build())
