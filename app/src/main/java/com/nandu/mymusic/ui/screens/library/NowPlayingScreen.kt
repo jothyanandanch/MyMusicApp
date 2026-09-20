@@ -320,7 +320,6 @@ fun NowPlayingScreen(
                                             Text(song.title ?: "Unknown Title", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                             Text(song.artist ?: "Unknown Artist", color = C.accent, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                         }
-                                        IconButton(onClick = onToggleFavorite) { Icon(imageVector = if (isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder, contentDescription = "Like", tint = if (isFavorite) C.accent else Color.White, modifier = Modifier.size(22.dp)) }
                                     }
                                     Spacer(Modifier.height(8.dp))
                                     SyncedLyricsView(lyricsText = lyrics, progress = progress, onSeek = onSeek, modifier = Modifier.fillMaxSize())

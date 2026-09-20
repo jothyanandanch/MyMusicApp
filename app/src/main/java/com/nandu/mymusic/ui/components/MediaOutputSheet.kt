@@ -93,6 +93,41 @@ private fun isAudioDevice(device: BluetoothDevice): Boolean {
         )
 }
 
+/**
+ * Pulls Bluetooth MAC addresses from [AudioDeviceInfo] output entries.
+ * [AudioManager.getDevices] exposes a device even when the A2DP profile
+ * query doesn't return it (BLE speakers, HFP-only, mid-connection, etc.),
+ * so this catches the currently-active device that's otherwise invisible.
+ */
+private fun btMacsFromAudioDevices(context: Context): Set<String> {
+    val am = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return emptySet()
+    val outputs = am.getDevices(AudioManager.GET_DEVICES_OUTPUTS) ?: return emptySet()
+    val macs = mutableSetOf<String>()
+    outputs.forEach { dev ->
+        val type = dev.type
+        if (type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP ||
+            type == AudioDeviceInfo.TYPE_BLE_HEADSET ||
+            type == AudioDeviceInfo.TYPE_BLE_SPEAKER
+        ) {
+            dev.address?.takeIf { it.isNotBlank() }?.let { macs.add(canonicalizeMac(it)) }
+        }
+    }
+    return macs
+}
+
+/** Normalizes a MAC address for case/separator-insensitive comparison. */
+private fun canonicalizeMac(mac: String): String =
+    mac.lowercase().replace(":", "").replace("-", "").replace(" ", "")
+
+/** Finds a [BluetoothDevice] in [allDevices] whose MAC matches [targetMac]. */
+private fun findBtDeviceByMac(allDevices: Collection<BluetoothDevice>, targetMac: String): BluetoothDevice? {
+    val norm = canonicalizeMac(targetMac)
+    return allDevices.firstOrNull { dev ->
+        @Suppress("MissingPermission")
+        canonicalizeMac(dev.address) == norm
+    }
+}
+
 /** Best-effort A2DP connect/disconnect via the profile proxy. */
 private fun toggleA2dp(context: Context, device: BluetoothDevice, connect: Boolean) {
     try {
@@ -119,6 +154,36 @@ private fun toggleA2dp(context: Context, device: BluetoothDevice, connect: Boole
         adapter.getProfileProxy(context, listener, BluetoothProfile.A2DP)
     } catch (_: Exception) {
         openBtSettings(context)
+    }
+}
+
+/**
+ * Disconnects a device from a specific Bluetooth profile.
+ * Used when switching from a Bluetooth device (that may not be in the A2DP
+ * profile list) back to the phone speaker.
+ */
+private fun disconnectFromProfile(context: Context, profile: Int, device: BluetoothDevice) {
+    try {
+        val manager = context.getSystemService(BluetoothManager::class.java) ?: return
+        val adapter = manager.adapter ?: return
+        val listener = object : BluetoothProfile.ServiceListener {
+            override fun onServiceConnected(p: Int, proxy: BluetoothProfile) {
+                if (p != profile) return
+                try {
+                    val m = proxy.javaClass.getMethod("disconnect", BluetoothDevice::class.java)
+                    m.invoke(proxy, device)
+                } catch (_: Exception) {
+                    // fall through
+                } finally {
+                    try { adapter.closeProfileProxy(profile, proxy) } catch (_: Exception) { }
+                }
+            }
+            override fun onServiceDisconnected(profile: Int) = Unit
+        }
+        @Suppress("MissingPermission")
+        adapter.getProfileProxy(context, listener, profile)
+    } catch (_: Exception) {
+        // ignore — best effort
     }
 }
 
@@ -188,14 +253,49 @@ fun MediaOutputSheet(onDismiss: () -> Unit) {
             subtitle = if (route == AudioRoute.SPEAKER) "Playing here" else "Phone speaker",
             selected = route == AudioRoute.SPEAKER,
             onClick = {
-                // Disconnect any active Bluetooth A2DP to route back to speaker
+                                // Disconnect all active Bluetooth devices to route back to speaker.
+                // The active device may not appear in A2DP getConnectedDevices (BLE speakers,
+                // HFP-only headsets), so we cross-reference with AudioDeviceInfo MACs and try
+                // disconnecting from both A2DP and HEADSET profiles.
+                // After disconnecting, force AudioManager to route back to the speaker.
                 if (btActive && hasBtPermission(ctx)) {
                     val bm = ctx.getSystemService(BluetoothManager::class.java)
                     val adapter = bm.adapter
+                    val activeMacs = btMacsFromAudioDevices(ctx)
+                    val am = ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+                    if (activeMacs.isNotEmpty()) {
+                        @Suppress("MissingPermission")
+                        val paired = try { adapter.getBondedDevices().orEmpty() } catch (_: Exception) { emptySet() }
+                        val activeDevices = paired.filter { dev ->
+                            activeMacs.any { mac -> canonicalizeMac(dev.address) == canonicalizeMac(mac) }
+                        }
+                        // Disconnect from A2DP first, then HEADSET (HFP) profile
+                        val a2dpConnected = try { bm.getConnectedDevices(BluetoothProfile.A2DP).orEmpty() } catch (_: Exception) { emptyList() }
+                        val heConnected = try { bm.getConnectedDevices(BluetoothProfile.HEADSET).orEmpty() } catch (_: Exception) { emptyList() }
+                        activeDevices.forEach { dev ->
+                            if (dev in a2dpConnected) disconnectFromProfile(ctx, BluetoothProfile.A2DP, dev)
+                            else if (dev in heConnected) disconnectFromProfile(ctx, BluetoothProfile.HEADSET, dev)
+                            else {
+                                // Device is active per AudioDeviceInfo but not in any profile list
+                                // — try both profiles
+                                disconnectFromProfile(ctx, BluetoothProfile.A2DP, dev)
+                                disconnectFromProfile(ctx, BluetoothProfile.HEADSET, dev)
+                            }
+                        }
+                    }
+                    // Force audio routing back to the phone speaker.
+                    // setBluetoothA2dpOn(false) + setBluetoothScoOn(false) signals the audio
+                    // policy to stop routing media to Bluetooth. Starting/stopping SCO
+                    // forces a route re-evaluation on the current thread.
                     @Suppress("MissingPermission")
-                    val connected = try { bm.getConnectedDevices(BluetoothProfile.A2DP) }
-                    catch (_: Exception) { emptyList() }
-                    connected.forEach { toggleA2dp(ctx, it, false) }
+                    am.isBluetoothScoOn = false
+                    am.isBluetoothA2dpOn = false
+                    am.startBluetoothSco()
+                    am.stopBluetoothSco()
+                    // Force speaker mode for the media stream
+                    am.isSpeakerphoneOn = true
+                    am.setBluetoothScoOn(false)
+                    am.setBluetoothA2dpOn(false)
                 }
                 onDismiss()
             }
@@ -245,46 +345,86 @@ fun MediaOutputSheet(onDismiss: () -> Unit) {
                     onClick = { openBtSettings(ctx) }
                 ))
             } else {
-                @Suppress("MissingPermission")
-                val bonded = adapter.bondedDevices.orEmpty().toList()
-                val audioDevices = bonded.filter { isAudioDevice(it) }
+                // Primary source: A2DP profile connected devices.
+                val a2dpConnected = try {
+                    @Suppress("MissingPermission")
+                    bm.getConnectedDevices(BluetoothProfile.A2DP).orEmpty()
+                } catch (_: Exception) {
+                    emptyList()
+                }
+                val a2dpAudio = a2dpConnected.filter { isAudioDevice(it) }
 
-                if (audioDevices.isEmpty()) {
+                // Secondary source: Bluetooth MACs from AudioDeviceInfo outputs.
+                // AudioManager exposes a device even when the A2DP profile query
+                // doesn't return it (BLE speakers, HFP-only, mid-connection),
+                // so this catches the currently-active device that's otherwise invisible.
+                val audioDeviceMacs = btMacsFromAudioDevices(ctx)
+
+                // Also pull HE (headset) profile devices as a fallback, so wired-style
+                // Bluetooth headsets that only advertise HFP are still listed.
+                val heConnected = try {
+                    @Suppress("MissingPermission")
+                    bm.getConnectedDevices(BluetoothProfile.HEADSET).orEmpty()
+                } catch (_: Exception) {
+                    emptyList()
+                }
+
+                // Merge everything by MAC, preferring A2DP entries, then HE.
+                val allByMac = LinkedHashMap<String, BluetoothDevice>()
+                a2dpAudio.forEach { dev ->
+                    @Suppress("MissingPermission")
+                    allByMac[canonicalizeMac(dev.address)] = dev
+                }
+                heConnected.forEach { dev ->
+                    @Suppress("MissingPermission")
+                    val key = canonicalizeMac(dev.address)
+                    if (!allByMac.containsKey(key)) allByMac[key] = dev
+                }
+
+                // Devices visible in AudioDeviceInfo but missing from BT profiles —
+                // these are typically the active device we need to show.
+                val missingFromAudio = audioDeviceMacs.filter { mac ->
+                    !allByMac.keys.contains(canonicalizeMac(mac))
+                }
+
+                val connectedAudio = allByMac.values.toMutableList()
+                val paired = try {
+                    @Suppress("MissingPermission")
+                    adapter.getBondedDevices().orEmpty()
+                } catch (_: Exception) {
+                    emptyList()
+                }
+                missingFromAudio.forEach { mac ->
+                    val dev = findBtDeviceByMac(paired, mac)
+                    if (dev != null && isAudioDevice(dev)) connectedAudio.add(dev)
+                }
+
+                if (connectedAudio.isEmpty()) {
                     rows.add(OutputRowData(
                         icon = Icons.Filled.BluetoothDisabled,
-                        title = "No Bluetooth devices",
-                        subtitle = "Pair a device to play through it",
+                        title = "No connected devices",
+                        subtitle = "Pair a device via Bluetooth settings",
                         selected = false,
                         onClick = { openBtSettings(ctx) }
                     ))
                 } else {
-                    audioDevices.forEach { dev ->
+                    connectedAudio.forEach { dev ->
                         @Suppress("MissingPermission")
                         val name = dev.name ?: dev.address
-                        val conn = try {
-                            @Suppress("MissingPermission")
-                            val c = bm.getConnectedDevices(BluetoothProfile.A2DP)
-                            @Suppress("MissingPermission")
-                            c.any { it.address == dev.address }
-                        } catch (_: Exception) { false }
-                        val active = btActive && conn
+                        val devMac = canonicalizeMac(dev.address)
+                        val active = btActive && (audioDeviceMacs.any { canonicalizeMac(it) == devMac })
                         rows.add(OutputRowData(
-                            icon = if (conn) Icons.Filled.BluetoothConnected else Icons.Filled.Bluetooth,
+                            icon = Icons.Filled.BluetoothConnected,
                             title = name,
-                            subtitle = when {
-                                active -> "Playing here"
-                                conn -> "Connected"
-                                else -> "Not connected"
-                            },
+                            subtitle = if (active) "Playing here" else "Connected",
                             selected = active,
                             onClick = {
-                                if (!conn) {
+                                if (!active) {
                                     toggleA2dp(ctx, dev, true)
                                 } else {
                                     onDismiss()
                                 }
-                            },
-                            connectHint = conn && !active
+                            }
                         ))
                     }
                 }
