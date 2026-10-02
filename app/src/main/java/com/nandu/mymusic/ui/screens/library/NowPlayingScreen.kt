@@ -29,7 +29,6 @@ import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -41,6 +40,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.VolumeDown
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.*
@@ -62,6 +62,7 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import kotlin.math.roundToInt
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -71,11 +72,11 @@ import com.nandu.mymusic.ui.components.AlbumArt
 import com.nandu.mymusic.ui.components.AppleMenu
 import com.nandu.mymusic.ui.components.AppleMenuAction
 import com.nandu.mymusic.ui.components.AudioRoute
-
+import com.nandu.mymusic.ui.components.MediaOutputSheet
 import com.nandu.mymusic.ui.components.NowPlayingBackdrop
 import com.nandu.mymusic.ui.components.currentAudioRoute
-import com.nandu.mymusic.ui.components.MediaOutputSheet
 import com.nandu.mymusic.utils.parseLrc
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import com.nandu.mymusic.ui.theme.appleColors
 
@@ -148,20 +149,39 @@ fun NowPlayingScreen(
     val velocityTracker = remember { androidx.compose.ui.input.pointer.util.VelocityTracker() }
     val screenH = remember { context.resources.displayMetrics.heightPixels.toFloat() }
 
+    // Reduced motion: detect system animation scale
+    var reduceAnimations by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        reduceAnimations = Settings.Global.getFloat(
+            context.contentResolver,
+            Settings.Global.ANIMATOR_DURATION_SCALE,
+            1f
+        ) == 0f
+    }
+
+    // Spring specs following Apple Design: critically damped for settle,
+    // slight bounce only when release velocity carries momentum.
+    val springSettle: androidx.compose.animation.core.AnimationSpec<Float> = if (reduceAnimations)
+        tween(durationMillis = 150) else spring(dampingRatio = 1f, stiffness = 400f)
+
+    val springMomentum: androidx.compose.animation.core.AnimationSpec<Float> = if (reduceAnimations)
+        tween(durationMillis = 180) else spring(dampingRatio = 0.8f, stiffness = Spring.StiffnessMediumLow)
+
     // ── Inline queue state (shared by the pager's queue page) ──
     val queueListState = rememberLazyListState()
     var localQueue by remember { mutableStateOf(queue) }
-    var draggedItemIndex by remember { mutableStateOf<Int?>(null) }
-    var dragStartIndex by remember { mutableStateOf<Int?>(null) } // original index at drag start, never changes
-    var draggedDistancePx by remember { mutableStateOf(0f) }   // accumulated Y delta relative to current draggedItemIndex
-    var draggedItemHeight by remember { mutableStateOf(0f) }    // fixed pixel height of one row
+    var draggedItemIndex by remember { mutableStateOf<Int?>(null) } // absolute localQueue index of the dragged row (== dragStartIndex; the list is NOT live-reordered mid-drag)
+    var dragStartIndex by remember { mutableStateOf<Int?>(null) } // absolute localQueue index where the drag began
+    var draggedDistancePx by remember { mutableStateOf(0f) } // accumulated Y delta (px) since drag start — drives both finger-follow and the drop slot
+    var draggedItemHeight by remember { mutableStateOf(0f) } // measured height of one row (px)
     var queueSnapshot by remember { mutableStateOf<List<Song>>(emptyList()) } // localQueue at drag start, for cancel restore
-    var dragOffsetY by remember { mutableStateOf(0f) }          // visual offset of the dragged row (px), for following the finger
     val haptic = LocalHapticFeedback.current
+    val density = LocalDensity.current
+
     // Hold the local preview order while a drop is pending (draggedItemIndex
     // non-null) so the row never appears to fly back before animating into
-    // its slot — fixes the rubber-band "returning to position" on drop.
-    LaunchedEffect(queue) { if (draggedItemIndex == null) localQueue = queue; dragOffsetY = 0f }
+    // its slot.
+    LaunchedEffect(queue) { if (draggedItemIndex == null) localQueue = queue }
     val currentIdx = localQueue.indexOfFirst { it.id == song.id }
     val upcomingSongs = remember(localQueue, currentIdx) {
         when {
@@ -318,7 +338,7 @@ fun NowPlayingScreen(
                                         Spacer(modifier = Modifier.width(12.dp))
                                         Column(modifier = Modifier.weight(1f)) {
                                             Text(song.title ?: "Unknown Title", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                            Text(song.artist ?: "Unknown Artist", color = C.accent, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                            Text(song.artist ?: "Unknown Artist", color = C.accent, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.clickable { onViewArtist() })
                                         }
                                     }
                                     Spacer(Modifier.height(8.dp))
@@ -343,7 +363,18 @@ fun NowPlayingScreen(
                                     Spacer(modifier = Modifier.height(20.dp))
                                     Text(song.title ?: "Unknown Title", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 22.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     Spacer(Modifier.height(4.dp))
-                                    Text(song.artist ?: "Unknown Artist", color = C.accent, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    // Tappable "Artist ›" — drill into the artist's songs.
+                                    Row(
+                                        modifier = Modifier
+                                            .clickable { onViewArtist() }
+                                            .padding(vertical = 2.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.Center
+                                    ) {
+                                        Text(song.artist ?: "Unknown Artist", color = C.accent, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        Spacer(Modifier.width(2.dp))
+                                        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = "View Artist", tint = C.accent, modifier = Modifier.size(18.dp))
+                                    }
                                 }
                             }
                         }
@@ -367,20 +398,21 @@ fun NowPlayingScreen(
                         }
                         VolumeSlider(modifier = Modifier.padding(vertical = 2.dp))
                         Row(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                            // Output button: shows active route icon, opens
-                            // the media output sheet (JioSaavn-style).
-                            val outputRoute = currentAudioRoute(context)
-                            val routeIcon = when (outputRoute) {
-                                AudioRoute.BLUETOOTH -> Icons.Filled.BluetoothAudio
-                                AudioRoute.WIRED -> Icons.Filled.Headphones
-                                AudioRoute.SPEAKER -> Icons.Filled.VolumeUp
-                            }
-                            val routeDesc = when (outputRoute) {
-                                AudioRoute.BLUETOOTH -> "Bluetooth"
-                                AudioRoute.WIRED -> "Headphones"
-                                AudioRoute.SPEAKER -> "Speaker"
+                            // Dynamic output button — icon reflects the ACTIVE route
+                            // (Apple Music behavior), opens the iOS-style picker.
+                            var outputRoute by remember { mutableStateOf(currentAudioRoute(context)) }
+                            LaunchedEffect(showOutputSheet) {
+                                while (true) {
+                                    outputRoute = currentAudioRoute(context)
+                                    delay(1000)
+                                }
                             }
                             IconButton(onClick = { showOutputSheet = true }) {
+                                val (routeIcon, routeDesc) = when (outputRoute) {
+                                    AudioRoute.BLUETOOTH -> Icons.Filled.BluetoothAudio to "Bluetooth"
+                                    AudioRoute.WIRED -> Icons.Filled.Headphones to "Headphones"
+                                    AudioRoute.SPEAKER -> Icons.Filled.VolumeUp to "Speaker"
+                                }
                                 Icon(routeIcon, routeDesc, tint = Color.White, modifier = Modifier.size(22.dp))
                             }
                             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -473,106 +505,7 @@ fun NowPlayingScreen(
                             state = queueListState,
                             modifier = Modifier
                                 .fillMaxSize()
-                                .graphicsLayer { translationY = pagerDragOffset.value * 0.15f }
-                                .pointerInput(localQueue.size) {
-                                    // Long-press drag reordering (Apple Music style)
-                                    detectDragGesturesAfterLongPress(
-                                        onDragStart = { offset ->
-                                            val item = queueListState.layoutInfo.visibleItemsInfo.firstOrNull { offset.y.toInt() in it.offset..(it.offset + it.size) }
-                                            val keyStr = item?.key as? String
-                                            val idx = when {
-                                                keyStr?.startsWith("up_") == true -> {
-                                                    val idStr = keyStr.substringAfter('_')
-                                                    if (idStr.isNotEmpty() && idStr.all { it.isDigit() })
-                                                        localQueue.indexOfFirst { it.id.toString() == idStr }
-                                                    else -1
-                                                }
-                                                else -> -1
-                                            }
-                                            if (idx >= 0 && idx != currentIdx) {
-                                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                                draggedItemIndex = idx
-                                                dragStartIndex = idx
-                                                draggedDistancePx = 0f
-                                                // Use a consistent row height estimate from the actual item size.
-                                                // Fallback to a reasonable default if layout info is stale.
-                                                draggedItemHeight = item?.size?.toFloat() ?: 120f
-                                                queueSnapshot = localQueue
-                                                dragOffsetY = 0f
-                                            }
-                                        },
-                                        onDrag = { change, dragAmount ->
-                                            change.consume()
-                                            val draggedIdx = draggedItemIndex ?: return@detectDragGesturesAfterLongPress
-                                            if (draggedIdx < 0 || draggedIdx >= localQueue.size) return@detectDragGesturesAfterLongPress
-                                            if (draggedItemHeight <= 0f) return@detectDragGesturesAfterLongPress
-                                            if (localQueue.isEmpty()) return@detectDragGesturesAfterLongPress
-
-                                            // Accumulate drag delta relative to the CURRENT dragged position.
-                                            // This is re-based on every swap so the threshold always resets,
-                                            // preventing double-counting and micro-jumps.
-                                            draggedDistancePx += dragAmount.y
-                                            dragOffsetY += dragAmount.y
-
-                                            val deltaRows = (draggedDistancePx / draggedItemHeight).toInt()
-                                            var targetIdx = (draggedIdx + deltaRows).coerceIn(0, localQueue.size - 1)
-
-                                            // Never let the current (Now Playing) song be a drop target.
-                                            if (targetIdx == currentIdx) {
-                                                targetIdx += if (deltaRows > 0) 1 else -1
-                                                targetIdx = targetIdx.coerceIn(0, localQueue.size - 1)
-                                            }
-
-                                            if (draggedIdx != targetIdx && targetIdx != currentIdx && deltaRows != 0) {
-                                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                                val newList = localQueue.toMutableList()
-                                                val item = newList.removeAt(draggedIdx)
-                                                newList.add(targetIdx, item)
-                                                localQueue = newList
-                                                // Re-base: reset accumulated delta relative to the new position.
-                                                draggedItemIndex = targetIdx
-                                                draggedDistancePx = draggedDistancePx - (targetIdx - draggedIdx) * draggedItemHeight
-                                                dragOffsetY = draggedDistancePx
-                                            }
-
-                                            // Auto-scroll at viewport edges during drag (smooth, not jarring)
-                                            val li = queueListState.layoutInfo
-                                            val viewportHeight = li.viewportEndOffset - li.viewportStartOffset
-                                            val scrollThreshold = viewportHeight * 0.15f
-                                            val lastVisible = li.visibleItemsInfo.lastOrNull()
-                                            val firstVisible = li.visibleItemsInfo.firstOrNull()
-                                            if (lastVisible != null && change.position.y > lastVisible.offset + lastVisible.size - scrollThreshold) {
-                                                val targetIndex = (lastVisible.index + 1).coerceAtMost(li.totalItemsCount - 1)
-                                                coroutineScope.launch { queueListState.scrollToItem(targetIndex) }
-                                            } else if (firstVisible != null && change.position.y < firstVisible.offset + scrollThreshold) {
-                                                val targetIndex = (firstVisible.index - 1).coerceAtLeast(0)
-                                                coroutineScope.launch { queueListState.scrollToItem(targetIndex) }
-                                            }
-                                        },
-                                        onDragEnd = {
-                                            val from = dragStartIndex
-                                            val to = draggedItemIndex
-                                            draggedItemIndex = null
-                                            dragStartIndex = null
-                                            draggedDistancePx = 0f
-                                            draggedItemHeight = 0f
-                                            dragOffsetY = 0f
-                                            queueSnapshot = emptyList()
-                                            if (from != null && to != null && from != to && from in localQueue.indices && to in localQueue.indices) {
-                                                onQueueItemReorder(from, to)
-                                            }
-                                        },
-                                        onDragCancel = {
-                                            draggedItemIndex = null
-                                            dragStartIndex = null
-                                            draggedDistancePx = 0f
-                                            draggedItemHeight = 0f
-                                            dragOffsetY = 0f
-                                            localQueue = if (queueSnapshot.isNotEmpty()) queueSnapshot else queue
-                                            queueSnapshot = emptyList()
-                                        }
-                                    )
-                                },
+                                .graphicsLayer { translationY = pagerDragOffset.value * 0.15f },
                             contentPadding = PaddingValues(bottom = 24.dp)
                         ) {
                             // Shuffle / Repeat pair at the head of the queue list
@@ -627,12 +560,86 @@ fun NowPlayingScreen(
                             }
                             itemsIndexed(upcomingSongs, key = { _, s -> "up_${s.id}" }) { _, s ->
                                 val idx = localQueue.indexOfFirst { it.id == s.id }
+                                val dragging = draggedItemIndex != null
+                                val isDraggingThis = draggedItemIndex == idx
+                                val startIdx = dragStartIndex ?: -1
+                                val rowHeightPx = draggedItemHeight
+                                // Signed row-delta from the accumulated drag distance.
+                                val delta = if (dragging && startIdx >= 0 && rowHeightPx > 0f)
+                                    (draggedDistancePx / rowHeightPx).roundToInt() else 0
+                                // Drop slot the dragged row is pointing at. An upcoming
+                                // song can only land at/after the now-playing row, so
+                                // clamp into [currentIdx+1, last].
+                                val targetIdx = if (dragging && startIdx >= 0) {
+                                    val low = if (currentIdx >= 0) currentIdx + 1 else 0
+                                    (startIdx + delta).coerceIn(low, localQueue.size - 1)
+                                } else -1
+
+                                // Visual gap-open for neighbors: shift rows between the
+                                // drag start and the target slot so the dragged row
+                                // appears to land there (no list mutation until release).
+                                val shiftY = when {
+                                    !dragging -> 0f
+                                    isDraggingThis -> 0f
+                                    targetIdx > startIdx && idx in (startIdx + 1)..targetIdx -> rowHeightPx
+                                    targetIdx < startIdx && idx in targetIdx..(startIdx - 1) -> -rowHeightPx
+                                    else -> 0f
+                                }
+
+                                // Per-row long-press vertical drag → reorder. Horizontal
+                                // swipe → remove (InlineQueueRow's SwipeToDismissBox).
+                                val rowReorderModifier = Modifier.pointerInput(s.id) {
+                                    detectDragGesturesAfterLongPress(
+                                        onDragStart = {
+                                            if (draggedItemIndex != null) return@detectDragGesturesAfterLongPress
+                                            val startIdx = localQueue.indexOfFirst { it.id == s.id }
+                                            if (startIdx < 0 || startIdx == currentIdx) return@detectDragGesturesAfterLongPress
+                                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                            draggedItemIndex = startIdx
+                                            dragStartIndex = startIdx
+                                            draggedDistancePx = 0f
+                                            draggedItemHeight = with(density) { 64.dp.toPx() }
+                                            queueSnapshot = localQueue
+                                        },
+                                        onDrag = { change, dragAmount ->
+                                            if (draggedItemIndex == null) return@detectDragGesturesAfterLongPress
+                                            // Take the gesture for ourselves so the LazyColumn
+                                            // doesn't scroll underneath the reorder.
+                                            change.consume()
+                                            draggedDistancePx += dragAmount.y
+                                        },
+                                        onDragEnd = {
+                                            val from = dragStartIndex
+                                            if (from != null && draggedItemHeight > 0f) {
+                                                val delta = (draggedDistancePx / draggedItemHeight).roundToInt()
+                                                val low = if (currentIdx >= 0) currentIdx + 1 else 0
+                                                val to = (from + delta).coerceIn(low, localQueue.size - 1)
+                                                if (to != from && to in localQueue.indices) {
+                                                    onQueueItemReorder(from, to)
+                                                }
+                                            }
+                                            draggedDistancePx = 0f
+                                            draggedItemIndex = null
+                                            dragStartIndex = null
+                                            queueSnapshot = emptyList()
+                                        },
+                                        onDragCancel = {
+                                            draggedDistancePx = 0f
+                                            draggedItemIndex = null
+                                            dragStartIndex = null
+                                            queueSnapshot = emptyList()
+                                        }
+                                    )
+                                }
                                 InlineQueueRow(
                                     song = s,
                                     onClick = { onQueueItemClick(s) },
                                     onRemove = { onQueueItemRemove(s) },
-                                    isDragging = draggedItemIndex != null && idx == draggedItemIndex,
-                                    dragOffsetY = if (idx == draggedItemIndex) dragOffsetY else 0f
+                                    isDragging = isDraggingThis,
+                                    dragOffsetY = if (isDraggingThis) draggedDistancePx else 0f,
+                                    shiftY = shiftY,
+                                    alpha = if (dragging) (if (isDraggingThis) 1f else 0.5f) else 1f,
+                                    reorderModifier = rowReorderModifier
                                 )
                             }
                         }
@@ -642,7 +649,7 @@ fun NowPlayingScreen(
         }
     }
 
-    // ── Output picker (JioSaavn-style bottom sheet) ──
+    // ── Output picker (Apple Music style) ──
     if (showOutputSheet) {
         MediaOutputSheet(onDismiss = { showOutputSheet = false })
     }
@@ -709,354 +716,5 @@ private fun QueueControlButton(
             fontSize = 13.sp,
             fontWeight = FontWeight.SemiBold
         )
-    }
-}
-
-/**
- * Apple Music wording for the live sleep-timer subtitle:
- *   "Sleeping for 9m 53s"  /  "Sleeping until queue ends"
- * Shown in the menu label and the sheet header while a timer is active.
- */
-@Composable
-fun sleepTimerStatusLabel(
-    active: Boolean,
-    remainingMs: Long,
-    tracksRemaining: Int
-): String? {
-    if (!active) return null
-    return when {
-        tracksRemaining > 0 -> "Sleeping until queue ends ($tracksRemaining left)"
-        tracksRemaining == 0 -> "Sleeping until queue ends"
-        remainingMs > 0 -> {
-            val totalSecs = (remainingMs + 999L) / 1000L
-            val m = totalSecs / 60
-            val s = totalSecs % 60
-            "Sleeping for ${m}m ${s}s"
-        }
-        else -> "Sleeping until queue ends"
-    }
-}
-
-@Composable
-fun VolumeSlider(modifier: Modifier = Modifier) {
-    val context = LocalContext.current
-    val audioManager = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
-    val maxVolume = remember { audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC) }
-    var volume by remember { mutableIntStateOf(audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)) }
-
-    // Follow external volume changes (hardware keys)
-    DisposableEffect(Unit) {
-        val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
-            override fun onChange(selfChange: Boolean) {
-                volume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
-            }
-        }
-        context.contentResolver.registerContentObserver(Settings.System.CONTENT_URI, true, observer)
-        onDispose { context.contentResolver.unregisterContentObserver(observer) }
-    }
-
-    Row(modifier = modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Icon(Icons.AutoMirrored.Filled.VolumeDown, null, tint = Color.White.copy(alpha = 0.6f), modifier = Modifier.size(16.dp))
-        // Thin 3dp track, no thumb — iOS slider proportions
-        BoxWithConstraints(
-            modifier = Modifier.weight(1f).height(28.dp).pointerInput(Unit) {
-                detectTapGestures { offset -> audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, ((offset.x / size.width) * maxVolume).toInt().coerceIn(0, maxVolume), 0) }
-            }
-                .pointerInput(maxVolume) {
-                    detectHorizontalDragGestures(
-                        onDragStart = { offset -> audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, ((offset.x / size.width) * maxVolume).toInt().coerceIn(0, maxVolume), 0) },
-                        onHorizontalDrag = { change, dragAmount ->
-                            change.consume()
-                            val target = ((volume + (dragAmount / size.width) * maxVolume).toInt()).coerceIn(0, maxVolume)
-                            if (target != volume) {
-                                volume = target
-                                audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, target, 0)
-                            }
-                        }
-                    )
-                },
-            contentAlignment = Alignment.CenterStart
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(3.dp)
-                    .clip(RoundedCornerShape(1.5.dp))
-                    .background(Color.White.copy(alpha = 0.25f))
-            ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth(volume / maxVolume.toFloat())
-                        .height(3.dp)
-                        .clip(RoundedCornerShape(1.5.dp))
-                        .background(Color.White)
-                )
-            }
-        }
-        Icon(Icons.AutoMirrored.Filled.VolumeUp, null, tint = Color.White.copy(alpha = 0.6f), modifier = Modifier.size(20.dp))
-    }
-}
-
-// --- Synced lyrics (Apple Music type scale: huge active vs dimmed lines) ---
-@Composable
-fun SyncedLyricsView(lyricsText: String?, progress: Long, onSeek: (Long) -> Unit, modifier: Modifier = Modifier) {
-    val lyricsLines = remember(lyricsText) { parseLrc(lyricsText) }
-    val listState = rememberLazyListState()
-
-    if (lyricsLines.isEmpty()) {
-        Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text(
-                text = lyricsText ?: "No lyrics available.", color = Color.White.copy(alpha = 0.5f), fontSize = 18.sp, fontWeight = FontWeight.SemiBold, textAlign = androidx.compose.ui.text.style.TextAlign.Center, modifier = Modifier.verticalScroll(rememberScrollState())
-            )
-        }
-        return
-    }
-
-    val activeIndex = lyricsLines.indexOfLast { it.startTimeMs <= progress }.coerceAtLeast(0)
-    val isUserScrolling = listState.isScrollInProgress
-
-    LaunchedEffect(activeIndex) {
-        if (activeIndex >= 0 && !isUserScrolling) {
-            listState.animateScrollToItem(index = maxOf(0, activeIndex - 3))
-        }
-    }
-
-    LazyColumn(state = listState, modifier = modifier.fillMaxSize(), contentPadding = PaddingValues(top = 16.dp, bottom = 64.dp)) {
-        itemsIndexed(lyricsLines) { index, line ->
-            val isActive = index == activeIndex
-            Text(
-                text = line.text.ifEmpty { "♪" },
-                color = if (isActive) Color.White else Color.White.copy(alpha = 0.38f),
-                fontSize = if (isActive) 26.sp else 22.sp,
-                fontWeight = if (isActive) FontWeight.Bold else FontWeight.SemiBold,
-                lineHeight = if (isActive) 32.sp else 28.sp,
-                modifier = Modifier.fillMaxWidth().clickable { onSeek(line.startTimeMs) }.padding(vertical = 14.dp)
-            )
-        }
-    }
-}
-
-// -- Scrubber with time labels (extracted; identical gesture engine) --
-@Composable
-fun ScrubberSection(onSeek: (Long) -> Unit, rawFraction: Float, progress: Long, duration: Long) {
-    var isDragging by remember { mutableStateOf(false) }
-    var dragFraction by remember { mutableStateOf(0f) }
-    var dragPreviewTime by remember { mutableStateOf(0L) }
-
-    val animatedFraction by animateFloatAsState(targetValue = if (isDragging) dragFraction else rawFraction, animationSpec = tween(durationMillis = if (isDragging) 0 else 50, easing = androidx.compose.animation.core.FastOutLinearInEasing), label = "progressAnim")
-    val thumbScale by animateFloatAsState(targetValue = if (isDragging) 1f else 0f, animationSpec = tween(durationMillis = 100, easing = androidx.compose.animation.core.FastOutSlowInEasing), label = "thumbScale")
-
-    BoxWithConstraints(
-        modifier = Modifier.fillMaxWidth().height(28.dp)
-            .pointerInput(duration) {
-                detectHorizontalDragGestures(
-                    onDragStart = { offset -> dragFraction = (offset.x / size.width).coerceIn(0f, 1f); dragPreviewTime = (dragFraction * duration).toLong(); isDragging = true },
-                    onHorizontalDrag = { _, dragAmount -> dragFraction = (dragFraction + dragAmount / size.width).coerceIn(0f, 1f); dragPreviewTime = (dragFraction * duration).toLong() },
-                    onDragEnd = { onSeek((dragFraction * duration).toLong().coerceIn(0L, duration)); isDragging = false },
-                    onDragCancel = { isDragging = false }
-                )
-            }
-            .pointerInput(duration) { detectTapGestures { offset -> val tapped = (offset.x / size.width).coerceIn(0f, 1f); dragFraction = tapped; onSeek((tapped * duration).toLong()) } },
-        contentAlignment = Alignment.CenterStart
-    ) {
-        val trackWidthDp = this.maxWidth
-        // Straight Apple-style scrubber track
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(4.dp)
-                .align(Alignment.Center)
-                .clip(RoundedCornerShape(2.dp))
-                .background(Color.White.copy(alpha = 0.25f))
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth(animatedFraction)
-                    .height(4.dp)
-                    .clip(RoundedCornerShape(2.dp))
-                    .background(Color.White)
-            )
-        }
-        Box(modifier = Modifier.size(14.dp).align(Alignment.CenterStart).offset(x = (trackWidthDp * animatedFraction) - 7.dp).scale(thumbScale).clip(CircleShape).background(Color.White).shadow(elevation = 3.dp, shape = CircleShape))
-    }
-
-    Row(modifier = Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-        // Monospaced digits (tnum) like iOS
-        val timeStyle = androidx.compose.material3.LocalTextStyle.current.copy(fontFeatureSettings = "tnum")
-        Text(
-            text = formatDuration(if (isDragging) dragPreviewTime else progress),
-            color = Color.White.copy(alpha = 0.6f),
-            fontSize = 13.sp, fontWeight = FontWeight.SemiBold, style = timeStyle
-        )
-        Text(
-            text = if (duration > 0) "-" + formatDuration(duration - progress) else "-0:00",
-            color = Color.White.copy(alpha = 0.6f),
-            fontSize = 13.sp, fontWeight = FontWeight.SemiBold, style = timeStyle
-        )
-    }
-}
-
-// -- Inline queue row (Apple Music "Playing Next"): swipe-to-delete only —
-//    no drag handle; reordering is long-press anywhere on the row. --
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun InlineQueueRow(
-    song: Song,
-    onClick: () -> Unit,
-    onRemove: () -> Unit = {},
-    isDragging: Boolean = false,
-    dragOffsetY: Float = 0f
-) {
-    val C = appleColors()
-    val dismissState = rememberSwipeToDismissBoxState(
-        confirmValueChange = { dismissValue ->
-            if (dismissValue == SwipeToDismissBoxValue.EndToStart) {
-                onRemove()
-                return@rememberSwipeToDismissBoxState true
-            }
-            false
-        }
-    )
-    val scale by animateFloatAsState(targetValue = if (isDragging) 1.04f else 1f, animationSpec = tween(150), label = "dragScale")
-    val translationY by animateFloatAsState(targetValue = if (isDragging) dragOffsetY else 0f, animationSpec = spring(
-        stiffness = 500f,
-        dampingRatio = 0.8f
-    ), label = "dragTranslate")
-    SwipeToDismissBox(
-        state = dismissState, enableDismissFromStartToEnd = false,
-        backgroundContent = {
-            val color by animateColorAsState(targetValue = if (dismissState.targetValue == SwipeToDismissBoxValue.EndToStart) C.destructive else Color.Transparent, label = "swipeColor")
-            Box(modifier = Modifier.fillMaxSize().background(color, RoundedCornerShape(8.dp)).padding(end = 16.dp), contentAlignment = Alignment.CenterEnd) {
-                if (dismissState.targetValue == SwipeToDismissBoxValue.EndToStart) Icon(Icons.Filled.Delete, contentDescription = "Remove", tint = Color.White)
-            }
-        }
-    ) {
-        Box(modifier = Modifier
-            .graphicsLayer {
-                scaleX = scale
-                scaleY = scale
-                shadowElevation = if (isDragging) 12f else 0f
-                shape = RoundedCornerShape(8.dp)
-                clip = false
-                this.translationY = translationY
-            }
-        ) {
-            Row(modifier = Modifier.fillMaxWidth().clickable { onClick() }.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                AlbumArt(song = song, audioUri = song.uri, isActive = false, size = 48.dp, cornerRadius = 6.dp)
-                Spacer(modifier = Modifier.width(12.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(text = song.title ?: "Unknown Title", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(text = song.artist ?: "Unknown Artist", color = Color.White.copy(alpha = 0.6f), fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun EqualizerBars(isAnimating: Boolean, color: Color, modifier: Modifier = Modifier) {
-    val transition = rememberInfiniteTransition(label = "equalizer")
-    val bars = List(3) { index ->
-        transition.animateFloat(
-            initialValue = 0.3f,
-            targetValue = 1f,
-            animationSpec = infiniteRepeatable(
-                animation = tween(durationMillis = 320 + index * 140, easing = LinearEasing),
-                repeatMode = RepeatMode.Reverse
-            ),
-            label = "eqBar$index"
-        )
-    }
-    Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-        bars.forEach { bar ->
-            val h = if (isAnimating) (5f + 13f * bar.value).dp else 10.dp
-            Box(modifier = Modifier.width(3.dp).height(h).clip(RoundedCornerShape(2.dp)).background(color))
-        }
-    }
-}
-
-// -- Apple Music-style Sleep Timer sheet --------------------------------
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun SleepTimerSheet(
-    isTimerActive: Boolean,
-    selectedOption: String?,
-    liveStatus: String? = null,
-    onSelectOption: (String) -> Unit,
-    onCancelTimer: () -> Unit,
-    onDismiss: () -> Unit
-) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val C = appleColors()
-
-    val options = listOf(
-        "When Current Song Ends", "End of Queue",
-        "5 Minutes", "10 Minutes", "15 Minutes",
-        "30 Minutes", "45 Minutes", "1 Hour", "2 Hours"
-    )
-
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, containerColor = Color.Transparent) {
-        Box(
-            modifier = Modifier
-                .navigationBarsPadding()
-                .fillMaxWidth()
-                .padding(start = 8.dp, end = 8.dp, bottom = 8.dp),
-            contentAlignment = Alignment.BottomCenter
-        ) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                // Live subtitle while active — Apple places it just above the card.
-                if (isTimerActive && liveStatus != null) {
-                    Text(
-                        liveStatus,
-                        color = C.secondaryLabel,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Medium,
-                        modifier = Modifier.padding(bottom = 10.dp)
-                    )
-                }
-
-                // Centered grouped card — Apple Music's round, elevated surface.
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(C.cardElevated)
-                ) {
-                    options.forEachIndexed { index, label ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { onSelectOption(label) }
-                                .padding(horizontal = 16.dp, vertical = 14.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(label, color = C.label, fontSize = 17.sp, fontWeight = FontWeight.Normal, modifier = Modifier.weight(1f))
-                            AnimatedVisibility(
-                                visible = selectedOption == label && isTimerActive,
-                                enter = scaleIn(tween(150)) + fadeIn(tween(150)),
-                                exit = scaleOut(tween(100)) + fadeOut(tween(100))
-                            ) {
-                                Icon(Icons.Filled.Check, null, tint = C.accent, modifier = Modifier.size(20.dp))
-                            }
-                        }
-                        if (index < options.size - 1) {
-                            HorizontalDivider(color = C.separator.copy(alpha = 0.5f), thickness = 0.5.dp, modifier = Modifier.padding(start = 16.dp))
-                        }
-                    }
-                }
-
-                // Cancel — Apple places it as a top-aligned text button above the
-                // card when a timer is running; here pinned above the card so it
-                // scrolls with the sheet content.
-                if (isTimerActive) {
-                    TextButton(
-                        onClick = { onCancelTimer(); onDismiss() },
-                        modifier = Modifier.padding(top = 14.dp)
-                    ) {
-                        Text("Cancel", color = C.label, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
-                    }
-                }
-            }
-        }
     }
 }

@@ -184,13 +184,14 @@ class AppleMusicNotificationProvider(
             .setLargeIcon(albumArtBitmap)
             .setStyle(
                 MediaStyleNotificationHelper.MediaStyle(mediaSession)
-                    // Compact view (realme Mini Capsule / dynamic island): like, prev, play/pause
+                    // Compact view (realme Mini Capsule / dynamic island): prev, fav, play/pause
                     .setShowActionsInCompactView(0, 1, 2)
             )
-            // Action order: favorite(0), prev(1), play/pause(2), next(3), repeat(4)
-            // This puts the heart first (like Spotify) for the dynamic island.
-            .addAction(favoriteAction)
+            // Action order: prev(0), favorite(1), play/pause(2), next(3), repeat(4)
+            // Heart sits beside prev at bottom-left in the compact view, avoiding overlap
+            // with the Next button on Realme dynamic island.
             .addAction(prevAction)
+            .addAction(favoriteAction)
             .addAction(playPauseAction)
             .addAction(nextAction)
             .addAction(repeatAction)

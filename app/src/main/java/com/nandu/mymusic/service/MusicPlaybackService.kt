@@ -159,6 +159,13 @@ class MusicPlaybackService : MediaSessionService() {
          *
          * Strictly best-effort: every failure path is silent and leaves the
          * notification buttons (provider actions + custom layout) working.
+         *
+         * NOTE: We send ONLY the heart button as a platform media-button preference
+         * (not repeat). Previously [heart, repeat] competed with transport controls
+         * on Realme's dynamic island, causing the heart to shift or disappear when
+         * Next appeared/disappeared. By sending just the heart, it gets a stable
+         * slot beside the transport buttons. Repeat is available in the expanded
+         * notification view via the notification actions.
          */
         private fun updatePlatformMediaButtonPreferences(
             session: MediaSession,
@@ -171,27 +178,19 @@ class MusicPlaybackService : MediaSessionService() {
                 val favIds = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                     .getStringSet(KEY_FAV_IDS, emptySet()) ?: emptySet()
                 val isFavorite = player.currentMediaItem?.mediaId?.let { favIds.contains(it) } ?: false
-                val repeatMode = player.repeatMode
                 val heartRes =
                     if (isFavorite) com.nandu.mymusic.R.drawable.ic_notification_heart_filled
                     else com.nandu.mymusic.R.drawable.ic_notification_heart_outline
-                val repeatRes =
-                    when (repeatMode) {
-                        Player.REPEAT_MODE_ONE -> com.nandu.mymusic.R.drawable.ic_notification_repeat_one
-                        Player.REPEAT_MODE_ALL -> com.nandu.mymusic.R.drawable.ic_notification_repeat
-                        else -> com.nandu.mymusic.R.drawable.ic_notification_repeat_off
-                    }
                 val heartTitle =
                     if (isFavorite) "Remove from Favorites" else "Add to Favorites"
-                val repeatTitle = when (repeatMode) {
-                    Player.REPEAT_MODE_ONE -> "Repeat One"
-                    Player.REPEAT_MODE_ALL -> "Repeat All"
-                    else -> "Repeat Off"
-                }
+                // Send ONLY the heart button as a platform media-button preference.
+                // Previously we sent [heart, repeat] — the repeat button competed
+                // with transport controls on Realme's dynamic island, causing the
+                // heart to disappear when Next appeared/disappeared. By sending
+                // just the heart, it gets a stable slot beside the transport buttons.
                 val buttons = listOf(
-                    buildMediaButton(appContext, heartRes, ACTION_TOGGLE_FAVORITE, heartTitle),
-                    buildMediaButton(appContext, repeatRes, ACTION_CYCLE_REPEAT, repeatTitle)
-                ) ?: return
+                    buildMediaButton(appContext, heartRes, ACTION_TOGGLE_FAVORITE, heartTitle)
+                ).filterNotNull()
                 platform.javaClass
                     .getMethod("setMediaButtonPreferences", List::class.java)
                     .invoke(platform, buttons)
