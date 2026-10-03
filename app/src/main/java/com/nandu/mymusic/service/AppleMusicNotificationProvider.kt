@@ -111,12 +111,26 @@ class AppleMusicNotificationProvider(
                 Player.COMMAND_PLAY_PAUSE
             )
         }
-        val nextAction = actionFactory.createMediaAction(
-            mediaSession,
-            IconCompat.createWithResource(context, R.drawable.ic_notification_next),
-            "Next",
-            Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM
-        )
+        // ── Next: keep it a stable slot. At the last track (no next item) it is
+        //    DISABLED rather than removed, so the compact view never re-lays-out
+        //    and the transport icons stop "mixing up" when the queue ends. ──
+        val hasNext = player.currentMediaItemIndex >= 0 &&
+            player.currentMediaItemIndex < player.mediaItemCount - 1
+        val nextAction = if (hasNext) {
+            actionFactory.createMediaAction(
+                mediaSession,
+                IconCompat.createWithResource(context, R.drawable.ic_notification_next),
+                "Next",
+                Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM
+            )
+        } else {
+            // Non-functional placeholder that keeps the Next slot in the compact
+            // view so the layout stays stable when the queue has no next item.
+            NotificationCompat.Action.Builder(
+                IconCompat.createWithResource(context, R.drawable.ic_notification_next),
+                "Next", null
+            ).build()
+        }
 
         // ── Favorite (heart): custom action — toggled in handleCustomCommand ──
         val isFavorite = isCurrentSongFavorite(player)
@@ -129,6 +143,23 @@ class AppleMusicNotificationProvider(
             ),
             if (isFavorite) "Remove from Favorites" else "Add to Favorites",
             MusicPlaybackService.ACTION_TOGGLE_FAVORITE,
+            Bundle.EMPTY
+        )
+
+        // ── Shuffle: custom action — physically re-shuffles the upcoming queue
+        //    (handled in the service's toggleShuffle + handleCustomCommand). ──
+        val isShuffleOn = context.getSharedPreferences(
+            MusicPlaybackService.PREFS_NAME, Context.MODE_PRIVATE
+        ).getBoolean(MusicPlaybackService.KEY_SHUFFLE_MODE, false)
+        val shuffleAction = actionFactory.createCustomAction(
+            mediaSession,
+            IconCompat.createWithResource(
+                context,
+                if (isShuffleOn) R.drawable.ic_notification_shuffle
+                else R.drawable.ic_notification_shuffle_off
+            ),
+            if (isShuffleOn) "Shuffle On" else "Shuffle Off",
+            MusicPlaybackService.ACTION_TOGGLE_SHUFFLE,
             Bundle.EMPTY
         )
 
@@ -187,13 +218,14 @@ class AppleMusicNotificationProvider(
                     // Compact view (realme Mini Capsule / dynamic island): prev, fav, play/pause
                     .setShowActionsInCompactView(0, 1, 2)
             )
-            // Action order: prev(0), favorite(1), play/pause(2), next(3), repeat(4)
-            // Heart sits beside prev at bottom-left in the compact view, avoiding overlap
-            // with the Next button on Realme dynamic island.
+            // Action order: prev(0), favorite(1), play/pause(2), next(3), shuffle(4), repeat(5)
+            // Heart sits beside prev at bottom-left in the compact view. The Next slot is
+            // always present (disabled at the last track) so the layout never re-flows.
             .addAction(prevAction)
             .addAction(favoriteAction)
             .addAction(playPauseAction)
             .addAction(nextAction)
+            .addAction(shuffleAction)
             .addAction(repeatAction)
 
         return MediaNotification(NOTIFICATION_ID, builder.build())
@@ -237,6 +269,10 @@ class AppleMusicNotificationProvider(
                 context.getSharedPreferences(
                     MusicPlaybackService.PREFS_NAME, Context.MODE_PRIVATE
                 ).edit().putInt(MusicPlaybackService.KEY_REPEAT_MODE, next).apply()
+                return true
+            }
+            MusicPlaybackService.ACTION_TOGGLE_SHUFFLE -> {
+                MusicPlaybackService.toggleShuffle(session)
                 return true
             }
             else -> return false

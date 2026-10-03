@@ -24,6 +24,8 @@ public final class PrefsStore {
     public static final String KEY_LAST_URI    = "last_song_uri";
     public static final String KEY_PLAYLISTS   = "custom_playlists_keys";
     public static final String KEY_SHUFFLE_MODE = "shuffle_mode_state";
+    /** Snapshot of the pre-shuffle upcoming order so shuffle-off restores it. */
+    public static final String KEY_ORIGINAL_QUEUE_IDS = "original_queue_ids";
     public static final String KEY_REPEAT_MODE  = "repeat_mode_state";
     public static final String KEY_LAST_POSITION = "last_song_position";
     public static final String KEY_QUEUE_IDS     = "saved_queue_ids";

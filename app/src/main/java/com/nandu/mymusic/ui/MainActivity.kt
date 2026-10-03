@@ -39,6 +39,16 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    // Shuffle toggled from the system media notification — the service already
+    // re-ordered the shared ExoPlayer; re-sync the app's live queue + flag.
+    private val shuffleModeChangedReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (intent.action == MusicPlaybackService.ACTION_SHUFFLE_MODE_CHANGED) {
+                musicViewModel.syncShuffleFromService()
+            }
+        }
+    }
+
     private val downloadCompleteReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
 
@@ -80,6 +90,9 @@ class MainActivity : ComponentActivity() {
         val favoritesFilter = IntentFilter(MusicPlaybackService.ACTION_FAVORITES_CHANGED)
         registerReceiver(favoritesChangedReceiver, favoritesFilter, RECEIVER_NOT_EXPORTED)
 
+        val shuffleFilter = IntentFilter(MusicPlaybackService.ACTION_SHUFFLE_MODE_CHANGED)
+        registerReceiver(shuffleModeChangedReceiver, shuffleFilter, RECEIVER_NOT_EXPORTED)
+
         checkStoragePermission()
     }
 
@@ -87,6 +100,7 @@ class MainActivity : ComponentActivity() {
         super.onDestroy()
         unregisterReceiver(downloadCompleteReceiver)
         unregisterReceiver(favoritesChangedReceiver)
+        unregisterReceiver(shuffleModeChangedReceiver)
     }
 
     private fun checkStoragePermission() {

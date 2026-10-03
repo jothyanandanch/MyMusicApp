@@ -2,6 +2,7 @@ package com.nandu.mymusic.viewmodel;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
 
@@ -84,22 +85,37 @@ public final class SessionRestore {
                     resolved = songById.get(id);
                 } catch (NumberFormatException ignored) {}
             }
-            if (resolved != null) {
-                restoredQueue.add(resolved);
-                if (i == exoPlayer.getCurrentMediaItemIndex()) {
-                    resolvedIndex = restoredQueue.size() - 1;
-                }
+            if (resolved == null) {
+                // Keep a lightweight placeholder so the UI list stays 1:1 aligned
+                // with the live player instead of silently shrinking it (which
+                // clobbered reorders). Self-heals: a later call re-resolves the
+                // placeholder's id/uri once the real song lands in the library.
+                long pid = 0;
+                try { pid = Long.parseLong(item.mediaId); } catch (NumberFormatException ignored) {}
+                Uri pUri = (item.localConfiguration != null) ? item.localConfiguration.uri : null;
+                resolved = new Song(pid, "", "Unknown", null, pUri, 0, null, null);
+            }
+            restoredQueue.add(resolved);
+            if (i == exoPlayer.getCurrentMediaItemIndex()) {
+                resolvedIndex = restoredQueue.size() - 1;
             }
         }
 
-        if (restoredQueue.isEmpty() || resolvedIndex < 0) return;
+        if (restoredQueue.isEmpty()) return;
 
+        // Keep the UI list 1:1 aligned with the live player (including any
+        // placeholders we couldn't resolve yet — a later library load re-resolves
+        // them). Only advance currentIndex / currentSong when the current item
+        // itself resolved; otherwise leave the existing current-song state alone
+        // (the player already knows its own current item).
         final int finalResolvedIndex = resolvedIndex;
         core.withQueue(() -> {
             core.setQueue(restoredQueue);
-            core.setCurrentIndex(finalResolvedIndex);
+            if (finalResolvedIndex >= 0) core.setCurrentIndex(finalResolvedIndex);
         });
-        core.currentSongLive().postValue(core.queueList().get(core.currentIndex()));
+        if (finalResolvedIndex >= 0 && finalResolvedIndex < core.queueList().size()) {
+            core.currentSongLive().postValue(core.queueList().get(finalResolvedIndex));
+        }
         core.progressLive().postValue(exoPlayer.getCurrentPosition());
         core.isPlayingLive().postValue(exoPlayer.isPlaying());
         core.shuffleModeLive().setValue(exoPlayer.getShuffleModeEnabled());

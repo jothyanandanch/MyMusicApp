@@ -61,13 +61,20 @@ class MusicPlaybackService : MediaSessionService() {
         const val PREFS_NAME = "MyMusicPrefs"
         const val KEY_FAV_IDS = "favorite_song_ids"
         const val KEY_REPEAT_MODE = "repeat_mode_state"
+        const val KEY_SHUFFLE_MODE = "shuffle_mode_state"
+        const val KEY_QUEUE_IDS = "saved_queue_ids"
+        const val KEY_ORIGINAL_QUEUE_IDS = "original_queue_ids"
 
         /** Custom session commands sent by SystemUI media controls (Android 13+). */
         const val ACTION_TOGGLE_FAVORITE = "com.nandu.mymusic.action.TOGGLE_FAVORITE"
         const val ACTION_CYCLE_REPEAT = "com.nandu.mymusic.action.CYCLE_REPEAT"
+        const val ACTION_TOGGLE_SHUFFLE = "com.nandu.mymusic.action.TOGGLE_SHUFFLE"
 
         /** Broadcast: favorites were toggled from SystemUI — app should re-sync its state. */
         const val ACTION_FAVORITES_CHANGED = "com.nandu.mymusic.action.FAVORITES_CHANGED"
+
+        /** Broadcast: shuffle was toggled from SystemUI — app re-syncs queue order + flag. */
+        const val ACTION_SHUFFLE_MODE_CHANGED = "com.nandu.mymusic.action.SHUFFLE_MODE_CHANGED"
 
         /** Live reference to the running session so the app can refresh the layout. */
         private var activeSession: MediaSession? = null
@@ -97,6 +104,74 @@ class MusicPlaybackService : MediaSessionService() {
             updatePlatformMediaButtonPreferences(session, appContext)
         }
 
+        /**
+         * Physically re-shuffle / restore the upcoming queue from a notification
+         * control. Mirrors the app's [QueueManager.toggleShuffle] model (the
+         * player's native shuffle is never used; order is a real list
+         * permutation, current song pinned in place) so the running app and the
+         * standalone service stay in agreement.
+         *
+         * - ON: snapshot the pre-shuffle upcoming order to [KEY_ORIGINAL_QUEUE_IDS],
+         *   shuffle every item after the current one (current stays put), and
+         *   persist the new live order to [KEY_QUEUE_IDS].
+         * - OFF: restore the upcoming items to their [KEY_ORIGINAL_QUEUE_IDS]
+         *   order, persist the restored live order, and drop the snapshot.
+         *
+         * A running app re-syncs from the player + these prefs via
+         * [ACTION_SHUFFLE_MODE_CHANGED]; when only the service is alive, the
+         * persisted order is what session-restore replays later.
+         */
+        @JvmStatic
+        fun toggleShuffle(session: MediaSession) {
+            val player = session.player
+            val appContext = sessionServiceContext ?: return
+            val prefs = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val nowOn = !prefs.getBoolean(KEY_SHUFFLE_MODE, false)
+            prefs.edit().putBoolean(KEY_SHUFFLE_MODE, nowOn).apply()
+
+            val count = player.mediaItemCount
+            if (count < 2) return
+            val cur = player.currentMediaItemIndex
+            if (cur < 0 || cur + 1 >= count) return // nothing after the current song to shuffle
+
+            if (nowOn) {
+                // Snapshot the full pre-shuffle queue order (same format as
+                // KEY_QUEUE_IDS) so the app's unshuffle restore finds every song.
+                val fullOrder = (0 until count).map { player.getMediaItemAt(it).mediaId }
+                    .joinToString(",")
+                prefs.edit().putString(KEY_ORIGINAL_QUEUE_IDS, fullOrder).apply()
+                val upcoming = (cur + 1 until count).map { player.getMediaItemAt(it) }
+                val newItems = (0 until cur + 1).map { player.getMediaItemAt(it) } + upcoming.shuffled()
+                player.setMediaItems(newItems, cur, player.currentPosition)
+            } else {
+                val original = (prefs.getString(KEY_ORIGINAL_QUEUE_IDS, "") ?: "").split(",").filter { it.isNotBlank() }
+                val originalUpcoming = original.drop(cur + 1)
+                if (originalUpcoming.isNotEmpty()) {
+                    // The player's current upcoming items are the same songs, just
+                    // reordered — pull each original-order song's MediaItem object.
+                    val candidateItems = (cur + 1 until count).map { player.getMediaItemAt(it) }
+                    val restoredUpcoming = originalUpcoming.mapNotNull { id ->
+                        candidateItems.firstOrNull { it.mediaId == id }
+                    }
+                    if (restoredUpcoming.size == originalUpcoming.size) {
+                        val newItems = (0 until cur + 1).map { player.getMediaItemAt(it) } + restoredUpcoming
+                        player.setMediaItems(newItems, cur, player.currentPosition)
+                    }
+                    prefs.edit().remove(KEY_ORIGINAL_QUEUE_IDS).apply()
+                }
+            }
+
+            // Persist the live queue order so session-restore (and a running app
+            // re-syncing) agree with what the player now holds.
+            val liveOrder = (0 until count).map { player.getMediaItemAt(it).mediaId }.joinToString(",")
+            prefs.edit().putString(KEY_QUEUE_IDS, liveOrder).apply()
+
+            refreshCustomLayout()
+            // The 13+ path re-posts the notification from onCustomCommand (instance
+            // scope); the pre-13 path relies on Media3 rebuilding after setMediaItems.
+            appContext.sendBroadcast(Intent(ACTION_SHUFFLE_MODE_CHANGED))
+        }
+
         private fun buildCustomLayout(
             favIds: Set<String>,
             repeatMode: Int,
@@ -112,6 +187,17 @@ class MusicPlaybackService : MediaSessionService() {
                 .setDisplayName(
                     if (isFavorite) "Remove from Favorites" else "Add to Favorites"
                 )
+                .setEnabled(true)
+                .build()
+            val isShuffleOn = sessionServiceContext?.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                ?.getBoolean(KEY_SHUFFLE_MODE, false) ?: false
+            val shuffleButton = CommandButton.Builder()
+                .setSessionCommand(SessionCommand(ACTION_TOGGLE_SHUFFLE, Bundle.EMPTY))
+                .setIconResId(
+                    if (isShuffleOn) com.nandu.mymusic.R.drawable.ic_notification_shuffle
+                    else com.nandu.mymusic.R.drawable.ic_notification_shuffle_off
+                )
+                .setDisplayName(if (isShuffleOn) "Shuffle On" else "Shuffle Off")
                 .setEnabled(true)
                 .build()
             val repeatButton = CommandButton.Builder()
@@ -132,7 +218,9 @@ class MusicPlaybackService : MediaSessionService() {
                 )
                 .setEnabled(true)
                 .build()
-            return listOf(heartButton, repeatButton)
+            // Fixed order [heart, shuffle, repeat] so the buttons never reshuffle
+            // (icon-mix-up) when transport controls appear/disappear.
+            return listOf(heartButton, shuffleButton, repeatButton)
         }
 
         /** Context handle registered by onCreate; cleared in onDestroy. */
@@ -183,13 +271,18 @@ class MusicPlaybackService : MediaSessionService() {
                     else com.nandu.mymusic.R.drawable.ic_notification_heart_outline
                 val heartTitle =
                     if (isFavorite) "Remove from Favorites" else "Add to Favorites"
-                // Send ONLY the heart button as a platform media-button preference.
-                // Previously we sent [heart, repeat] — the repeat button competed
-                // with transport controls on Realme's dynamic island, causing the
-                // heart to disappear when Next appeared/disappeared. By sending
-                // just the heart, it gets a stable slot beside the transport buttons.
+                val isShuffleOn = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                    .getBoolean(KEY_SHUFFLE_MODE, false)
+                val shuffleRes =
+                    if (isShuffleOn) com.nandu.mymusic.R.drawable.ic_notification_shuffle
+                    else com.nandu.mymusic.R.drawable.ic_notification_shuffle_off
+                // Fixed two-button set [heart, shuffle] in a stable slot order so the
+                // dynamic island never reshuffles icons when transport controls
+                // (e.g. Next) appear/disappear.
                 val buttons = listOf(
-                    buildMediaButton(appContext, heartRes, ACTION_TOGGLE_FAVORITE, heartTitle)
+                    buildMediaButton(appContext, heartRes, ACTION_TOGGLE_FAVORITE, heartTitle),
+                    buildMediaButton(appContext, shuffleRes, ACTION_TOGGLE_SHUFFLE,
+                        if (isShuffleOn) "Shuffle On" else "Shuffle Off")
                 ).filterNotNull()
                 platform.javaClass
                     .getMethod("setMediaButtonPreferences", List::class.java)
@@ -350,6 +443,7 @@ class MusicPlaybackService : MediaSessionService() {
                 val sessionCommands = SessionCommands.Builder()
                     .add(SessionCommand(ACTION_TOGGLE_FAVORITE, Bundle.EMPTY))
                     .add(SessionCommand(ACTION_CYCLE_REPEAT, Bundle.EMPTY))
+                    .add(SessionCommand(ACTION_TOGGLE_SHUFFLE, Bundle.EMPTY))
                     .addSessionCommands(MediaSession.ConnectionResult.DEFAULT_SESSION_COMMANDS.commands)
                     .build()
                 return MediaSession.ConnectionResult.AcceptedResultBuilder(session)
@@ -389,6 +483,11 @@ class MusicPlaybackService : MediaSessionService() {
                     }
                     ACTION_CYCLE_REPEAT -> {
                         cycleRepeat(session)
+                        return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
+                    }
+                    ACTION_TOGGLE_SHUFFLE -> {
+                        toggleShuffle(session)
+                        onUpdateNotificationInternal()
                         return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
                     }
                 }

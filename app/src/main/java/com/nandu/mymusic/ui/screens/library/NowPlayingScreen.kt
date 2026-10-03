@@ -203,16 +203,23 @@ fun NowPlayingScreen(
     // Queue-page pull-down (collapses back to the player like iOS).
     val pagerDragOffset = remember { Animatable(0f) }
 
-    /** Drag-to-dismiss gesture (top bar only, like Apple — never fights the scroll). */
+    /** Drag-to-dismiss gesture (top bar only, like Apple — never fights the scroll).
+     *  Consumes only DOWNWARD moves (dismiss). Upward moves are left unconsumed so
+     *  the VerticalPager below can take them (swipe up → Playing Next queue). */
     val dismissDrag = Modifier.pointerInput(Unit) {
         detectVerticalDragGestures(
             onDragStart = { velocityTracker.resetTracking() },
             onVerticalDrag = { change, dragAmount ->
-                change.consume()
-                velocityTracker.addPosition(change.uptimeMillis, change.position)
-                val raw = offsetY.value + dragAmount
-                val newOffset = if (raw < 0f) raw * 0.35f else raw
-                coroutineScope.launch { offsetY.snapTo(newOffset) }
+                // Only steal the gesture once the user is dragging DOWN (dismiss).
+                // Upward swipes pass through to the VerticalPager so they can open
+                // the "Playing Next" queue page.
+                if (dragAmount > 0f) {
+                    change.consume()
+                    velocityTracker.addPosition(change.uptimeMillis, change.position)
+                    val raw = offsetY.value + dragAmount
+                    val newOffset = if (raw < 0f) raw * 0.35f else raw
+                    coroutineScope.launch { offsetY.snapTo(newOffset) }
+                }
             },
             onDragEnd = {
                 val velocity = velocityTracker.calculateVelocity().y
@@ -237,11 +244,16 @@ fun NowPlayingScreen(
         detectVerticalDragGestures(
             onDragStart = { velocityTracker.resetTracking() },
             onVerticalDrag = { change, dragAmount ->
-                change.consume()
-                velocityTracker.addPosition(change.uptimeMillis, change.position)
-                val raw = offsetY.value + dragAmount
-                val newOffset = if (raw < 0f) raw * 0.35f else raw
-                coroutineScope.launch { offsetY.snapTo(newOffset) }
+                // Only the dismiss (downward) direction is ours. Upward moves are
+                // left unconsumed so the VerticalPager underneath takes the swipe
+                // and scrolls to the "Playing Next" queue page.
+                if (dragAmount > 0f) {
+                    change.consume()
+                    velocityTracker.addPosition(change.uptimeMillis, change.position)
+                    val raw = offsetY.value + dragAmount
+                    val newOffset = if (raw < 0f) raw * 0.35f else raw
+                    coroutineScope.launch { offsetY.snapTo(newOffset) }
+                }
             },
             onDragEnd = {
                 val velocity = velocityTracker.calculateVelocity().y
@@ -575,14 +587,15 @@ fun NowPlayingScreen(
                                     (startIdx + delta).coerceIn(low, localQueue.size - 1)
                                 } else -1
 
-                                // Visual gap-open for neighbors: shift rows between the
-                                // drag start and the target slot so the dragged row
-                                // appears to land there (no list mutation until release).
+                                // Visual gap-close for neighbors: when the dragged row moves,
+                                // the rows it vacates are pulled in to fill its old space,
+                                // the way Apple Music slides the above song down into the
+                                // gap when you drag up (no list mutation until release).
                                 val shiftY = when {
                                     !dragging -> 0f
                                     isDraggingThis -> 0f
-                                    targetIdx > startIdx && idx in (startIdx + 1)..targetIdx -> rowHeightPx
-                                    targetIdx < startIdx && idx in targetIdx..(startIdx - 1) -> -rowHeightPx
+                                    targetIdx > startIdx && idx in (startIdx + 1)..targetIdx -> -rowHeightPx
+                                    targetIdx < startIdx && idx in targetIdx..(startIdx - 1) -> rowHeightPx
                                     else -> 0f
                                 }
 

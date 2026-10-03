@@ -439,7 +439,7 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
             message = "What would you like to do?",
             actions = listOf(
                 IosAlertAction("Play Again", onClick = { viewModel.playFromBeginning() }, isDefault = true),
-                IosAlertAction("Shuffle All", onClick = { viewModel.playAllShuffled(currentDisplaySongs) }),
+                IosAlertAction("Shuffle All", onClick = { viewModel.playAllShuffled(currentDisplaySongs, nowPlayingSource?.takeIf { it.isNotBlank() } ?: "Library") }),
                 IosAlertAction("Dismiss", onClick = { viewModel.dismissEndOfQueue() })
             )
         )
@@ -506,10 +506,10 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                                 CollectionDetailView(
                                     title = currentView.name, songs = albumSongs, currentSong = currentSong, favoriteIds = favoriteIds,
                                     sortType = persistentSortType, onSortChange = onSortTypeChange, showSnackbar = showSnackbar,
-                                    onBack = popView, onSongClick = { song -> viewModel.playSong(song, albumSongs) },
+                                    onBack = popView, onSongClick = { song -> viewModel.playSong(song, albumSongs, currentView.name) },
                                     onToggleFavorite = { song -> handleToggleFavorite(song) },
-                                    onShufflePlay = { viewModel.playShuffled(albumSongs) },
-                                    onPlayAll = { if (albumSongs.isNotEmpty()) viewModel.playSong(albumSongs.first(), albumSongs) },
+                                    onShufflePlay = { viewModel.playShuffled(albumSongs, currentView.name) },
+                                    onPlayAll = { if (albumSongs.isNotEmpty()) viewModel.playSong(albumSongs.first(), albumSongs, currentView.name) },
                                     onAddToPlaylist = { songForPlaylistDialog = it }, onAddAllToPlaylist = { songs -> songsForPlaylistDialog = songs },
                                     onViewAlbum = handleViewAlbum, onViewArtist = handleViewArtist, viewModel = viewModel,
                                     onDownload = {song -> songToDownload =song}
@@ -527,10 +527,10 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                                 CollectionDetailView(
                                     title = currentView.name, songs = artistSongs, currentSong = currentSong, favoriteIds = favoriteIds,
                                     sortType = persistentSortType, onSortChange = onSortTypeChange, showSnackbar = showSnackbar,
-                                    onBack = popView, onSongClick = { song -> viewModel.playSong(song, artistSongs) },
+                                    onBack = popView, onSongClick = { song -> viewModel.playSong(song, artistSongs, currentView.name) },
                                     onToggleFavorite = { song -> handleToggleFavorite(song) },
-                                    onShufflePlay = { viewModel.playShuffled(artistSongs) },
-                                    onPlayAll = { if (artistSongs.isNotEmpty()) viewModel.playSong(artistSongs.first(), artistSongs) },
+                                    onShufflePlay = { viewModel.playShuffled(artistSongs, currentView.name) },
+                                    onPlayAll = { if (artistSongs.isNotEmpty()) viewModel.playSong(artistSongs.first(), artistSongs, currentView.name) },
                                     onAddToPlaylist = { songForPlaylistDialog = it }, onAddAllToPlaylist = { songs -> songsForPlaylistDialog = songs },
                                     onViewAlbum = handleViewAlbum, onViewArtist = handleViewArtist, viewModel = viewModel,
                                     onDownload = { song -> songToDownload = song }
@@ -566,7 +566,7 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                                         showSnackbar     = showSnackbar,
                                         isProtected      = isProtected,
                                         onBack           = popView,
-                                        onSongClick      = { song -> viewModel.playSong(song, pSongs) },
+                                        onSongClick      = { song -> viewModel.playSong(song, pSongs, pName) },
                                         onToggleFavorite = { song -> handleToggleFavorite(song) },
                                         onPlayNext       = { song -> viewModel.setPlayNext(song); showSnackbar("Will play next") },
                                         onAddToQueue     = { song -> viewModel.addToQueue(song); showSnackbar("Added to queue") },
@@ -575,8 +575,8 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                                         onViewArtist     = handleViewArtist,
                                         onDownload       = { song -> songToDownload = song },
                                         onEdit           = { showSnackbar("Edit functionality coming soon!") },
-                                        onShufflePlay    = { viewModel.playShuffled(pSongs) },
-                                        onPlayAll        = { if (pSongs.isNotEmpty()) viewModel.playSong(pSongs.first(), pSongs) },
+                                        onShufflePlay    = { viewModel.playShuffled(pSongs, pName) },
+                                        onPlayAll        = { if (pSongs.isNotEmpty()) viewModel.playSong(pSongs.first(), pSongs, pName) },
                                         onAddSong        = { if (!isProtected) playlistToAddSongsTo = pName },
                                         onExportPlaylist = { playlistToExport = pName to pSongs; exportLauncher.launch("$pName.json") },
                                         onAddAllToQueue  = {
@@ -597,7 +597,7 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                                     allSongs = currentDisplaySongs,
                                     favorites = favorites, currentSong = currentSong, favoriteIds = favoriteIds,
                                     sortType = persistentSortType, onSortChange = onSortTypeChange,
-                                    onSongClick = { song -> viewModel.playSong(song, favorites) },
+                                    onSongClick = { song -> viewModel.playSong(song, favorites, "Liked Songs") },
                                     onToggleFavorite = { song -> handleToggleFavorite(song) },
                                     onAddSongs = {list ->
                                         viewModel.setFavoriteBatch(list, true)
@@ -613,7 +613,7 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                                     onViewAlbum = handleViewAlbum,
                                     onViewArtist = handleViewArtist,
                                     onDownload = { song -> songToDownload = song },
-                                    onShufflePlay = { viewModel.playShuffled(favorites) },
+                                    onShufflePlay = { viewModel.playShuffled(favorites, "Liked Songs") },
                                     onEdit = { showSnackbar("Edit functionality coming soon!") }
                                 )
                             }
@@ -631,8 +631,8 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                                 playlists = playlists,
                                 autoGeneratedPlaylists = autoGeneratedPlaylists,
                                 rotationSeed = topPicksRotationSeed,
-                                onSongClick = { song -> viewModel.playSong(song, currentDisplaySongs) },
-                                onSongClickIn = { song, playlistSongs -> viewModel.playSong(song, playlistSongs) },
+                                onSongClick = { song -> viewModel.playSong(song, currentDisplaySongs, "Listen Now") },
+                                onSongClickIn = { song, playlistSongs -> viewModel.playSong(song, playlistSongs, "Liked Songs") },
                                 onToggleFavorite = { song -> handleToggleFavorite(song) },
                                 onOpenPlaylist = { name -> handleOpenPlaylist(name, false) },
                                 onOpenLikedSongs = handleOpenLikedSongs,
@@ -650,7 +650,7 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                                 autoGeneratedPlaylists = autoGeneratedPlaylists,
                                 rotationSeed = topPicksRotationSeed,
                                 isLoading = isLoading,
-                                onSongClick = { song, list -> viewModel.playSong(song, list) },
+                                onSongClick = { song, list -> viewModel.playSong(song, list, "New") },
                                 onOpenPlaylist = { name -> handleOpenPlaylist(name, false) },
                                 onOpenLikedSongs = handleOpenLikedSongs
                             )
@@ -672,9 +672,9 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                                 sortType = persistentSortType,
                                 onSortChange = onSortTypeChange,
                                 showSnackbar = showSnackbar,
-                                onSongClick = { song -> viewModel.playSong(song, currentDisplaySongs) },
+                                onSongClick = { song -> viewModel.playSong(song, currentDisplaySongs, "Library") },
                                 onToggleFavorite = { song -> handleToggleFavorite(song) },
-                                onShuffleAll = { viewModel.playAllShuffled(currentDisplaySongs) },
+                                onShuffleAll = { viewModel.playAllShuffled(currentDisplaySongs, "Library") },
                                 onAddToPlaylist = { song -> songForPlaylistDialog = song },
                                 onAddSongsToPlaylist = { songs -> songsForPlaylistDialog = songs },
                                 onViewAlbum = handleViewAlbum,
@@ -699,7 +699,7 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                                 ),
                                 currentSong = currentSong, favoriteIds = favoriteIds,
                                 showSnackbar = showSnackbar,
-                                onSongClick = { song -> viewModel.playSong(song, listOf(song)) },
+                                onSongClick = { song -> viewModel.playSong(song, listOf(song), "Search") },
                                 onToggleFavorite = { song -> handleToggleFavorite(song) },
                                 onPlayNext = { song -> viewModel.setPlayNext(song); showSnackbar("Will play next") },
                                 onAddToQueue = { song -> viewModel.addToQueue(song); showSnackbar("Added to queue") },

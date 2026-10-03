@@ -5,6 +5,7 @@ import android.content.SharedPreferences;
 import android.os.Handler;
 import android.os.Looper;
 
+import androidx.media3.common.C;
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.Player;
 
@@ -317,15 +318,20 @@ public final class QueueManager {
             List<Song> currentPlaylist = core.queueList();
             int currentIndex = core.currentIndex();
             int index = currentPlaylist.indexOf(song);
-            if (index >= 0 && index != currentIndex) {
-                currentPlaylist.remove(index);
+            if (index < 0 || index == currentIndex) return; // not found / protect Now Playing
+            currentPlaylist.remove(index);
+            if (index < currentIndex) {
+                // Removing before the current song re-indexes it: position-preserving re-sync.
+                int newCurrent = currentIndex - 1;
+                core.setCurrentIndex(newCurrent);
+                resyncQueue(currentPlaylist, newCurrent, capturePosition());
+                core.persistLastIndex(newCurrent);
+            } else {
+                // Removing after the current song: its index is unchanged, so the
+                // incremental remove keeps playback position intact.
                 core.player().removeMediaItem(index);
-                if (index < currentIndex) {
-                    core.setCurrentIndex(currentIndex - 1);
-                    core.persistLastIndex(currentIndex - 1);
-                }
-                core.updateQueueUI();
             }
+            core.updateQueueUI();
         });
     }
 
@@ -340,19 +346,61 @@ public final class QueueManager {
                 int idx = currentPlaylist.indexOf(s);
                 if (idx >= 0 && idx != currentIndex) indicesToRemove.add(idx);
             }
-
+            if (indicesToRemove.isEmpty()) return;
             Collections.sort(indicesToRemove, Collections.reverseOrder());
+            int removedBeforeCurrent = 0;
             for (int idx : indicesToRemove) {
                 currentPlaylist.remove(idx);
-                core.player().removeMediaItem(idx);
-                if (idx < currentIndex) {
-                    core.setCurrentIndex(currentIndex - 1);
-                    currentIndex--;
+                if (idx < currentIndex) removedBeforeCurrent++;
+            }
+            if (removedBeforeCurrent > 0) {
+                // Something before the current song was removed: it re-indexed, so
+                // position-preserving re-sync to keep the playing track in place.
+                int newCurrent = currentIndex - removedBeforeCurrent;
+                core.setCurrentIndex(newCurrent);
+                resyncQueue(currentPlaylist, newCurrent, capturePosition());
+                core.persistLastIndex(newCurrent);
+            } else {
+                // All removals were after the current song: its index is unchanged, so
+                // incremental removes (descending order) keep the playback position.
+                for (int idx : indicesToRemove) {
+                    core.player().removeMediaItem(idx);
                 }
             }
-            core.persistLastIndex(currentIndex);
             core.updateQueueUI();
         });
+    }
+
+    /**
+     * Rebuild the player timeline from {@code queue} WITHOUT restarting the current song.
+     * Keeps the current track at {@code newIndex} and resumes it at {@code positionMs}.
+     *
+     * <p>Used by every index-shifting edit (reorder, play-next, remove-before-current,
+     * insert-before-current, clear-queue). The alternative — {@code moveMediaItem} or
+     * {@code removeMediaItem} that re-indexes the current item — is a destructive playlist
+     * change in Media3 that resets the current position to 0, which is the "reorder creates
+     * a new queue" bug. {@code setMediaItems(items, idx, posMs)} with a captured position
+     * is the position-preserving path.
+     *
+     * <p>Must run on the main thread (it touches the player). Callers already are.
+     */
+    private void resyncQueue(List<Song> queue, int newIndex, long positionMs) {
+        Player p = core.player();
+        if (p == null) return;
+        if (positionMs < 0 || positionMs == C.TIME_UNSET) {
+            positionMs = 0L;
+        }
+        List<MediaItem> items = new ArrayList<>(queue.size());
+        for (Song s : queue) items.add(core.createMediaItem(s));
+        p.setMediaItems(items, newIndex, positionMs);
+    }
+
+    /** Captured current playback position (0 if the player has none yet). */
+    private long capturePosition() {
+        Player p = core.player();
+        if (p == null) return 0L;
+        long pos = p.getCurrentPosition();
+        return pos < 0 || pos == C.TIME_UNSET ? 0L : pos;
     }
 
     /** Takes absolute indices allowing drags across the entire unified queue. */
@@ -363,18 +411,26 @@ public final class QueueManager {
             List<Song> currentPlaylist = core.queueList();
             int currentIndex = core.currentIndex();
             if (fromAbsolute < 0 || fromAbsolute >= currentPlaylist.size() || toAbsolute < 0 || toAbsolute >= currentPlaylist.size()) return;
+            if (fromAbsolute == toAbsolute) return;
             if (fromAbsolute == currentIndex || toAbsolute == currentIndex) return; // Protect Now Playing
 
             Song song = currentPlaylist.remove(fromAbsolute);
             currentPlaylist.add(toAbsolute, song);
-            core.player().moveMediaItem(fromAbsolute, toAbsolute);
 
+            // Retro 3-case current-index bookkeeping. The current item is pinned
+            // (guard above), so only a move that *crosses* currentIndex shifts it.
+            int newCurrent = currentIndex;
             if (fromAbsolute < currentIndex && toAbsolute > currentIndex) {
-                core.setCurrentIndex(currentIndex - 1);
+                newCurrent = currentIndex - 1;
             } else if (fromAbsolute > currentIndex && toAbsolute < currentIndex) {
-                core.setCurrentIndex(currentIndex + 1);
+                newCurrent = currentIndex + 1;
             }
-            core.persistLastIndex(core.currentIndex());
+            core.setCurrentIndex(newCurrent);
+
+            // Position-preserving re-sync: rebuild the timeline but keep the current
+            // track at newCurrent and resume where it was — no restart, no rebuffer.
+            resyncQueue(currentPlaylist, newCurrent, capturePosition());
+            core.persistLastIndex(newCurrent);
             core.updateQueueUI();
         });
     }
@@ -395,15 +451,21 @@ public final class QueueManager {
             for (int i = 0; i < currentPlaylist.size(); i++) {
                 if (currentPlaylist.get(i).getId() == song.getId()) { existingIdx = i; break; }
             }
+            // The current song is a different id (guarded above), so removing existingIdx
+            // can never remove the playing track. Only a removal *before* the current song
+            // shifts the current item's index.
+            int newCurrent = currentIndex;
             if (existingIdx >= 0) {
                 currentPlaylist.remove(existingIdx);
-                core.player().removeMediaItem(existingIdx);
-                if (existingIdx < currentIndex) core.setCurrentIndex(currentIndex - 1);
+                if (existingIdx < currentIndex) newCurrent = currentIndex - 1;
             }
-            int insertIndex = core.currentIndex() + 1;
+            int insertIndex = newCurrent + 1;
             currentPlaylist.add(insertIndex, song);
-            // Use addMediaItem to insert without rebuilding the playlist — avoids rebuffering/pause
-            core.player().addMediaItem(insertIndex, core.createMediaItem(song));
+            core.setCurrentIndex(newCurrent);
+            // One position-preserving re-sync: the current track stays at newCurrent and
+            // resumes where it was; the moved/added song lands immediately after it.
+            resyncQueue(currentPlaylist, newCurrent, capturePosition());
+            core.persistLastIndex(newCurrent);
             core.updateQueueUI();
         });
     }
@@ -462,9 +524,34 @@ public final class QueueManager {
         });
         core.shuffleModeLive().setValue(next);
 
+        // Capture the pre-shuffle full queue order for prefs (only set when
+        // shuffling ON) so a shuffle OFF from the system notification (service)
+        // can restore the same baseline. Read after the monitor block — the
+        // list is set/cleared inside withQueue and toggleShuffle is main-thread.
+        final String persistOriginal;
+        if (next) {
+            List<Song> original = core.originalBeforeShuffle();
+            StringBuilder sb = new StringBuilder();
+            if (original != null) {
+                for (int i = 0; i < original.size(); i++) {
+                    if (i > 0) sb.append(",");
+                    sb.append(original.get(i).getId());
+                }
+            }
+            persistOriginal = sb.toString();
+        } else {
+            persistOriginal = "";
+        }
+
         core.executor().execute(() -> {
-            core.application().getSharedPreferences(PrefsStore.PREFS_NAME, Context.MODE_PRIVATE)
-                    .edit().putBoolean(PrefsStore.KEY_SHUFFLE_MODE, next).commit();
+            android.content.SharedPreferences.Editor edit = core.application().getSharedPreferences(PrefsStore.PREFS_NAME, Context.MODE_PRIVATE).edit();
+            edit.putBoolean(PrefsStore.KEY_SHUFFLE_MODE, next);
+            if (!persistOriginal.isEmpty()) {
+                edit.putString(PrefsStore.KEY_ORIGINAL_QUEUE_IDS, persistOriginal);
+            } else {
+                edit.remove(PrefsStore.KEY_ORIGINAL_QUEUE_IDS);
+            }
+            edit.commit();
         });
     }
 
@@ -642,15 +729,15 @@ public final class QueueManager {
         int currentIndex = core.currentIndex();
         if (currentIndex < 0 || currentIndex >= core.queueList().size()) return;
         core.markUserInteracted();
-        Song current = core.queueList().get(currentIndex);
-        // Remove every item except the one currently playing, WITHOUT rebuilding the
-        // playlist — so the current song keeps playing uninterrupted.
-        core.player().removeMediaItems(0, currentIndex);
-        core.player().removeMediaItems(1, core.player().getMediaItemCount());
         core.withQueue(() -> {
+            Song current = core.queueList().get(currentIndex);
+            // Keep only the current song (Apple Music behavior) via one
+            // position-preserving re-sync — the playing track is at index 0 and
+            // resumes where it was, instead of a destructive removeMediaItems reset.
             core.setQueue(new ArrayList<>(Collections.singletonList(current)));
             core.setCurrentIndex(0);
             core.setOriginalBeforeShuffle(null);
+            resyncQueue(core.queueList(), 0, capturePosition());
         });
         core.updateQueueUI();
         core.persistLastIndex(0);
@@ -660,16 +747,29 @@ public final class QueueManager {
         if (songs == null || songs.isEmpty() || core.player() == null || core.queueList() == null) return;
         core.markUserInteracted();
         core.withQueue(() -> {
-            int insertAt = afterIndex + 1;
+            int currentIndex = core.currentIndex();
             List<Song> currentPlaylist = core.queueList();
-            for (Song song : songs) {
-                currentPlaylist.add(insertAt, song);
-                core.player().addMediaItem(insertAt, core.createMediaItem(song));
-                insertAt++;
-            }
-            if (afterIndex < core.currentIndex()) {
-                core.setCurrentIndex(core.currentIndex() + songs.size());
-                core.persistLastIndex(core.currentIndex());
+            if (afterIndex < currentIndex) {
+                // Inserting before the current song re-indexes it: position-preserving
+                // re-sync to the shifted index, keeping the playing track in place.
+                int insertAt = afterIndex + 1;
+                for (Song song : songs) {
+                    currentPlaylist.add(insertAt, song);
+                    insertAt++;
+                }
+                int newCurrent = currentIndex + songs.size();
+                core.setCurrentIndex(newCurrent);
+                resyncQueue(currentPlaylist, newCurrent, capturePosition());
+                core.persistLastIndex(newCurrent);
+            } else {
+                // Inserting after the current song: its index is unchanged, so
+                // incremental adds preserve the playback position.
+                int insertAt = afterIndex + 1;
+                for (Song song : songs) {
+                    currentPlaylist.add(insertAt, song);
+                    core.player().addMediaItem(insertAt, core.createMediaItem(song));
+                    insertAt++;
+                }
             }
             core.updateQueueUI();
         });

@@ -392,6 +392,63 @@ public class MusicViewModel extends AndroidViewModel implements MusicViewModelCo
     public void setFavoriteBatch(List<Song> songs, boolean favorite) { favoritesManager.setFavoriteBatch(songs, favorite); }
     public void refreshFavoritesFromPrefs() { favoritesManager.refreshFromPrefs(); }
 
+    /**
+     * Re-sync the live queue + shuffle flag after the *service* (notification
+     * control) physically re-shuffled the shared ExoPlayer. The player is already
+     * reordered by [MusicPlaybackService.toggleShuffle]; this just rebuilds the
+     * in-memory [currentPlaylist] from the persisted order, restores the
+     * pre-shuffle snapshot, and flips the shuffle flag so the UI matches.
+     */
+    public void syncShuffleFromService() {
+        SharedPreferences prefs = getApplication().getSharedPreferences(PrefsStore.PREFS_NAME, Context.MODE_PRIVATE);
+        boolean shuffleOn = prefs.getBoolean(PrefsStore.KEY_SHUFFLE_MODE, false);
+        String queueStr = prefs.getString(PrefsStore.KEY_QUEUE_IDS, "");
+        String originalStr = prefs.getString(PrefsStore.KEY_ORIGINAL_QUEUE_IDS, "");
+
+        Map<Long, Song> songMap = new LinkedHashMap<>();
+        List<Song> local = songsLiveData.getValue();
+        if (local != null) for (Song s : local) songMap.put(s.getId(), s);
+        List<Song> online = libraryData.allOnlineSongs().getValue();
+        if (online != null) for (Song s : online) if (!songMap.containsKey(s.getId())) songMap.put(s.getId(), s);
+
+        List<Song> restored = new ArrayList<>();
+        for (String idStr : queueStr.split(",")) {
+            try {
+                long id = Long.parseLong(idStr);
+                Song s = songMap.get(id);
+                if (s != null) restored.add(s);
+            } catch (NumberFormatException ignored) {}
+        }
+        if (restored.isEmpty()) return;
+
+        Song current = currentSongLiveData.getValue();
+        int curIdx = 0;
+        if (current != null) {
+            for (int i = 0; i < restored.size(); i++) {
+                if (restored.get(i).getId() == current.getId()) { curIdx = i; break; }
+            }
+        }
+
+        List<Song> originalOrder = new ArrayList<>();
+        if (originalStr != null && !originalStr.isEmpty()) {
+            for (String idStr : originalStr.split(",")) {
+                try {
+                    Song s = songMap.get(Long.parseLong(idStr));
+                    if (s != null) originalOrder.add(s);
+                } catch (NumberFormatException ignored) {}
+            }
+        }
+
+        final int finalIndex = curIdx;
+        withQueue(() -> {
+            setQueue(restored);
+            setCurrentIndex(finalIndex);
+            setOriginalBeforeShuffle(shuffleOn ? originalOrder : null);
+        });
+        shuffleModeLiveData.setValue(shuffleOn);
+        updateQueueUI();
+    }
+
     public void createPlaylist(String name) { playlistsManager.createPlaylist(name); }
     public void deletePlaylist(String name) { playlistsManager.deletePlaylist(name); }
     public void addSongToPlaylist(String n, Song s) { playlistsManager.addSongToPlaylist(n, s); }
@@ -443,7 +500,7 @@ public class MusicViewModel extends AndroidViewModel implements MusicViewModelCo
                 if (songs.get(i).getId() == song.getId()) { idx = i; break; }
             }
             if (idx < 0) {
-                playSong(song, songs);
+                playSong(song, songs, "Cloud");
             } else {
                 final int restoreIdx = idx;
                 withQueue(() -> {
@@ -477,7 +534,7 @@ public class MusicViewModel extends AndroidViewModel implements MusicViewModelCo
         );
         List<Song> local = songsLiveData.getValue();
         if (local != null && !local.isEmpty()) {
-            playAllShuffled(local);
+            playAllShuffled(local, "Library");
         }
     }
 
@@ -541,7 +598,9 @@ public class MusicViewModel extends AndroidViewModel implements MusicViewModelCo
         synchronized (this) {
             List<Song> snapshot = snapshotPlaylist();
             if (snapshot.isEmpty() || index < 0 || index >= snapshot.size()) return;
-            uriStr = snapshot.get(index).getUri().toString();
+            Song at = snapshot.get(index);
+            if (at.getUri() == null) return; // un-resolvable placeholder; skip persist
+            uriStr = at.getUri().toString();
         }
         final String uri = uriStr;
         prefsStore.executor.execute(() -> {
