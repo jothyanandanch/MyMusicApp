@@ -129,7 +129,11 @@ fun NowPlayingScreen(
     onStartSleepTimerTime: (Int) -> Unit = {},
     onStartSleepTimerTracks: (Int) -> Unit = {},
     onStartSleepTimerQueueEnd: () -> Unit = {},
-    onCancelSleepTimer: () -> Unit = {}
+    onCancelSleepTimer: () -> Unit = {},
+    abLoopState: Int = 0,
+    onSetAbLoopPointA: () -> Unit = {},
+    onSetAbLoopPointB: () -> Unit = {},
+    onStopAbLoop: () -> Unit = {}
 ) {
     var showSleepTimer by remember { mutableStateOf(false) }
     var selectedTimerOption by remember { mutableStateOf<String?>(null) }
@@ -143,6 +147,30 @@ fun NowPlayingScreen(
     var showMenu by remember { mutableStateOf(false) }
     val isOnline = song.uri.toString().startsWith("http")
     val context = LocalContext.current
+
+    // ── Loud-over-Bluetooth warning (one toast per "episode") ─────────────
+    // Active audio route, kept fresh every second; also drives the output icon.
+    var outputRoute by remember { mutableStateOf(currentAudioRoute(context)) }
+    var volumeFraction by remember { mutableFloatStateOf(0f) }
+    var btLoudArmed by remember { mutableStateOf(true) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            outputRoute = currentAudioRoute(context)
+            delay(1000)
+        }
+    }
+    LaunchedEffect(volumeFraction, outputRoute, isPlaying) {
+        val inRegion = outputRoute == AudioRoute.BLUETOOTH && isPlaying && volumeFraction > 0.6f
+        if (inRegion) {
+            if (btLoudArmed) {
+                android.widget.Toast.makeText(context, "Loud volume over Bluetooth", android.widget.Toast.LENGTH_SHORT).show()
+                btLoudArmed = false
+            }
+        } else {
+            // Left the loud/BT region — arm for the next episode.
+            btLoudArmed = true
+        }
+    }
 
     val coroutineScope = rememberCoroutineScope()
     val offsetY = remember { Animatable(0f) }
@@ -202,6 +230,20 @@ fun NowPlayingScreen(
     }
     // Queue-page pull-down (collapses back to the player like iOS).
     val pagerDragOffset = remember { Animatable(0f) }
+
+    // Recovery: a fling can settle the pager on a fractional page (e.g. 0.47),
+    // leaving the player and queue views both half-visible at the same time.
+    // When scrolling goes idle, snap back onto the nearest whole page and clear
+    // the header-lag offset that can otherwise stay stuck mid-collapse.
+    LaunchedEffect(pagerState.isScrollInProgress) {
+        if (!pagerState.isScrollInProgress) {
+            val target = Math.round(pagerState.currentPage.toDouble()).toInt().coerceIn(0, 1)
+            if (Math.abs(pagerState.currentPage - target) > 0.05f) {
+                try { pagerState.animateScrollToPage(target) } catch (e: Exception) {}
+            }
+            if (target == 0) pagerDragOffset.snapTo(0f)
+        }
+    }
 
     /** Drag-to-dismiss gesture (top bar only, like Apple — never fights the scroll).
      *  Consumes only DOWNWARD moves (dismiss). Upward moves are left unconsumed so
@@ -321,6 +363,20 @@ fun NowPlayingScreen(
                                     label = if (sleepStatus != null) "Sleep Timer — $sleepStatus" else "Sleep Timer",
                                     icon = Icons.Filled.Bedtime
                                 ) { showSleepTimer = true })
+                                // A-B point-to-point loop (a DJ-cue style repeat on the current song).
+                                add(AppleMenuAction(
+                                    label = if (abLoopState == 2) "A-B Loop — Running" else "Set Loop Point A",
+                                    icon = Icons.Filled.Loop
+                                ) { onSetAbLoopPointA() })
+                                if (abLoopState >= 1) {
+                                    add(AppleMenuAction(
+                                        label = if (abLoopState == 2) "Set Loop Point B" else "A-B Loop — Set B to start",
+                                        icon = Icons.Filled.Loop
+                                    ) { onSetAbLoopPointB() })
+                                }
+                                if (abLoopState == 2) {
+                                    add(AppleMenuAction("Stop A-B Loop", Icons.Filled.Stop, isDestructive = true) { onStopAbLoop() })
+                                }
                                 add(AppleMenuAction("View Album", Icons.Filled.Album) { onViewAlbum() })
                                 add(AppleMenuAction("View Artist", Icons.Filled.Person) { onViewArtist() })
                                 add(AppleMenuAction("Add to Playlist", Icons.Filled.PlaylistAdd) { onAddToPlaylist() })
@@ -331,6 +387,44 @@ fun NowPlayingScreen(
                                 }
                             }
                         )
+                    }
+                }
+            }
+
+            // ── SLEEP-TIMER CANCEL CHIP: a visible, one-tap way to stop a
+            //    running timer without opening the sheet (e.g. when the song is
+            //    in single-loop and "When Current Song Ends" is pending). ──
+            if (isSleepTimerActive && sleepStatus != null) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(11.dp))
+                            .background(Color.White.copy(alpha = 0.10f))
+                            .clickable(onClick = { showSleepTimer = true })
+                            .padding(horizontal = 12.dp, vertical = 7.dp)
+                    ) {
+                        Icon(Icons.Filled.Bedtime, "Sleep timer", tint = C.accent, modifier = Modifier.size(14.dp))
+                        Spacer(Modifier.width(7.dp))
+                        Text(sleepStatus, color = Color.White.copy(alpha = 0.9f), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    // Direct one-tap cancel — no need to open the sheet.
+                    Row(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(11.dp))
+                            .background(C.accent.copy(alpha = 0.22f))
+                            .clickable(onClick = { onCancelSleepTimer() })
+                            .padding(horizontal = 14.dp, vertical = 7.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Filled.Close, "Cancel sleep timer", tint = C.accent, modifier = Modifier.size(14.dp))
+                        Spacer(Modifier.width(5.dp))
+                        Text("Cancel", color = C.accent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     }
                 }
             }
@@ -408,17 +502,13 @@ fun NowPlayingScreen(
                                 contentAlignment = Alignment.Center
                             ) { Icon(Icons.Filled.SkipNext, "Next", tint = Color.White, modifier = Modifier.size(34.dp)) }
                         }
-                        VolumeSlider(modifier = Modifier.padding(vertical = 2.dp))
+                        VolumeSlider(
+                            modifier = Modifier.padding(vertical = 2.dp),
+                            onVolumeFractionChanged = { volumeFraction = it }
+                        )
                         Row(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                             // Dynamic output button — icon reflects the ACTIVE route
                             // (Apple Music behavior), opens the iOS-style picker.
-                            var outputRoute by remember { mutableStateOf(currentAudioRoute(context)) }
-                            LaunchedEffect(showOutputSheet) {
-                                while (true) {
-                                    outputRoute = currentAudioRoute(context)
-                                    delay(1000)
-                                }
-                            }
                             IconButton(onClick = { showOutputSheet = true }) {
                                 val (routeIcon, routeDesc) = when (outputRoute) {
                                     AudioRoute.BLUETOOTH -> Icons.Filled.BluetoothAudio to "Bluetooth"

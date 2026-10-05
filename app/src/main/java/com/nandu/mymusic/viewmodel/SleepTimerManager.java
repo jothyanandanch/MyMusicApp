@@ -45,9 +45,30 @@ public final class SleepTimerManager {
 
     // ── Player-listener hooks (called from the VM) ─────────────────────────
 
-    /** From onMediaItemTransition: decrement the track counter on auto-advance. */
+    /**
+     * From onMediaItemTransition: under REPEAT_MODE_OFF / ALL a new item
+     * beginning means the previous song completed a pass. The VM only calls
+     * this for AUTO transitions. Decrement the "tracks remaining" counter so
+     * "When Current Song Ends" lands even when the queue advances.
+     */
     public void onAutoTrackTransition(int reason) {
-        if (sleepTrackCounter > 0 && reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO) {
+        if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO) {
+            completeOneSongPass();
+        }
+    }
+
+    /**
+     * From the VM's progress poll: under REPEAT_MODE_ONE no transition and no
+     * STATE_ENDED ever fires (the same item loops in place), so the only signal
+     * that "the current song ended" is the playback position wrapping back to
+     * the start. The VM detects that wrap and calls this.
+     */
+    public void onPositionWrap() {
+        completeOneSongPass();
+    }
+
+    private void completeOneSongPass() {
+        if (sleepTrackCounter > 0) {
             sleepTrackCounter--;
             sleepTimerTracksRemainingLiveData.postValue(sleepTrackCounter);
             if (sleepTrackCounter == 0) {
@@ -57,21 +78,14 @@ public final class SleepTimerManager {
     }
 
     /**
-     * From onPlaybackStateChanged(STATE_ENDED): returns true when the sleep
-     * timer took the end-of-queue path (so the normal autoplay/end-dialog flow
-     * must be skipped) — preserving the original two early-return checks.
+     * From onPlaybackStateChanged(STATE_ENDED): a song ended with nothing left
+     * to auto-advance to (last song of the queue, REPEAT_MODE_OFF). That is
+     * also a completed pass, so decrement; then handle the end-of-queue timer.
+     * Returns true when the sleep timer took the end-of-queue path, so the VM's
+     * normal autoplay/end-dialog flow is skipped.
      */
     public boolean onEnded(int repeatMode) {
-        // --- SLEEP TIMER: Handle repeat-one mode ---
-        if (sleepTrackCounter > 0 && repeatMode == Player.REPEAT_MODE_ONE) {
-            sleepTrackCounter--;
-            sleepTimerTracksRemainingLiveData.postValue(sleepTrackCounter);
-            if (sleepTrackCounter == 0) {
-                triggerSleepTimerAction();
-                return true;
-            }
-        }
-        // --- SLEEP TIMER QUEUE END CHECK ---
+        completeOneSongPass();
         if (stopAtQueueEnd) {
             triggerSleepTimerAction();
             return true;

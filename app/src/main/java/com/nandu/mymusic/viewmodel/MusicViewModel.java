@@ -105,6 +105,7 @@ public class MusicViewModel extends AndroidViewModel implements MusicViewModelCo
     private PlaylistsManager playlistsManager;
     private QueueManager queueManager;
     private SleepTimerManager sleepTimer;
+    private AbLoopManager abLoop;
     private LyricsManager lyricsManager;
     private SongDeletion songDeletion;
     private SessionRestore sessionRestore;
@@ -126,6 +127,11 @@ public class MusicViewModel extends AndroidViewModel implements MusicViewModelCo
     // ── Progress polling ────────────────────────────────────────────────
     private final Handler progressHandler = new Handler(Looper.getMainLooper());
     private int progressTicks = 0;
+    /** Last observed playback position (main thread) — feeds the single-loop
+     *  position-wrap detector so "When Current Song Ends" works under REPEAT_ONE. */
+    private long lastPosForSleep = -1;
+    /** True once a same-item wrap is detected in this pass; set only on REPEAT_ONE. */
+    private boolean sleepWrapping = false;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final ContentObserver contentObserver;
     private final Runnable reloadRunnable = this::loadLocalMusic;
@@ -133,9 +139,26 @@ public class MusicViewModel extends AndroidViewModel implements MusicViewModelCo
     private final Runnable progressRunnable = new Runnable() {
         @Override public void run() {
             if (exoPlayer != null) {
+                // A-B point-to-point loop: bounce back to A the moment we reach B.
+                abLoop.clampPosition();
                 progressLiveData.postValue(exoPlayer.getCurrentPosition());
                 long dur = exoPlayer.getDuration();
                 durationLiveData.postValue(dur > 0 ? dur : 0L);
+
+                // Single-loop ("When Current Song Ends") tracking: under REPEAT_ONE no
+                // transition or STATE_ENDED fires, so a completed pass is detected by
+                // the position wrapping from near the end back to the start.
+                long cur = exoPlayer.getCurrentPosition();
+                if (exoPlayer.getRepeatMode() == Player.REPEAT_MODE_ONE && exoPlayer.isPlaying() && lastPosForSleep >= 0 && dur > 0) {
+                    boolean wasNearEnd = lastPosForSleep > cur && lastPosForSleep >= dur - 1500L;
+                    if (wasNearEnd && !sleepWrapping) {
+                        sleepWrapping = true;
+                        sleepTimer.onPositionWrap();
+                    } else if (cur < dur / 3) {
+                        sleepWrapping = false; // back at the top of the next pass
+                    }
+                }
+                lastPosForSleep = cur;
 
                 progressHandler.removeCallbacks(progressRunnable);
                 if (exoPlayer.isPlaying()) {
@@ -194,6 +217,7 @@ public class MusicViewModel extends AndroidViewModel implements MusicViewModelCo
         playlistsManager = new PlaylistsManager(this);
         queueManager = new QueueManager(this);
         sleepTimer = new SleepTimerManager(this);
+        abLoop = new AbLoopManager(this);
         lyricsManager = new LyricsManager(this);
         songDeletion = new SongDeletion(this);
         sessionRestore = new SessionRestore(this);
@@ -263,8 +287,16 @@ public class MusicViewModel extends AndroidViewModel implements MusicViewModelCo
 
                 @Override
                 public void onMediaItemTransition(MediaItem mediaItem, int reason) {
-                    // SLEEP TIMER TRACK COUNTER CHECK
+                    // Sleep timer: under REPEAT_MODE_OFF / ALL a new song beginning
+                    // means the previous one completed a pass. (Under REPEAT_MODE_ONE
+                    // no transition fires for the same-item loop — that is handled by
+                    // position-wrap detection in progressRunnable instead.)
                     sleepTimer.onAutoTrackTransition(reason);
+                    // A-B loop is scoped to a single song — reset it on any transition.
+                    abLoop.clearForNewSong();
+                    // A new item means the "same-item" position-wrap tracker is stale.
+                    lastPosForSleep = -1;
+                    sleepWrapping = false;
                     List<Song> snapshot = snapshotPlaylist();
                     if (snapshot.isEmpty()) return;
                     int idx = exoPlayer.getCurrentMediaItemIndex();
@@ -550,6 +582,15 @@ public class MusicViewModel extends AndroidViewModel implements MusicViewModelCo
     public void startTrackSleepTimer(int tracks) { sleepTimer.startTrackSleepTimer(tracks); }
     public void startQueueEndSleepTimer() { sleepTimer.startQueueEndSleepTimer(); }
     public void cancelSleepTimer() { sleepTimer.cancelSleepTimer(); }
+
+    // ── A-B point-to-point loop (delegated to AbLoopManager) ─────────────
+    public LiveData<Integer> getAbLoopState() { return abLoop.getState(); }
+    public int getAbLoopStateValue() { return abLoop.getStateValue(); }
+    public long getAbLoopPointA() { return abLoop.getPointA(); }
+    public long getAbLoopPointB() { return abLoop.getPointB(); }
+    public void setAbLoopPointA() { abLoop.setPointA(); }
+    public void setAbLoopPointB() { abLoop.setPointB(); }
+    public void stopAbLoop() { abLoop.stop(); }
 
     // ── "Made for You" (delegated, supplied by stats + favorites) ──────
     public void generatePersonalizedMixes() {

@@ -53,11 +53,16 @@ import com.nandu.mymusic.ui.theme.appleColors
  */
 
 @Composable
-fun VolumeSlider(modifier: Modifier = Modifier) {
+fun VolumeSlider(modifier: Modifier = Modifier, onVolumeFractionChanged: (Float) -> Unit = {}) {
     val context = LocalContext.current
     val audioManager = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
     val maxVolume = remember { audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC) }
     var volume by remember { mutableIntStateOf(audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)) }
+
+    // Notify the parent of the current volume fraction (0..1) so it can run
+    // route-aware UI (e.g. the loud-over-Bluetooth warning) whenever it changes.
+    val volumeFraction = if (maxVolume > 0) volume.toFloat() / maxVolume.toFloat() else 0f
+    LaunchedEffect(volume) { onVolumeFractionChanged(volumeFraction) }
 
     // Follow external volume changes (hardware keys)
     DisposableEffect(Unit) {

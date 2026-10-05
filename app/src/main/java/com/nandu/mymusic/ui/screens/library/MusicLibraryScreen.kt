@@ -141,6 +141,7 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
     val isSleepTimerActive by viewModel.isSleepTimerActive.observeAsState(false)
     val sleepTimerRemainingMs by viewModel.sleepTimerRemaining.observeAsState(0L)
     val sleepTimerTracksRemaining by viewModel.sleepTimerTracksRemaining.observeAsState(-1)
+    val abLoopState by viewModel.abLoopState.observeAsState(0)
     val isAutoplayEnabled by viewModel.isAutoplayEnabled.observeAsState(false)
     val nowPlayingSource by viewModel.nowPlayingSource.observeAsState()
     val playHistory by viewModel.playHistory.observeAsState(initial = emptyList())
@@ -785,6 +786,19 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                 onStartSleepTimerQueueEnd = {
                     viewModel.startQueueEndSleepTimer()
                     showSnackbar("Audio will stop at the end of the queue")
+                },
+                abLoopState = abLoopState,
+                onSetAbLoopPointA = {
+                    viewModel.setAbLoopPointA()
+                    showSnackbar("Loop point A set — now set point B to start")
+                },
+                onSetAbLoopPointB = {
+                    viewModel.setAbLoopPointB()
+                    showSnackbar("A-B loop running")
+                },
+                onStopAbLoop = {
+                    viewModel.stopAbLoop()
+                    showSnackbar("A-B loop stopped")
                 },
                 sleepTimerRemainingMs = sleepTimerRemainingMs,
                 sleepTimerTracksRemaining = sleepTimerTracksRemaining,
