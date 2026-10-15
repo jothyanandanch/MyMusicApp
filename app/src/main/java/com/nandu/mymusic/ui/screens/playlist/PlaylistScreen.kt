@@ -257,9 +257,7 @@ fun PlaylistDetailView(
             Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     if (isProtected) {
-                        Icon(Icons.Filled.Lock, null, tint = C.secondaryLabel, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text("Device playlist", color = C.secondaryLabel, fontSize = 11.sp)
+                        Icon(Icons.Filled.Lock, "Protected playlist", tint = C.secondaryLabel, modifier = Modifier.size(16.dp))
                     }
                 }
 

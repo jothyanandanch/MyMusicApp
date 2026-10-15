@@ -309,6 +309,10 @@ public class MusicViewModel extends AndroidViewModel implements MusicViewModelCo
                         onSongStarted(song);
                         persistLastIndex(currentIndex);
                         if (exoPlayer.getDuration() > 0) durationLiveData.postValue(exoPlayer.getDuration());
+                        // Keep "PLAYING FROM" tracking the current song's album on
+                        // every item change — auto-advance, next/prev, queue tap,
+                        // repeat-all wrap. playSong only sets it at start.
+                        queueManager.refreshNowPlayingSource();
                     }
                 }
 

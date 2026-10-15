@@ -34,6 +34,43 @@ public final class QueueManager {
     /** Apple Music–style autoplay pool size at end of queue. */
     private static final int AUTOPLAY_POOL_SIZE = 50;
 
+    /**
+     * Resolve the display value of "PLAYING FROM": always prefer the song's album
+     * tag (where a movie / soundtrack title lives) when it's non-blank; otherwise
+     * fall back to the caller-provided source (or "Library" as a last resort).
+     */
+    private String resolveDisplaySource(String source, Song song) {
+        if (song != null && song.getAlbum() != null && !song.getAlbum().isBlank()) {
+            return song.getAlbum();
+        }
+        return source != null ? source : "Library";
+    }
+
+    /**
+     * Re-derive "PLAYING FROM" for the currently playing song. A song with an
+     * album tracks it; a song without one keeps the last known source (the
+     * start value from {@link #playSong}). Called on every media-item
+     * transition so the top label keeps tracking as the queue advances —
+     * auto, next/prev, or queue tap — instead of freezing on the start value.
+     */
+    public void refreshNowPlayingSource() {
+        Song song = core.currentSongLive().getValue();
+        if (song == null) return;
+        if (song.getAlbum() == null || song.getAlbum().isBlank()) return;
+        String album = song.getAlbum();
+        if (album.equals(core.nowPlayingSourceLive().getValue())) return;
+        core.nowPlayingSourceLive().setValue(album);
+        persistNowPlayingSource();
+    }
+
+    private void persistNowPlayingSource() {
+        core.executor().execute(() -> {
+            String src = core.nowPlayingSourceLive().getValue();
+            core.application().getSharedPreferences(PrefsStore.PREFS_NAME, Context.MODE_PRIVATE)
+                    .edit().putString(PrefsStore.KEY_NP_SOURCE, src).apply();
+        });
+    }
+
     private final MusicViewModelCore core;
 
     public QueueManager(MusicViewModelCore core) {
@@ -51,8 +88,7 @@ public final class QueueManager {
         if (exoPlayer == null) return;
         core.markUserInteracted();
         core.cancelSleepFade(); // starting fresh playback cancels any sleep fade
-        core.nowPlayingSourceLive().setValue(source != null ? source
-                : (song.getAlbum() != null ? song.getAlbum() : "Library"));
+        core.nowPlayingSourceLive().setValue(resolveDisplaySource(source, song));
 
         if (song.getUri() != null) {
             String scheme = song.getUri().getScheme();
@@ -101,11 +137,7 @@ public final class QueueManager {
         core.showEndDialogLive().setValue(false);
         core.persistLastIndex(core.currentIndex());
         // Persist the "Playing From" label so it survives session restore.
-        core.executor().execute(() -> {
-            String src = core.nowPlayingSourceLive().getValue();
-            core.application().getSharedPreferences(PrefsStore.PREFS_NAME, Context.MODE_PRIVATE)
-                    .edit().putString(PrefsStore.KEY_NP_SOURCE, src).apply();
-        });
+        persistNowPlayingSource();
     }
 
     public void togglePlayPause() {
@@ -446,26 +478,33 @@ public final class QueueManager {
             int currentIndex = core.currentIndex();
             if (currentIndex < 0 || currentIndex >= currentPlaylist.size()) return;
             if (currentPlaylist.get(currentIndex).getId() == song.getId()) return;
-            // If the song is already in the queue, MOVE it to play-next instead of duplicating it.
+            Player p = core.player();
+            // Insert the new "play next" item at currentIndex + 1. Add FIRST (index
+            // after the current item) so the current item's player/timeline index
+            // stays stable, then remove a pre-existing copy if any. Doing it the
+            // other way around shifts the current item's player index and leaves
+            // the VM's currentIndex out of sync with ExoPlayer → IndexOutOfBounds
+            // crash in the 300ms queue-drift check that follows.
+            int insertIndex = currentIndex + 1;
+            p.addMediaItems(insertIndex, Collections.singletonList(core.createMediaItem(song)));
+            currentPlaylist.add(insertIndex, song);
             int existingIdx = -1;
             for (int i = 0; i < currentPlaylist.size(); i++) {
+                if (i == insertIndex) continue;
                 if (currentPlaylist.get(i).getId() == song.getId()) { existingIdx = i; break; }
             }
-            // The current song is a different id (guarded above), so removing existingIdx
-            // can never remove the playing track. Only a removal *before* the current song
-            // shifts the current item's index.
-            int newCurrent = currentIndex;
-            if (existingIdx >= 0) {
-                currentPlaylist.remove(existingIdx);
-                if (existingIdx < currentIndex) newCurrent = currentIndex - 1;
+            if (existingIdx == -1) {
+                core.setCurrentIndex(currentIndex);
+                core.persistLastIndex(currentIndex);
+                core.updateQueueUI();
+                return;
             }
-            int insertIndex = newCurrent + 1;
-            currentPlaylist.add(insertIndex, song);
-            core.setCurrentIndex(newCurrent);
-            // One position-preserving re-sync: the current track stays at newCurrent and
-            // resumes where it was; the moved/added song lands immediately after it.
-            resyncQueue(currentPlaylist, newCurrent, capturePosition());
-            core.persistLastIndex(newCurrent);
+            // Remove the older duplicate (never the copy we just inserted).
+            p.removeMediaItems(existingIdx, 1);
+            currentPlaylist.remove(existingIdx);
+            if (existingIdx < currentIndex) currentIndex--;
+            core.setCurrentIndex(currentIndex);
+            core.persistLastIndex(currentIndex);
             core.updateQueueUI();
         });
     }
@@ -606,9 +645,9 @@ public final class QueueManager {
         if (exoPlayer == null) return;
         core.showEndDialogLive().setValue(false);
         core.endOfQueueLive().setValue(false);
-        core.nowPlayingSourceLive().setValue(source != null ? source : "Library");
         List<Song> shuffled = new ArrayList<>(library);
         Collections.shuffle(shuffled);
+        core.nowPlayingSourceLive().setValue(resolveDisplaySource(source, shuffled.get(0)));
         core.markUserInteracted();
         core.withQueue(() -> {
             core.setQueue(shuffled);
@@ -641,7 +680,7 @@ public final class QueueManager {
         if (playlist == null || playlist.isEmpty()) return;
         Player exoPlayer = core.player();
         if (exoPlayer == null) return;
-        core.nowPlayingSourceLive().setValue(source != null ? source : "Library");
+        core.nowPlayingSourceLive().setValue(resolveDisplaySource(source, playlist.get(0)));
         Song       currentSong = core.currentSongLive().getValue();
         List<Song> shuffled    = new ArrayList<>(playlist);
         int        nowIdx      = -1;

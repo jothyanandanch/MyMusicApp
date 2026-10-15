@@ -116,13 +116,27 @@ public final class LibraryData {
         List<Song> matches = new ArrayList<>();
         if (allOnline != null) {
             for (Song song : allOnline) {
-                boolean matchTitle = song.getTitle() != null && song.getTitle().toLowerCase().contains(queryLower);
-                boolean matchArtist = song.getArtist() != null && song.getArtist().toLowerCase().contains(queryLower);
-                boolean matchAlbum = song.getAlbum() != null && song.getAlbum().toLowerCase().contains(queryLower);
+                boolean matchTitle = song.getTitle() != null && normalized(song.getTitle()).contains(queryLower);
+                boolean matchArtist = song.getArtist() != null && normalized(song.getArtist()).contains(queryLower);
+                boolean matchAlbum = song.getAlbum() != null && normalized(song.getAlbum()).contains(queryLower);
                 if (matchTitle || matchArtist || matchAlbum) matches.add(song);
             }
         }
         onlineSearchResults.postValue(matches);
+    }
+
+    /** Collapse whitespace + lowercase + strip diacritics so "letgo" matches "Let Go". */
+    private static String normalized(String value) {
+        if (value == null || value.isEmpty()) return "";
+        String noMarks = java.text.Normalizer.normalize(value, java.text.Normalizer.Form.NFD);
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < noMarks.length(); i++) {
+            char ch = noMarks.charAt(i);
+            if (Character.getType(ch) == Character.NON_SPACING_MARK) continue;
+            if (Character.isWhitespace(ch)) continue;
+            sb.append(ch);
+        }
+        return sb.toString().toLowerCase();
     }
 
     // ── Online refresh (pull-to-refresh) ──────────────────────────────────

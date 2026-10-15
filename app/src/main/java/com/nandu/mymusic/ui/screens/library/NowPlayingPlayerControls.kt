@@ -53,22 +53,58 @@ import com.nandu.mymusic.ui.theme.appleColors
  */
 
 @Composable
-fun VolumeSlider(modifier: Modifier = Modifier, onVolumeFractionChanged: (Float) -> Unit = {}) {
+fun VolumeSlider(
+    modifier: Modifier = Modifier,
+    isBluetoothRoute: Boolean = false,
+    onCapReached: () -> Unit = {}
+) {
     val context = LocalContext.current
     val audioManager = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
     val maxVolume = remember { audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC) }
     var volume by remember { mutableIntStateOf(audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)) }
 
-    // Notify the parent of the current volume fraction (0..1) so it can run
-    // route-aware UI (e.g. the loud-over-Bluetooth warning) whenever it changes.
-    val volumeFraction = if (maxVolume > 0) volume.toFloat() / maxVolume.toFloat() else 0f
-    LaunchedEffect(volume) { onVolumeFractionChanged(volumeFraction) }
+    // Over Bluetooth the music stream is capped at 60% — any increase above that
+    // is rejected (clamped) so loud audio can't play over the BT link.
+    val capVolume = if (isBluetoothRoute) (0.6f * maxVolume).toInt() else maxVolume
+    // Read through a live holder so the gesture handlers see the latest callback
+    // without re-subscribing their pointer input.
+    val capReached = rememberUpdatedState(onCapReached)
 
-    // Follow external volume changes (hardware keys)
-    DisposableEffect(Unit) {
+    // One toast per "episode": arm the latch when the volume drops back below the
+    // cap (or we leave BT), so repeated clamps in a single swipe don't spam.
+    var capToastArmed by remember { mutableStateOf(true) }
+    LaunchedEffect(volume, isBluetoothRoute) {
+        capToastArmed = !isBluetoothRoute || volume < capVolume
+    }
+
+    // Snap down to the cap the moment Bluetooth becomes active (handles a volume
+    // that was already too loud before the route flipped).
+    LaunchedEffect(isBluetoothRoute) {
+        if (isBluetoothRoute) {
+            val actual = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+            if (actual > capVolume) {
+                volume = capVolume
+                audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, capVolume, 0)
+                capToastArmed = false
+                capReached.value()
+            }
+        }
+    }
+
+    // Follow external volume changes (hardware keys); clamp to the cap over BT.
+    DisposableEffect(isBluetoothRoute) {
         val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
             override fun onChange(selfChange: Boolean) {
-                volume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+                val actual = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+                val clamped = if (isBluetoothRoute) actual.coerceAtMost(capVolume) else actual
+                if (clamped != actual) {
+                    audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, clamped, 0)
+                    if (capToastArmed) {
+                        capToastArmed = false
+                        capReached.value()
+                    }
+                }
+                volume = clamped
             }
         }
         context.contentResolver.registerContentObserver(Settings.System.CONTENT_URI, true, observer)
@@ -79,18 +115,41 @@ fun VolumeSlider(modifier: Modifier = Modifier, onVolumeFractionChanged: (Float)
         Icon(Icons.AutoMirrored.Filled.VolumeDown, null, tint = Color.White.copy(alpha = 0.6f), modifier = Modifier.size(16.dp))
         // Thin 3dp track, no thumb — iOS slider proportions
         BoxWithConstraints(
-            modifier = Modifier.weight(1f).height(28.dp).pointerInput(Unit) {
-                detectTapGestures { offset -> audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, ((offset.x / size.width) * maxVolume).toInt().coerceIn(0, maxVolume), 0) }
+            modifier = Modifier.weight(1f).height(28.dp).pointerInput(capVolume) {
+                detectTapGestures { offset ->
+                    val raw = ((offset.x / size.width) * maxVolume).toInt()
+                    val target = raw.coerceIn(0, capVolume)
+                    audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, target, 0)
+                    volume = target
+                    if (isBluetoothRoute && raw > capVolume && capToastArmed) {
+                        capToastArmed = false
+                        capReached.value()
+                    }
+                }
             }
-                .pointerInput(maxVolume) {
+                .pointerInput(maxVolume, capVolume) {
                     detectHorizontalDragGestures(
-                        onDragStart = { offset -> audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, ((offset.x / size.width) * maxVolume).toInt().coerceIn(0, maxVolume), 0) },
+                        onDragStart = { offset ->
+                            val raw = ((offset.x / size.width) * maxVolume).toInt()
+                            val target = raw.coerceIn(0, capVolume)
+                            audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, target, 0)
+                            volume = target
+                            if (isBluetoothRoute && raw > capVolume && capToastArmed) {
+                                capToastArmed = false
+                                capReached.value()
+                            }
+                        },
                         onHorizontalDrag = { change, dragAmount ->
                             change.consume()
-                            val target = ((volume + (dragAmount / size.width) * maxVolume).toInt()).coerceIn(0, maxVolume)
+                            val raw = ((volume + (dragAmount / size.width) * maxVolume).toInt())
+                            val target = raw.coerceIn(0, capVolume)
                             if (target != volume) {
                                 volume = target
                                 audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, target, 0)
+                                if (isBluetoothRoute && raw > capVolume && capToastArmed) {
+                                    capToastArmed = false
+                                    capReached.value()
+                                }
                             }
                         }
                     )
@@ -133,12 +192,28 @@ fun SyncedLyricsView(lyricsText: String?, progress: Long, onSeek: (Long) -> Unit
     }
 
     val activeIndex = lyricsLines.indexOfLast { it.startTimeMs <= progress }.coerceAtLeast(0)
-    val isUserScrolling = listState.isScrollInProgress
 
+    // Keep the active line at the vertical CENTER of the pane in a single smooth
+    // motion. We scroll to an anchor item just above the active one (by ~half the
+    // visible rows) so the active line lands centered — one animation, no
+    // "jump to top then slide down" two-phase motion.
     LaunchedEffect(activeIndex) {
-        if (activeIndex >= 0 && !isUserScrolling) {
-            listState.animateScrollToItem(index = maxOf(0, activeIndex - 3))
-        }
+        if (activeIndex < 0 || listState.isScrollInProgress) return@LaunchedEffect
+        val info = listState.layoutInfo
+        val viewportPx = info.viewportEndOffset - info.viewportStartOffset
+        if (viewportPx <= 0) return@LaunchedEffect
+
+        // Average lyric-row height (the active row is a touch taller; an estimate
+        // is fine). Fall back to a fixed px value if the list isn't laid out yet.
+        val avgRowPx = if (info.visibleItemsInfo.isNotEmpty())
+            info.visibleItemsInfo.sumOf { it.size }.toLong() / info.visibleItemsInfo.size
+        else 72
+        // How many rows fit vertically in the pane.
+        val rowsVisible = (viewportPx / avgRowPx).toInt().coerceAtLeast(1)
+        // Place this anchor at the top so the active line sits ~half-rows below,
+        // i.e. near the vertical center.
+        val anchor = (activeIndex - rowsVisible / 2).coerceAtLeast(0)
+        listState.animateScrollToItem(anchor)
     }
 
     LazyColumn(state = listState, modifier = modifier.fillMaxSize(), contentPadding = PaddingValues(top = 16.dp, bottom = 64.dp)) {

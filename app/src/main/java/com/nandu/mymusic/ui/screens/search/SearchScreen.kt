@@ -54,6 +54,7 @@ import com.nandu.mymusic.ui.screens.library.splitArtists
 import com.nandu.mymusic.ui.theme.AppleText
 import com.nandu.mymusic.ui.theme.CategoryGradients
 import com.nandu.mymusic.ui.theme.appleColors
+import com.nandu.mymusic.utils.SearchUtils
 import java.util.LinkedHashMap
 
 /**
@@ -100,26 +101,25 @@ fun SearchScreen(
         onQueryChange(it)
     }
 
-    // ── Filter pipeline (moved from the old root top bar, logic unchanged) ──
+    // ── Filter pipeline (normalized matching: "letgo" finds "Let Go", diacritics
+    //    and whitespace differences ignored so typing without separators works) ──
     val filteredSongs = if (query.isBlank()) emptyList() else {
-        val searchLower = query.lowercase()
+        val matches: (Song) -> Boolean = { SearchUtils.matches(query, it.title, it.artist, it.album) }
         when (libraryData.libraryMode) {
             1 -> libraryData.onlineSearchSongs.distinctBy { it.id }
             2 -> {
                 if (libraryData.hybridLocalOnly) {
-                    libraryData.localSongs.filter { (it.title?.lowercase()?.contains(searchLower) == true) || (it.artist?.lowercase()?.contains(searchLower) == true) || (it.album?.lowercase()?.contains(searchLower) == true) }
+                    libraryData.localSongs.filter(matches)
                 }
                 else if (libraryData.hybridOnlineOnly) {
-                    libraryData.onlineSongs.filter { (it.title?.lowercase()?.contains(searchLower) == true) || (it.artist?.lowercase()?.contains(searchLower) == true) || (it.album?.lowercase()?.contains(searchLower) == true) }
+                    libraryData.onlineSongs.filter(matches)
                 }
                 else {
-                    val localMatches = libraryData.localSongs.filter { (it.title?.lowercase()?.contains(searchLower) == true) || (it.artist?.lowercase()?.contains(searchLower) == true) || (it.album?.lowercase()?.contains(searchLower) == true) }
+                    val localMatches = libraryData.localSongs.filter(matches)
                     (localMatches + libraryData.onlineSearchSongs).distinctBy { it.id }
                 }
             }
-            else -> {
-                libraryData.localSongs.filter { (it.title?.lowercase()?.contains(searchLower) == true) || (it.artist?.lowercase()?.contains(searchLower) == true) || (it.album?.lowercase()?.contains(searchLower) == true) }
-            }
+            else -> libraryData.localSongs.filter(matches)
         }
     }
 
@@ -127,12 +127,12 @@ fun SearchScreen(
     val matchingArtists = remember(filteredSongs, query) {
         if (query.isBlank()) emptyList()
         else {
-            val queryLower = query.lowercase()
+            val q = SearchUtils.normalizeQuery(query)
             val artistMap = LinkedHashMap<String, MutableList<Song>>()
             for (song in filteredSongs) {
                 val artistName = song.artist ?: "Unknown Artist"
                 for (artist in splitArtists(artistName)) {
-                    if (artist.lowercase().contains(queryLower)) {
+                    if (SearchUtils.normalizeText(artist).contains(q)) {
                         artistMap.getOrPut(artist) { mutableListOf() }.add(song)
                     }
                 }
@@ -145,7 +145,7 @@ fun SearchScreen(
     val matchingAlbums = remember(filteredSongs, query) {
         if (query.isBlank()) emptyList()
         else filteredSongs
-            .filter { it.album != null && it.album.lowercase().contains(query.lowercase()) }
+            .filter { it.album != null && SearchUtils.normalizeText(it.album).contains(SearchUtils.normalizeQuery(query)) }
             .groupBy { it.album!! }
             .entries.toList()
     }

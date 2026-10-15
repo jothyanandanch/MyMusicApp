@@ -55,13 +55,21 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Velocity
 import kotlin.math.roundToInt
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
@@ -148,27 +156,13 @@ fun NowPlayingScreen(
     val isOnline = song.uri.toString().startsWith("http")
     val context = LocalContext.current
 
-    // ── Loud-over-Bluetooth warning (one toast per "episode") ─────────────
-    // Active audio route, kept fresh every second; also drives the output icon.
+    // ── Active audio route (kept fresh every second; drives the output icon
+    //    and the volume cap — the music stream is limited to 60% over BT). ──
     var outputRoute by remember { mutableStateOf(currentAudioRoute(context)) }
-    var volumeFraction by remember { mutableFloatStateOf(0f) }
-    var btLoudArmed by remember { mutableStateOf(true) }
     LaunchedEffect(Unit) {
         while (true) {
             outputRoute = currentAudioRoute(context)
             delay(1000)
-        }
-    }
-    LaunchedEffect(volumeFraction, outputRoute, isPlaying) {
-        val inRegion = outputRoute == AudioRoute.BLUETOOTH && isPlaying && volumeFraction > 0.6f
-        if (inRegion) {
-            if (btLoudArmed) {
-                android.widget.Toast.makeText(context, "Loud volume over Bluetooth", android.widget.Toast.LENGTH_SHORT).show()
-                btLoudArmed = false
-            }
-        } else {
-            // Left the loud/BT region — arm for the next episode.
-            btLoudArmed = true
         }
     }
 
@@ -280,24 +274,40 @@ fun NowPlayingScreen(
         )
     }
 
-    // Artwork variant: only intercept DOWNWARD drags (dismiss). Upward swipes
-    // remain unconsumed so the VerticalPager can take them (swipe up → queue).
+    // Artwork variant: downward drives dismiss (offsetY); upward drives the
+    // pager to the queue page.
     val artworkDismissDrag = Modifier.pointerInput(Unit) {
+        var upPull = 0f
         detectVerticalDragGestures(
-            onDragStart = { velocityTracker.resetTracking() },
+            onDragStart = { velocityTracker.resetTracking(); upPull = 0f },
             onVerticalDrag = { change, dragAmount ->
-                // Only the dismiss (downward) direction is ours. Upward moves are
-                // left unconsumed so the VerticalPager underneath takes the swipe
-                // and scrolls to the "Playing Next" queue page.
-                if (dragAmount > 0f) {
-                    change.consume()
-                    velocityTracker.addPosition(change.uptimeMillis, change.position)
-                    val raw = offsetY.value + dragAmount
-                    val newOffset = if (raw < 0f) raw * 0.35f else raw
-                    coroutineScope.launch { offsetY.snapTo(newOffset) }
+                when {
+                    dragAmount > 0f -> {
+                        // Downward = dismiss.
+                        change.consume()
+                        velocityTracker.addPosition(change.uptimeMillis, change.position)
+                        val raw = offsetY.value + dragAmount
+                        val newOffset = if (raw < 0f) raw * 0.35f else raw
+                        coroutineScope.launch { offsetY.snapTo(newOffset) }
+                    }
+                    else -> {
+                        // Upward = advance to the queue page. The detector claims
+                        // the vertical gesture at the art node, so we explicitly
+                        // drive the pager rather than relying on the VerticalPager
+                        // underneath to receive the unconsumed move.
+                        change.consume()
+                        upPull += -dragAmount
+                        if (upPull > 60f) {
+                            upPull = 0f
+                            coroutineScope.launch {
+                                if (pagerState.currentPage == 0) pagerState.animateScrollToPage(1)
+                            }
+                        }
+                    }
                 }
             },
             onDragEnd = {
+                upPull = 0f
                 val velocity = velocityTracker.calculateVelocity().y
                 coroutineScope.launch {
                     if (offsetY.value > 400f || velocity > 1250f) {
@@ -309,6 +319,7 @@ fun NowPlayingScreen(
                 }
             },
             onDragCancel = {
+                upPull = 0f
                 coroutineScope.launch { offsetY.animateTo(0f, spring(dampingRatio = 1f, stiffness = Spring.StiffnessMediumLow)) }
             }
         )
@@ -469,17 +480,68 @@ fun NowPlayingScreen(
                                     Spacer(modifier = Modifier.height(20.dp))
                                     Text(song.title ?: "Unknown Title", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 22.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     Spacer(Modifier.height(4.dp))
-                                    // Tappable "Artist ›" — drill into the artist's songs.
+                                    // Tappable artist name — drills into the artist's songs.
+                                    // The name is shown in full; if it's wider than the screen it
+                                    // auto-scrolls (marquee) instead of truncating with an ellipsis.
                                     Row(
                                         modifier = Modifier
+                                            .fillMaxWidth()
                                             .clickable { onViewArtist() }
                                             .padding(vertical = 2.dp),
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.Center
                                     ) {
-                                        Text(song.artist ?: "Unknown Artist", color = C.accent, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                        Spacer(Modifier.width(2.dp))
-                                        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = "View Artist", tint = C.accent, modifier = Modifier.size(18.dp))
+                                        val artist = song.artist ?: "Unknown Artist"
+                                        // Natural single-line width of the name, measured off-screen
+                                        // so the marquee trigger is reliable (independent of layout
+                                        // constraints — the previous maxWidth check was Infinity here).
+                                        val textMeasurer = rememberTextMeasurer()
+                                        val naturalW = remember(artist) {
+                                            textMeasurer.measure(
+                                                AnnotatedString(artist),
+                                                style = TextStyle(color = C.accent, fontSize = 15.sp, fontWeight = FontWeight.SemiBold),
+                                                maxLines = 1,
+                                                softWrap = false,
+                                                overflow = TextOverflow.Clip
+                                            ).size.width
+                                        }
+                                        // Give the text a real bounded width (weight) so maxWidth is finite.
+                                        BoxWithConstraints(modifier = Modifier.weight(1f)) {
+                                            val maxWpx = with(LocalDensity.current) { maxWidth.toPx() }
+                                            val needsMarquee = naturalW > maxWpx + 8f
+                                            val scrollX = remember { Animatable(0f) }
+                                            LaunchedEffect(artist, needsMarquee, maxWpx) {
+                                                if (!needsMarquee) { scrollX.snapTo(0f); return@LaunchedEffect }
+                                                val gap = 32f
+                                                while (true) {
+                                                    scrollX.snapTo(0f)
+                                                    delay(1500)
+                                                    val distance = naturalW - maxWpx + gap
+                                                    val durMs = ((distance / 40f) * 1000f).toInt().coerceIn(4000, 30000)
+                                                    scrollX.animateTo(-distance, tween(durationMillis = durMs, easing = LinearEasing))
+                                                    delay(1500)
+                                                }
+                                            }
+                                            Box(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .clip(RoundedCornerShape(4.dp)),
+                                                contentAlignment = if (needsMarquee) Alignment.CenterStart else Alignment.Center
+                                            ) {
+                                                Text(
+                                                    artist,
+                                                    color = C.accent,
+                                                    fontSize = 15.sp,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    maxLines = 1,
+                                                    softWrap = false,
+                                                    overflow = TextOverflow.Clip,
+                                                    modifier = Modifier
+                                                        .wrapContentWidth()
+                                                        .graphicsLayer { translationX = scrollX.value }
+                                                )
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -504,7 +566,10 @@ fun NowPlayingScreen(
                         }
                         VolumeSlider(
                             modifier = Modifier.padding(vertical = 2.dp),
-                            onVolumeFractionChanged = { volumeFraction = it }
+                            isBluetoothRoute = outputRoute == AudioRoute.BLUETOOTH,
+                            onCapReached = {
+                                android.widget.Toast.makeText(context, "Volume capped at 60% over Bluetooth", android.widget.Toast.LENGTH_SHORT).show()
+                            }
                         )
                         Row(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                             // Dynamic output button — icon reflects the ACTIVE route
@@ -560,6 +625,54 @@ fun NowPlayingScreen(
                                 }
                             )
                         }
+                        // A small downward swipe at the top of the queue collapses it back to
+                        // the player. Implemented as a NestedScrollConnection: when the list
+                        // is at its top and the user keeps dragging down, the unconsumed
+                        // overscroll reaches us, so even a short swipe triggers the collapse.
+                        val bodyCollapseArmed = remember { mutableStateOf(false) }
+                        val bodyCollapse = Modifier.nestedScroll(
+                            object : NestedScrollConnection {
+                                override fun onPostScroll(
+                                    consumed: Offset,
+                                    available: Offset,
+                                    source: NestedScrollSource
+                                ): Offset {
+                                    // Down-overscroll at the top of the list: the LazyColumn
+                                    // consumes 0 (can't scroll further up), so the whole
+                                    // downward delta arrives as the unconsumed remainder.
+                                    val remaining = available - consumed
+                                    val atTop = queueListState.firstVisibleItemIndex == 0 &&
+                                            queueListState.firstVisibleItemScrollOffset <= 0
+                                    if (remaining.y > 0f && atTop && !pagerState.isScrollInProgress) {
+                                        bodyCollapseArmed.value = true
+                                        headerPull += remaining.y
+                                        coroutineScope.launch {
+                                            if (headerPull > 36f) {
+                                                headerPull = 0f
+                                                pagerDragOffset.snapTo(0f)
+                                                pagerState.animateScrollToPage(0)
+                                            } else {
+                                                pagerDragOffset.snapTo(headerPull.coerceAtMost(150f))
+                                            }
+                                        }
+                                    }
+                                    return Offset.Zero
+                                }
+
+                                override suspend fun onPreFling(available: Velocity): Velocity {
+                                    // A downward fling after a top overscroll also collapses.
+                                    if (bodyCollapseArmed.value && !pagerState.isScrollInProgress) {
+                                        bodyCollapseArmed.value = false
+                                        headerPull = 0f
+                                        coroutineScope.launch {
+                                            pagerDragOffset.snapTo(0f)
+                                            pagerState.animateScrollToPage(0)
+                                        }
+                                    }
+                                    return Velocity.Zero
+                                }
+                            }
+                        )
                         // Grabber, like the iOS queue page
                         Box(
                             modifier = Modifier
@@ -583,7 +696,6 @@ fun NowPlayingScreen(
                             Spacer(Modifier.width(4.dp))
                             Column(modifier = Modifier.weight(1f)) {
                                 Text("Playing Next", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 20.sp)
-                                Text("From ${nowPlayingSource?.takeIf { it.isNotBlank() } ?: "your library"}", color = Color.White.copy(alpha = 0.5f), fontSize = 13.sp)
                             }
                             // ∞ Autoplay (Apple Music header-right placement)
                             IconButton(onClick = onToggleAutoplay) {
@@ -607,6 +719,7 @@ fun NowPlayingScreen(
                             state = queueListState,
                             modifier = Modifier
                                 .fillMaxSize()
+                                .then(bodyCollapse)
                                 .graphicsLayer { translationY = pagerDragOffset.value * 0.15f },
                             contentPadding = PaddingValues(bottom = 24.dp)
                         ) {
