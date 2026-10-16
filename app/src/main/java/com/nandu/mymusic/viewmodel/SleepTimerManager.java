@@ -34,6 +34,8 @@ public final class SleepTimerManager {
     private final MutableLiveData<Integer> sleepTimerTracksRemainingLiveData = new MutableLiveData<>(-1);
     private int sleepTrackCounter = -1; // -1 means inactive
     private boolean stopAtQueueEnd = false;
+    /** True when the track-based timer fired on this song's completion. */
+    private boolean trackTimerFired = false;
 
     public SleepTimerManager(MusicViewModelCore core) {
         this.core = core;
@@ -72,9 +74,23 @@ public final class SleepTimerManager {
             sleepTrackCounter--;
             sleepTimerTracksRemainingLiveData.postValue(sleepTrackCounter);
             if (sleepTrackCounter == 0) {
-                triggerSleepTimerAction();
+                if (stopAtQueueEnd) {
+                    triggerSleepTimerAction();
+                } else {
+                    stopImmediately();
+                }
             }
         }
+    }
+
+    /** Track-based sleep timer: pause immediately when the last track completes. */
+    private void stopImmediately() {
+        Player exoPlayer = core.player();
+        if (exoPlayer == null) { cancelSleepTimer(); trackTimerFired = true; return; }
+        exoPlayer.pause();
+        core.isPlayingLive().postValue(false);
+        cancelSleepTimer();
+        trackTimerFired = true; // set after cancelSleepTimer resets it
     }
 
     /**
@@ -90,7 +106,10 @@ public final class SleepTimerManager {
             triggerSleepTimerAction();
             return true;
         }
-        return false;
+        // Track-based timer: suppress autoplay/end-dialog if we just stopped.
+        boolean fired = trackTimerFired;
+        trackTimerFired = false;
+        return fired;
     }
 
     // ── Timer control (public API) ─────────────────────────────────────────
@@ -138,6 +157,7 @@ public final class SleepTimerManager {
         }
         sleepTrackCounter = -1;
         stopAtQueueEnd = false;
+        trackTimerFired = false;
         isSleepTimerActive.postValue(false);
         sleepTimerRemainingLiveData.postValue(0L);
         sleepTimerTracksRemainingLiveData.postValue(-1);

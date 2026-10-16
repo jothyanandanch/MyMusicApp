@@ -857,9 +857,16 @@ public final class QueueManager {
 
         List<MediaItem> items = new ArrayList<>();
         for (Song s : autoplay) items.add(core.createMediaItem(s));
+        int autoplayStartIndex = core.currentIndex() + 1;
         core.withQueue(() -> core.queueList().addAll(autoplay));
         exoPlayer.addMediaItems(items);
         core.updateQueueUI();
+        core.isPlayingLive().postValue(true);
+        // Seek past the just-ended item to the first autoplay song, then resume.
+        // Without the seek, ExoPlayer rewinds and replays the finished item.
+        core.setCurrentIndex(autoplayStartIndex);
+        exoPlayer.seekToDefaultPosition(autoplayStartIndex);
+        exoPlayer.play();
         com.nandu.mymusic.utils.AppLog.d(com.nandu.mymusic.utils.AppLog.PLAYER, "Autoplay added " + count + " songs to the queue");
         return true;
     }
