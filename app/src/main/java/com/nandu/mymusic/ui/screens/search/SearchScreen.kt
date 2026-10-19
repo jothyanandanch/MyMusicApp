@@ -101,12 +101,12 @@ fun SearchScreen(
         onQueryChange(it)
     }
 
-    // ── Filter pipeline (normalized matching: "letgo" finds "Let Go", diacritics
-    //    and whitespace differences ignored so typing without separators works) ──
+    // ── Filter pipeline (fuzzy + token matching: "sunflowr" finds "Sunflower",
+    //    "sun flower" finds "Sun Flower", diacritics stripped so "résumé" matches "resume") ──
     val filteredSongs = if (query.isBlank()) emptyList() else {
         val matches: (Song) -> Boolean = { SearchUtils.matches(query, it.title, it.artist, it.album) }
         when (libraryData.libraryMode) {
-            1 -> libraryData.onlineSearchSongs.distinctBy { it.id }
+            1 -> libraryData.onlineSearchSongs.filter(matches).distinctBy { it.id }
             2 -> {
                 if (libraryData.hybridLocalOnly) {
                     libraryData.localSongs.filter(matches)
@@ -116,7 +116,8 @@ fun SearchScreen(
                 }
                 else {
                     val localMatches = libraryData.localSongs.filter(matches)
-                    (localMatches + libraryData.onlineSearchSongs).distinctBy { it.id }
+                    val onlineMatches = libraryData.onlineSearchSongs.filter(matches)
+                    (localMatches + onlineMatches).distinctBy { it.id }
                 }
             }
             else -> libraryData.localSongs.filter(matches)

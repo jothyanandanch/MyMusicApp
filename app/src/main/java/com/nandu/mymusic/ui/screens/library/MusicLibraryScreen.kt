@@ -805,8 +805,9 @@ fun MusicLibraryScreen(viewModel: MusicViewModel) {
                 nowPlayingSource = nowPlayingSource,
                 isAutoplayEnabled = isAutoplayEnabled,
                 onToggleAutoplay = {
-                    viewModel.setAutoplayEnabled(!isAutoplayEnabled)
-                    showSnackbar(if (!isAutoplayEnabled) "Autoplay on — the queue keeps playing at its end" else "Autoplay off")
+                    val target = !isAutoplayEnabled
+                    viewModel.setAutoplayEnabled(target)
+                    showSnackbar(if (target) "Autoplay on — the queue keeps playing at its end" else "Autoplay off")
                 }
             )
         }
